@@ -56,5 +56,9 @@ The sankalpa can be in one of the following states in the one-way order, except 
 5. Completed - Unsuccessfully
 6. Stopped
 
+Constraints:
+- Not started → Paused is not a legal transition
+- Completed - Successfully, Completed - Unsuccessfully, and Stopped are terminal.
+
 The transitions are performed by the user.  Ex: the user determines if the sankalpa completed successfully or unsuccessfully.  The lifecycle stage transitions shall be audit logged.
 Time spent Paused does not automatically extend the end date.
