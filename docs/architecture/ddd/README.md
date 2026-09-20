@@ -26,7 +26,7 @@ The value is in the commitment arithmetic and lifecycle rules, not in elaborate 
 | 06 | [Hexagonal architecture](06-hexagonal-architecture.md) | Package shape, adapters, persistence |
 | 07 | [Design decisions](07-design-decisions.md) | Decisions kept, decisions removed, and why |
 | 08 | [Testing strategy](08-testing-strategy.md) | Tests proportional to the model |
-| 09 | [Open questions](09-open-questions.md) | Requirement gaps that should not be silently designed in |
+| 09 | [Open questions](09-open-questions.md) | Unresolved requirement gaps intentionally left outside the design |
 | 10 | [Possible requirement amendments](10-requirement-amendments.md) | Optional clarifications before expanding scope |
 
 ## Architecture At A Glance
@@ -86,7 +86,7 @@ Deliberately not included yet:
 
 - Separate subdomains or bounded contexts.
 - Domain events, event dispatcher, outbox, process manager, command bus, or integration events.
-- Identity, ownership, activity catalogue, reminders, notifications, streaks, scoring, social
+- Identity/accounts, activity catalogue, reminders, notifications, streaks, scoring, social
   features, edit/delete flows, or per-sankalpa time zones.
 - DDD specification objects where a method or named helper is clearer.
 
@@ -98,13 +98,24 @@ Deliberately not included yet:
 | Start date, optional duration, derived end date | `Commitment` |
 | Action type, period, number of times | `ActionType`, `PeriodUnit`, `TimesPerPeriod` |
 | Duration must be a whole number of periods | `PeriodCount`; no other duration shape is represented |
+| Month/year boundaries stay anchored to the original start date | `Commitment` derives every boundary from start plus period index |
 | More than the number of times still satisfies | `PeriodOutcomeCalculator` compares performed count with a minimum |
-| Session date/time and status | `Session` |
-| Log only past sessions while In progress | `Sankalpa.logSession`, `LifecycleTimeline` |
+| Performed session date/time | `Session` |
+| Log only past sessions within commitment coverage and while In progress | `Sankalpa.logSession`, `Commitment`, `LifecycleTimeline` |
 | Start date can be up to one year in the past | `Sankalpa.declare` |
 | No duration means tracked until stopped | `Commitment` plus terminal lifecycle state |
 | Lifecycle states and allowed transitions | `LifecycleState` transition table |
 | Lifecycle transitions audit logged | `LifecycleTimeline` |
 | Time spent Paused does not extend end date | `Commitment.endDate()` is derived, not stored |
+| End date does not automatically change lifecycle | `Commitment` and lifecycle remain independent |
+| Completion or stop excludes partial and later periods | `PeriodOutcomeCalculator` applies the terminal transition as a cutoff |
+| Single-user application | No identity or ownership model |
+| Inclusive end date | `Commitment.endDate()` returns the last covered date |
+| Missed count is derived from performed sessions | `PeriodOutcomeCalculator` |
+| Pauses do not shift or prorate periods | `PeriodOutcomeCalculator` evaluates partial-pause windows normally and reports only fully paused windows as `PAUSED` |
+| Backdated Begin | `LifecycleTimeline` separates effective time from recorded time for the first transition |
+| Later lifecycle transitions happen now | Their effective and recorded timestamps are equal |
+| Lifecycle/session consistency | Session logging checks commitment coverage and lifecycle state at occurrence time |
+| Long-running outcome history | `GetPeriodOutcomes` and session reads are date-range bounded |
 
 Anything not in this table is either an implementation concern or an open question.

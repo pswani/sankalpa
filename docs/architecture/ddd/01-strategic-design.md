@@ -19,8 +19,8 @@ These are not subdomains. They are just the parts of the model that deserve atte
 | Focus area | Why it matters | Design response |
 |---|---|---|
 | Commitment | Turns "x times per y period for z duration" into concrete period windows. | Model as a value object with derived windows and end date. |
-| Lifecycle | Controls when a sankalpa can be acted on and supplies the audit history. | Model as explicit states and an ordered timeline. |
-| Session logging | Records performed or missed sessions and must respect the lifecycle. | Let `Sankalpa` decide whether a session may be logged. |
+| Lifecycle | Controls when a sankalpa can be acted on and supplies audit history. | Model as explicit states and a transition timeline. |
+| Session logging | Records performed sessions and must respect commitment coverage and lifecycle. | Let `Sankalpa` decide whether a session may be logged. |
 | Period outcomes | Determines whether closed periods were satisfied. | Derive on read from commitment and sessions. |
 
 Calling these subdomains would imply more independence than they have. They change together and use
@@ -30,7 +30,8 @@ the same concepts.
 
 The requirements do not ask for these concepts, so the architecture does not include them:
 
-- Identity, accounts, ownership, sharing, coaching, or teams.
+- Identity, accounts, ownership, sharing, coaching, or teams. The application is explicitly
+  single-user.
 - Activity catalogues for Vipassana, Gym, Sudarshan Kriya, and similar examples.
 - Reminders, notifications, nudges, streaks, scoring, or recommendations.
 - Separate reporting, analytics, or projection contexts.
@@ -40,7 +41,7 @@ The requirements do not ask for these concepts, so the architecture does not inc
 
 Introduce a new context only when the language actually splits. Good triggers:
 
-- Multiple users, sharing, or coaching makes ownership and membership real.
+- A move beyond the current single-user scope makes ownership and membership real.
 - Activities become first-class data with their own lifecycle and rules.
 - Reminders or recommendations develop vocabulary beyond simple session tracking.
 - Reporting/analytics needs independently maintained projections or external consumers.
