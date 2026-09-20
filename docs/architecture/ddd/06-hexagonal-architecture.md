@@ -112,8 +112,11 @@ for current scale; no projection table is needed.
 - Controllers map request data to commands and domain errors to HTTP responses.
 - Persistence adapters map rows to domain objects and back.
 - Persistence uses ordinary optimistic concurrency on `Sankalpa` lifecycle changes. While logging
-  a session, the adapter locks the parent sankalpa row (or performs an equivalent version check) so
-  the lifecycle snapshot cannot change between validation and insert.
+  a session, the adapter locks the parent sankalpa row before loading and validating its lifecycle
+  snapshot, or performs an equivalent atomic version check. This only orders overlapping commands;
+  it does not query session history or support backdated lifecycle changes. Without that ordering,
+  an uncommitted Pause can have an effective time before a session's `occurredAt` while the session
+  command still reads the old In progress state.
 - The clock adapter supplies `now()` and `today()` so tests can control time.
 - The configured application timezone converts lifecycle/session timestamps to the dates used by
   commitment windows; no per-user or per-sankalpa timezone is modeled.

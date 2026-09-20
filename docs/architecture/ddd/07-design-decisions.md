@@ -175,7 +175,8 @@ system clock supplies an immutable `recordedAt` for every transition.
 
 **Why.** This supports a past start and later session logging without allowing subsequent commands
 to rewrite history. It removes the latest-session lookup, cross-aggregate transition policy, and
-special concurrency rule that arbitrary backdating would require.
+historical-rewrite protocol that arbitrary backdating would require. Ordinary transaction isolation
+still gives lifecycle and session commands that overlap in execution one commit order.
 
 ---
 

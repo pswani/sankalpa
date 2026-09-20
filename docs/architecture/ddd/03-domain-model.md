@@ -191,8 +191,10 @@ in controllers or SQL.
 recorded it. Only Begin may have different values. Its effective time may be in the past, but not
 before the commitment start or in the future. Pause, Resume, Complete, and Stop always use the
 clock's current time for both values. Because the only backdated transition is the first transition,
-later lifecycle changes cannot rewrite the eligibility of an accepted session. No cross-aggregate
-transition policy or latest-session lookup is needed.
+later lifecycle changes cannot rewrite the eligibility of a session accepted by an earlier,
+committed command. No historical cross-aggregate transition policy or latest-session lookup is
+needed. Concurrent session and lifecycle commands still need a single commit order at the
+persistence boundary so neither validates against a stale lifecycle snapshot.
 
 Reaching a finite commitment's end date does not change lifecycle state. Commitment coverage and
 lifecycle answer different questions: coverage says whether a timestamp belongs to the commitment;

@@ -37,7 +37,9 @@ Only the transition from Not started to In progress may have an `effectiveAt` ea
 `recordedAt`. This lets a newly declared sankalpa begin on a past date so past performed sessions
 can be logged. Pause, Resume, Complete, and Stop use the clock's current time for both timestamps.
 Because no later transition can be backdated, an accepted session's lifecycle eligibility cannot be
-rewritten by a later command.
+rewritten by a later command after that session commits. This statement concerns commands already
+ordered in history; the persistence adapter must still give overlapping session and lifecycle
+commands one transactional order.
 
 ## Session History
 

@@ -57,8 +57,9 @@ Keep these narrow:
 - Persistence round trips for `Sankalpa`, lifecycle transitions, and sessions.
 - Schema assertion that `endDate` is not stored if the design keeps it derived.
 - Read adapter returns flat rows without constructing aggregates.
-- Persistence concurrency test proves a session is not committed against a stale lifecycle
-  snapshot.
+- Persistence concurrency test starts an uncommitted Pause, then attempts to log a session whose
+  `occurredAt` follows the Pause's effective time. It proves the session waits for or conflicts with
+  the lifecycle write and is not committed against the old In progress snapshot.
 - Period outcome query expands the session read to the selected windows' actual boundaries.
 
 ## Architecture Tests
