@@ -150,8 +150,32 @@ extension SankalpaApplicationService {
         return outcomes(for: sankalpa, range: firstWindow.start...anchorWindow.start)
     }
 
-    public func periodTally(_ id: SankalpaId, limit: Int = 520) -> PeriodTally {
+    /// The largest history the period screens report: ten years of daily periods, which is also
+    /// the longest duration a commitment can declare. The list and the tally it sits under take
+    /// the same number, because a count of periods the list does not contain is a lie about the
+    /// history.
+    public static let historyPeriodLimit = PeriodCount.maxValue
+
+    public func periodTally(
+        _ id: SankalpaId,
+        limit: Int = SankalpaApplicationService.historyPeriodLimit
+    ) -> PeriodTally {
         PeriodTally(outcomes: recentPeriodOutcomes(id, limit: limit))
+    }
+
+    /// Whether `limit` actually cut anything off, so a screen can say so instead of quietly
+    /// showing part of a history as if it were all of it.
+    public func hasPeriodsBeyond(_ id: SankalpaId, limit: Int) -> Bool {
+        guard limit > 0, let sankalpa = findSankalpa(id) else { return false }
+        let commitment = sankalpa.commitment
+
+        var anchor = sankalpa.lifecycle.terminalTransition
+            .map { $0.effectiveAt.day.addingDays(-1) } ?? today()
+        anchor = max(anchor, commitment.startDate)
+        if let endDate = commitment.endDate { anchor = min(anchor, endDate) }
+
+        guard let anchorWindow = commitment.windowContaining(anchor) else { return false }
+        return anchorWindow.index - limit + 1 > 0
     }
 
     /// Widens the session query to the selected windows' real boundaries so a range beginning

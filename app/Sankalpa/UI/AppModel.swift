@@ -17,6 +17,8 @@ final class AppModel {
     private(set) var summaries: [SankalpaSummary] = []
     /// The closed-period strip for each sankalpa, rebuilt with the summaries.
     private(set) var recentStandings: [SankalpaId: [PeriodOutcome]] = [:]
+    /// The satisfied/missed count for each sankalpa, over the whole reported history.
+    private(set) var tallies: [SankalpaId: PeriodTally] = [:]
     private(set) var today: CalendarDay
 
     /// A refusal to show in an alert. Commands that have their own inline error surface return the
@@ -57,6 +59,16 @@ final class AppModel {
         self.init(store: FileStore(fileURL: FileStore.defaultFileURL()), seedDemoData: wantsDemoData)
     }
 
+    // MARK: - Reporting range
+
+    /// How much history the app reports on. Ten years is the longest duration a commitment can
+    /// declare, so in practice nothing a user has actually recorded falls outside it — but the
+    /// reads stay bounded (DD-17) and the screens say what their range is.
+    static let historyPeriodLimit = SankalpaApplicationService.historyPeriodLimit
+    static let historyDays = 3_650
+    /// The window the detail screen's "Recent sessions" preview covers.
+    static let recentSessionDays = 120
+
     // MARK: - Reading
 
     func refresh() {
@@ -67,6 +79,9 @@ final class AppModel {
         // being small without anyone noticing.
         recentStandings = Dictionary(
             uniqueKeysWithValues: summaries.map { ($0.id, closedOutcomes(for: $0.id)) }
+        )
+        tallies = Dictionary(
+            uniqueKeysWithValues: summaries.map { ($0.id, service.periodTally($0.id)) }
         )
     }
 
@@ -94,8 +109,19 @@ final class AppModel {
         recentStandings[id] ?? []
     }
 
+    /// Counted over the same history the Periods screen lists, so the two can never disagree.
     func periodTally(_ id: SankalpaId) -> PeriodTally {
-        service.periodTally(id)
+        tallies[id] ?? service.periodTally(id)
+    }
+
+    /// Every period the app reports on, oldest first — what the Periods screen lists.
+    func periodHistory(_ id: SankalpaId) -> [PeriodOutcome] {
+        service.recentPeriodOutcomes(id, limit: AppModel.historyPeriodLimit)
+    }
+
+    /// True when the sankalpa is old enough that the reported history leaves some out.
+    func hasPeriodsBeyondHistory(_ id: SankalpaId) -> Bool {
+        service.hasPeriodsBeyond(id, limit: AppModel.historyPeriodLimit)
     }
 
     func lifecycleHistory(_ id: SankalpaId) -> [LifecycleTransition] {
@@ -103,7 +129,7 @@ final class AppModel {
     }
 
     /// Recent sessions for one sankalpa, bounded by a day range rather than loading all history.
-    func recentSessions(_ id: SankalpaId, days: Int = 120) -> [Session] {
+    func recentSessions(_ id: SankalpaId, days: Int = AppModel.recentSessionDays) -> [Session] {
         service.sessions(id, from: today.addingDays(-days), until: today)
     }
 
@@ -117,7 +143,7 @@ final class AppModel {
         service.latestEligibleMoment(for: sankalpa, now: service.now())
     }
 
-    func journal(days: Int = 120) -> [JournalEntry] {
+    func journal(days: Int = AppModel.historyDays) -> [JournalEntry] {
         service.journal(from: today.addingDays(-days), until: today)
     }
 

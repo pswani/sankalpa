@@ -9,7 +9,7 @@ struct PeriodHistoryView: View {
 
     /// Newest first: the period that just closed is the one the user came to check.
     private var outcomes: [PeriodOutcome] {
-        model.recentPeriodOutcomes(summary.id, limit: 400).reversed()
+        model.periodHistory(summary.id).reversed()
     }
 
     var body: some View {
@@ -44,10 +44,18 @@ struct PeriodHistoryView: View {
     }
 
     private var footnote: String {
+        var lines: [String] = []
         if summary.state.isTerminal {
-            return "Only periods that closed before you \(summary.state == .stopped ? "stopped" : "completed") this sankalpa are judged. The period you were in and any after it are not shown."
+            lines.append("Only periods that closed before you \(summary.state == .stopped ? "stopped" : "completed") this sankalpa are judged. The period you were in and any after it are not shown.")
+        } else {
+            lines.append("A period is judged once it closes. Performing more often than committed still satisfies it.")
         }
-        return "A period is judged once it closes. Performing more often than committed still satisfies it."
+        // Saying so matters only when the limit has actually cut something off; otherwise this is
+        // the whole history and announcing a range would suggest it is not.
+        if model.hasPeriodsBeyondHistory(summary.id) {
+            lines.append("Showing the most recent \(AppModel.historyPeriodLimit) \(summary.commitment.periodUnit.pluralName(AppModel.historyPeriodLimit)). The count above covers the same range.")
+        }
+        return lines.joined(separator: "\n\n")
     }
 }
 
@@ -102,7 +110,7 @@ struct SessionHistoryView: View {
     let summary: SankalpaSummary
 
     private var grouped: [(day: CalendarDay, sessions: [Session])] {
-        let sessions = model.recentSessions(summary.id, days: 3650)
+        let sessions = model.recentSessions(summary.id, days: AppModel.historyDays)
         return Dictionary(grouping: sessions, by: { $0.occurredAt.day })
             .map { (day: $0.key, sessions: $0.value.sorted { $0.occurredAt > $1.occurredAt }) }
             .sorted { $0.day > $1.day }

@@ -8,7 +8,7 @@ struct JournalView: View {
     @Environment(AppModel.self) private var model
 
     private var grouped: [(day: CalendarDay, entries: [JournalEntry])] {
-        Dictionary(grouping: model.journal(days: 365), by: { $0.occurredAt.day })
+        Dictionary(grouping: model.journal(), by: { $0.occurredAt.day })
             .map { (day: $0.key, entries: $0.value.sorted { $0.occurredAt > $1.occurredAt }) }
             .sorted { $0.day > $1.day }
     }
@@ -49,19 +49,28 @@ struct JournalView: View {
 private struct JournalRow: View {
     let entry: JournalEntry
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
-        HStack(spacing: 12) {
+        // Same rule as every other row in the app: at accessibility sizes the title gets the
+        // width instead of sharing it with an icon and a timestamp.
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+
+        return layout {
             ActionChip(actionType: entry.actionType, size: 34)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.sankalpaTitle)
                     .font(.subheadline.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(entry.actionType.displayName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Spacer(minLength: 0)
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
 
             Text(AppTime.timeText(entry.occurredAt))
                 .font(.caption.monospacedDigit())

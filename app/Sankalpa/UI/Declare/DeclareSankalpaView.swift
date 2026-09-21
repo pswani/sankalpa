@@ -16,9 +16,15 @@ struct DeclareSankalpaView: View {
     @State private var timesPerPeriod = 1
     @State private var hasDuration = true
     @State private var periodCount = 30
+    /// The duration field's own text, so it can be emptied and retyped.
+    @State private var periodCountText = "30"
     @State private var error: SankalpaCommandError?
 
     @FocusState private var titleFocused: Bool
+    @FocusState private var periodCountFocused: Bool
+
+    /// 3650 is the largest duration, so nothing longer than four digits is worth keeping.
+    private var maxDurationDigits: Int { String(PeriodCount.maxValue).count }
 
     private var trimmedTitle: String {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,6 +64,13 @@ struct DeclareSankalpaView: View {
                     Button("Declare", action: declare)
                         .fontWeight(.semibold)
                         .disabled(trimmedTitle.isEmpty)
+                }
+                // The number pad has no return key, so it needs a way out that is not a guess.
+                ToolbarItemGroup(placement: .keyboard) {
+                    if periodCountFocused {
+                        Spacer()
+                        Button("Done") { periodCountFocused = false }
+                    }
                 }
             }
             .onAppear { titleFocused = true }
@@ -165,14 +178,45 @@ struct DeclareSankalpaView: View {
             Toggle("Set a duration", isOn: $hasDuration.animation(.snappy))
 
             if hasDuration {
-                Stepper(value: $periodCount, in: 1...PeriodCount.maxValue) {
-                    HStack {
-                        Text("Number of \(periodUnit.pluralName(2))")
-                        Spacer()
-                        Text("\(periodCount)")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                // A stepper alone means 150 taps to get from 30 days to 180, so the number is
+                // typed and the stepper is there for the small adjustments it is good at.
+                HStack(spacing: 12) {
+                    Text("Number of \(periodUnit.pluralName(2))")
+                    Spacer(minLength: 8)
+                    // Bound to text rather than to the number directly: a numeric binding
+                    // rewrites the field on every keystroke, so it can never be emptied and
+                    // retyped — which is the whole point of typing it.
+                    TextField(String(periodCount), text: $periodCountText)
+                        .focused($periodCountFocused)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .monospacedDigit()
+                        .frame(width: 72)
+                        .accessibilityLabel("Number of \(periodUnit.pluralName(2))")
+
+                    Stepper(value: $periodCount, in: 1...PeriodCount.maxValue) {
+                        EmptyView()
                     }
+                    .labelsHidden()
+                }
+                .onChange(of: periodCountText) { _, text in
+                    let digits = String(text.filter(\.isNumber).prefix(maxDurationDigits))
+                    if digits != text { periodCountText = digits }
+                    // An empty field mid-edit is not a duration of zero; the form keeps the last
+                    // real value until another one is typed.
+                    if let typed = Int(digits), typed >= 1 {
+                        periodCount = min(typed, PeriodCount.maxValue)
+                    }
+                }
+                .onChange(of: periodCount) { _, value in
+                    if Int(periodCountText) != value { periodCountText = String(value) }
+                }
+                .onChange(of: periodCountFocused) { _, focused in
+                    // Tapping in starts a fresh number. A three-digit duration is quicker to
+                    // retype than to edit, and putting the caret somewhere the user did not
+                    // choose is how 30 becomes 1803. The current value stays on as the
+                    // placeholder, and comes back if nothing is typed.
+                    periodCountText = focused ? "" : String(periodCount)
                 }
             }
         } header: {
@@ -180,7 +224,7 @@ struct DeclareSankalpaView: View {
         } footer: {
             Text(
                 hasDuration
-                    ? "A duration is a whole number of periods. Six months of a weekly commitment is 26 weeks."
+                    ? "A duration is a whole number of periods, up to \(PeriodCount.maxValue). Six months of a weekly commitment is 26 weeks."
                     : "Without a duration, the sankalpa is tracked until you stop it."
             )
         }

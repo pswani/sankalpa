@@ -5,6 +5,9 @@ import SankalpaCore
 struct TodayView: View {
     @Environment(AppModel.self) private var model
     var onDeclare: () -> Void
+    /// Today has nothing to show once everything is finished, but the finished ones are still
+    /// there — this is the way to them.
+    var onShowFinished: () -> Void
 
     @State private var path: [SankalpaId] = []
     @State private var loggingFor: SankalpaSummary?
@@ -100,14 +103,32 @@ struct TodayView: View {
         }
     }
 
+    /// "No sankalpas yet" is only true of an empty app. Once everything has been completed or
+    /// stopped there is a practice to look back on, and saying otherwise erases it.
+    @ViewBuilder
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("No sankalpas yet", systemImage: "seal")
-        } description: {
-            Text("A sankalpa is a declared intent with a commitment to act — so many times, per period, for a duration.")
-        } actions: {
-            Button("Declare a sankalpa", action: onDeclare)
-                .buttonStyle(.primary)
+        if model.summaries.isEmpty {
+            ContentUnavailableView {
+                Label("No sankalpas yet", systemImage: "seal")
+            } description: {
+                Text("A sankalpa is a declared intent with a commitment to act — so many times, per period, for a duration.")
+            } actions: {
+                Button("Declare a sankalpa", action: onDeclare)
+                    .buttonStyle(.primary)
+            }
+        } else {
+            ContentUnavailableView {
+                Label("No active sankalpas", systemImage: "checkmark.seal")
+            } description: {
+                Text("Every sankalpa has been completed or stopped. Declare another, or look back over the finished ones.")
+            } actions: {
+                VStack(spacing: 10) {
+                    Button("Declare a sankalpa", action: onDeclare)
+                        .buttonStyle(.primary)
+                    Button("See finished sankalpas", action: onShowFinished)
+                        .buttonStyle(.quiet)
+                }
+            }
         }
     }
 }
@@ -119,6 +140,8 @@ private struct TodayCard: View {
     let summary: SankalpaSummary
     var onOpen: () -> Void
     var onLogAtTime: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         Card(padding: 0) {
@@ -137,7 +160,14 @@ private struct TodayCard: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
+        // At accessibility sizes the icon and the progress ring stop flanking the text and sit
+        // above and below it, so the title has the whole card width instead of a column too
+        // narrow to hold "Sudarshan Kriya" without hyphenating it.
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+
+        return layout {
             ActionChip(actionType: summary.actionType)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -151,6 +181,14 @@ private struct TodayCard: View {
                     Text(period.progressPhrase)
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(period.isSatisfied ? Palette.satisfied : .secondary)
+                    // "This week" is not the calendar week — every window is anchored to the
+                    // sankalpa's own start date. Where that can differ, the card says which days
+                    // it means.
+                    if period.window.dayCount > 1 {
+                        Text(period.window.displayText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 } else {
                     Text(outOfPeriodText)
                         .font(.footnote)
@@ -267,10 +305,6 @@ private struct IntroductionCard: View {
                     point("2", "Begin it", "Tracking starts. You can begin on an earlier date to cover sessions you have already done.")
                     point("3", "Log each session", "When a period closes it is judged: satisfied if you met the minimum, missed if you did not.")
                 }
-
-                Text("The sample sankalpas below are here to explore. Clear them from the Sankalpas tab whenever you like.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
                 Button("Got it", action: onDismiss)
                     .buttonStyle(.quiet)

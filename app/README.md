@@ -40,7 +40,7 @@ app/
     Sources/SankalpaStorage/
       FileStore.swift    The JSON store, with its load/write failure behaviour
       AppTime.swift      The one place instants become dates
-    Tests/               69 core tests + 8 storage tests
+    Tests/               71 core tests + 6 storage tests
   Sankalpa/              The iOS app
     Adapters/            Demo data — the driven side
     UI/                  SwiftUI screens and the design system — the driving side
@@ -88,8 +88,31 @@ anchoring, inclusive end dates, the transition table, backdated Begin, session e
 versus full pauses, and the terminal-transition cutoff.
 
 `screen-tour.sh` builds the app, walks every screen in the simulator, and writes numbered
-screenshots to `app/build/screens` — in Light Mode, Dark Mode, and at an accessibility text size.
-It is a smoke test as much as a review tool: each step asserts the element it is about to use.
+screenshots to `app/build/screens` — in Light Mode, Dark Mode, and at an accessibility text
+size. It is a behaviour suite as much as a review tool: every step asserts the
+element it is about to use rather than skipping quietly when a screen fails to appear, and the
+script's exit status is the tests' own. It finishes with a Release build, which is where an
+optimiser difference or a `#if DEBUG` mistake would show up.
+
+Beyond the tour, it drives the things that would lose or misreport someone's practice: an
+unreadable store raises recovery instead of looking like a fresh install, a logged session
+survives a relaunch, undo is offered once and consumed, a forgotten session can still be recorded
+from Paused and from a finished sankalpa, and a duration can be typed rather than stepped to.
+
+## How much history is reported
+
+Every read is day-range bounded (DD-17), so the screens name their ranges rather than implying
+they show everything:
+
+| Screen | Range |
+|---|---|
+| Periods, and the tally above it | The most recent 3,650 periods — one number for both, so the count can never describe rows the list does not contain. The footer says so only when something was actually cut off. |
+| Sessions | The last 3,650 days |
+| Recent sessions, on detail | The last 120 days. When there is older history the card says so and still links to the full list. |
+| Journal | The last 3,650 days |
+
+3,650 is also the longest duration a commitment can declare, so in practice nothing a user has
+recorded falls outside it.
 
 ## Responsiveness
 
@@ -121,18 +144,18 @@ a local single-user iPhone app leads to a few deliberate differences.
 | Seven single-method use-case classes | One `SankalpaApplicationService`, one method per use case | The use-case names stay visible without seven files of constructor boilerplate. No rules moved into it. |
 | `Result<T, E>` returns | Swift typed `throws(E)` | The same thing in Swift, and it reads better at the call site. Every domain error type is still explicit in the signature. |
 | `LocalDate` / `LocalDateTime` | `CalendarDay` / `CalendarMoment` | Foundation has no zone-free date. These are integer-only value types, so a daylight-saving shift cannot move a period boundary. Conversion happens once, in `AppTime`. |
-| iPhone and iPad | iPhone only (`TARGETED_DEVICE_FAMILY = 1`) | The requirement is an iPhone app. Declaring iPad without designing or testing a layout for it produced an orientation warning and would have claimed support that does not exist. |
-| Domain objects mapped to persistence rows | Domain types are `Codable`, stored in a versioned JSON envelope | For a local file store, hand-written DTO mapping would be ceremony. The envelope carries a schema version so the shape can change later. |
 | HTTP controllers | SwiftUI views and `AppModel` | The driving adapter for this app is the UI. |
 | `SessionRepository.findForSankalpa` | Plus `sessions(from:until:)` across all sankalpas | The Journal reads performed sessions across sankalpas. Still day-range bounded, per DD-17. |
-| iPhone and iPad | iPhone only (`TARGETED_DEVICE_FAMILY = 1`) | The requirement is an iPhone app. Declaring iPad without designing or testing a layout for it produced an orientation warning and would have claimed support that does not exist. |
+| iPhone and iPad | iPhone only (`TARGETED_DEVICE_FAMILY = 1`), portrait only | The requirement is an iPhone app. Declaring iPad, or the landscape orientations the template turns on, would claim support for layouts that were never designed or tested. Every screen here is a single vertical column; landscape adds nothing it does not already do. |
 | Domain objects mapped to persistence rows | Domain types are `Codable`, stored in a versioned JSON envelope | For a local file store, hand-written DTO mapping would be ceremony. The envelope carries a schema version, and a file written by a newer version is refused rather than replaced. |
 | No session delete use case | `SessionRepository.delete` plus `undoLoggedSession` | Logging is one tap on the largest control in the app. Taking back the tap you just made is a different thing from amending history, so the capability is deliberately narrow: only the id returned by `logSession`, only while the confirmation is still on screen. Editing an older session is still out of scope (Q3). |
 
-Two debug-only launch arguments exist, compiled out of release builds, both for the screen tour:
-`-forceDarkMode`, because the simulator's own appearance switch does not reliably repaint this
-runtime, and `-resetIntroduction`, which clears the first-run flag so the introduction card can be
-captured and then dismissed normally.
+Several launch arguments exist for the screen tour, all compiled out of release builds: `-demo`
+seeds the demo content, `-forceDarkMode` forces the appearance because the simulator's own switch
+does not reliably repaint this runtime, `-resetIntroduction` clears the first-run flag so the
+introduction card can be captured and then dismissed normally, and `-resetStore` / `-corruptStore`
+prepare the store a UI test is about to open. `SANKALPA_TEST_STORE` gives each UI test its own
+store file, so a test can never read or write a real practice history.
 
 ## Interpretations
 

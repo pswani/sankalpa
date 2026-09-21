@@ -20,8 +20,9 @@ struct SankalpaListView: View {
 
     @Environment(AppModel.self) private var model
     var onDeclare: () -> Void
+    /// Owned by the root so Today can send the user straight to the finished ones.
+    @Binding var filter: Filter
 
-    @State private var filter: Filter = .active
     @State private var confirmingClear = false
 
     private var visible: [SankalpaSummary] {
@@ -52,7 +53,7 @@ struct SankalpaListView: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Clear everything", role: .destructive) { model.clearAll() }
             } message: {
-                Text("This removes the sample sankalpas and everything you have added. It cannot be undone.")
+                Text("This removes every sankalpa and every session you have logged. It cannot be undone.")
             }
         }
     }
@@ -81,7 +82,7 @@ struct SankalpaListView: View {
                 Button("Clear all data", role: .destructive) { confirmingClear = true }
                     .frame(maxWidth: .infinity)
             } footer: {
-                Text("Sankalpa starts with a few sample sankalpas so there is something to explore. Clearing removes them along with anything you have added.")
+                Text("Your practice is stored on this device only. There is no backup, so clearing it cannot be undone.")
             }
         }
         .listStyle(.insetGrouped)

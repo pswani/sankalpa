@@ -10,6 +10,7 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var selectedTab: AppTab = .today
     @State private var declaringSankalpa = false
+    @State private var listFilter: SankalpaListView.Filter = .active
 
     var body: some View {
         @Bindable var model = model
@@ -60,10 +61,19 @@ struct RootView: View {
     private var tabs: some View {
         TabView(selection: $selectedTab) {
             Tab("Today", systemImage: "sun.horizon", value: AppTab.today) {
-                TodayView(onDeclare: { declaringSankalpa = true })
+                TodayView(
+                    onDeclare: { declaringSankalpa = true },
+                    onShowFinished: {
+                        listFilter = .finished
+                        selectedTab = .sankalpas
+                    }
+                )
             }
             Tab("Sankalpas", systemImage: "list.bullet.rectangle", value: AppTab.sankalpas) {
-                SankalpaListView(onDeclare: { declaringSankalpa = true })
+                SankalpaListView(
+                    onDeclare: { declaringSankalpa = true },
+                    filter: $listFilter
+                )
             }
             Tab("Journal", systemImage: "book.closed", value: AppTab.journal) {
                 JournalView()

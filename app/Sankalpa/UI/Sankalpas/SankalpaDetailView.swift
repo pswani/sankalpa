@@ -113,10 +113,15 @@ struct SankalpaDetailView: View {
         _ summary: SankalpaSummary, _ period: CurrentPeriodProgress
     ) -> some View {
         // This is what the user opened the screen for, so it is the one card that is allowed to
-        // look different from the rest.
-        Card {
+        // look different from the rest. At accessibility sizes the ring moves above the text
+        // rather than squeezing it into a column.
+        let periodLayout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 16))
+
+        return Card {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 16) {
+                periodLayout {
                     PeriodProgressRing(
                         performed: period.performed, required: period.required,
                         tint: summary.actionType.tint,
@@ -137,7 +142,7 @@ struct SankalpaDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Spacer(minLength: 0)
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
                 }
 
                 if period.isSatisfied {
@@ -297,23 +302,40 @@ struct SankalpaDetailView: View {
         return VStack(alignment: .leading, spacing: 10) {
             SectionHeading(title: "Recent sessions")
             Card {
-                if sessions.isEmpty {
-                    Text("No sessions logged yet.")
+                VStack(spacing: 0) {
+                    if sessions.isEmpty {
+                        // A practice whose last session predates the preview window still has a
+                        // history. Saying "no sessions logged yet" and taking the way into it away
+                        // would be wrong twice over.
+                        Text(
+                            summary.totalSessions > 0
+                                ? "Nothing in the last \(AppModel.recentSessionDays) days."
+                                : "No sessions logged yet."
+                        )
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                } else {
-                    VStack(spacing: 0) {
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
                         ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
                             if index > 0 { Divider().background(Palette.hairline) }
                             SessionRow(session: session, today: model.today)
                         }
+                    }
+
+                    // Reachable whenever anything has ever been logged, whatever the preview
+                    // window happens to hold.
+                    if summary.totalSessions > 0 {
                         Divider().background(Palette.hairline)
                         NavigationLink {
                             SessionHistoryView(summary: summary)
                         } label: {
-                            Label("All sessions", systemImage: "list.bullet")
-                                .font(.subheadline)
-                                .padding(.top, 12)
+                            Label(
+                                "All \(summary.totalSessions) sessions",
+                                systemImage: "list.bullet"
+                            )
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 12)
                         }
                     }
                 }
@@ -408,7 +430,13 @@ struct SankalpaDetailView: View {
                 // and Stop is coloured as the irreversible thing it is.
                 Divider().background(Palette.hairline).padding(.vertical, 2)
 
-                HStack(spacing: 10) {
+                // Two capsules abreast leave room for about four characters each at
+                // accessibility sizes, so they stack there instead.
+                let endingLayout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(spacing: 10))
+                    : AnyLayout(HStackLayout(spacing: 10))
+
+                endingLayout {
                     lifecycleButton("Complete…", style: .quiet) { confirmingComplete = true }
                     lifecycleButton("Stop…", style: .quiet(tint: Palette.missed)) {
                         confirmingStop = true

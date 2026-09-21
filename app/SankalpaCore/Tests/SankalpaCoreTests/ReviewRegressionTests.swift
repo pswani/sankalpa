@@ -132,6 +132,44 @@ struct ReviewRegressionTests {
         #expect(environment.service.totalSessionCount(sankalpa.id) == 0)
     }
 
+    @Test("The period list and the count above it cover the same range")
+    func tallyAgreesWithTheListItSitsAbove() throws {
+        let environment = TestEnvironment(today: moment(2026, 9, 21, 9))
+        let sankalpa = try environment.service.declareSankalpa(
+            Declaration(title: "Sahaj", actionType: .meditation, startDate: day(2026, 9, 21),
+                        periodUnit: .day, timesPerPeriod: 1)
+        )
+        try environment.service.beginSankalpa(sankalpa.id)
+
+        // Eleven years on — past the reported range, which is where a list and a count computed
+        // over different limits would start disagreeing.
+        environment.clock.advance(toDay: day(2037, 9, 21))
+
+        let limit = SankalpaApplicationService.historyPeriodLimit
+        let listed = environment.service.recentPeriodOutcomes(sankalpa.id, limit: limit)
+        let tally = environment.service.periodTally(sankalpa.id)
+
+        #expect(listed.count == limit)
+        #expect(tally.satisfied + tally.unsatisfied + tally.paused == listed.count { $0.standing != .open })
+        #expect(environment.service.hasPeriodsBeyond(sankalpa.id, limit: limit))
+    }
+
+    @Test("A history that fits inside the reported range is not described as cut short")
+    func shortHistoryIsNotReportedAsTruncated() throws {
+        let environment = TestEnvironment(today: moment(2026, 9, 21, 9))
+        let sankalpa = try environment.service.declareSankalpa(
+            Declaration(title: "Sahaj", actionType: .meditation, startDate: day(2026, 9, 1),
+                        periodUnit: .day, timesPerPeriod: 1, periodCount: 180)
+        )
+        try environment.service.beginSankalpa(sankalpa.id)
+
+        #expect(
+            !environment.service.hasPeriodsBeyond(
+                sankalpa.id, limit: SankalpaApplicationService.historyPeriodLimit
+            )
+        )
+    }
+
     @Test("An inverted period-outcome range returns nothing instead of trapping")
     func invertedRangeIsRefused() throws {
         let environment = TestEnvironment(today: moment(2026, 9, 21, 9))
