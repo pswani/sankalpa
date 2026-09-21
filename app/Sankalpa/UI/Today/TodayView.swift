@@ -228,13 +228,24 @@ private struct TodayCard: View {
             }
             .buttonStyle(.quiet)
         case .notStarted:
-            Button {
-                model.begin(summary.id)
-            } label: {
-                Text("Begin").frame(maxWidth: .infinity)
+            if summary.commitment.startDate > model.today {
+                Label(
+                    "Begins \(summary.commitment.startDate.longDisplayText)",
+                    systemImage: "calendar"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 6)
+            } else {
+                Button {
+                    model.begin(summary.id)
+                } label: {
+                    Text("Begin").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.primary)
             }
-            .buttonStyle(.primary)
-            .disabled(summary.commitment.startDate > model.today)
         default:
             EmptyView()
         }

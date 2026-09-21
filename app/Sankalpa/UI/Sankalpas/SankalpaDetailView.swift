@@ -373,15 +373,27 @@ struct SankalpaDetailView: View {
         } else {
             VStack(spacing: 10) {
                 if state == .notStarted {
-                    lifecycleButton("Begin now", style: .primary) { model.begin(summary.id) }
-                        .disabled(summary.commitment.startDate > model.today)
+                    if summary.commitment.startDate > model.today {
+                        // Offering two dead Begin buttons next to two live terminal ones leaves
+                        // ending the sankalpa as the only thing that appears to work. Say when it
+                        // can be begun instead.
+                        Label(
+                            "This sankalpa begins on \(summary.commitment.startDate.longDisplayText). You can begin it from that day.",
+                            systemImage: "calendar"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        lifecycleButton("Begin now", style: .primary) { model.begin(summary.id) }
 
-                    // Enabled on the start date itself: declaring at noon and beginning at 07:00
-                    // the same morning is exactly how a session already performed gets recorded.
-                    lifecycleButton("Begin at an earlier time…", style: .quiet) {
-                        beginningWithDate = true
+                        // Available on the start date itself: declaring at noon and beginning at
+                        // 07:00 the same morning is how a session already performed gets recorded.
+                        lifecycleButton("Begin at an earlier time…", style: .quiet) {
+                            beginningWithDate = true
+                        }
                     }
-                    .disabled(summary.commitment.startDate > model.today)
                 }
 
                 if state == .inProgress {
