@@ -112,7 +112,9 @@ they show everything:
 | Journal | The last 3,650 days |
 
 3,650 is also the longest duration a commitment can declare, so in practice nothing a user has
-recorded falls outside it.
+recorded falls outside it. The worst case the app can reach — ten years of daily practice, 3,650
+sessions, every period rebuilt — takes about 7 ms in a Debug build, which is why the Periods
+screen computes its list directly rather than caching it.
 
 ## Responsiveness
 

@@ -23,7 +23,8 @@ struct DeclareSankalpaView: View {
     @FocusState private var titleFocused: Bool
     @FocusState private var periodCountFocused: Bool
 
-    /// 3650 is the largest duration, so nothing longer than four digits is worth keeping.
+    /// No duration can be longer than `PeriodCount.maxValue`, so nothing past its digit count is
+    /// worth keeping in the field.
     private var maxDurationDigits: Int { String(PeriodCount.maxValue).count }
 
     private var trimmedTitle: String {
@@ -200,7 +201,11 @@ struct DeclareSankalpaView: View {
                     .labelsHidden()
                 }
                 .onChange(of: periodCountText) { _, text in
-                    let digits = String(text.filter(\.isNumber).prefix(maxDurationDigits))
+                    // Plain ASCII digits only. `isNumber` also admits things like "½", which
+                    // the number pad cannot produce but a paste can.
+                    let digits = String(
+                        text.filter { $0.isASCII && $0.isNumber }.prefix(maxDurationDigits)
+                    )
                     if digits != text { periodCountText = digits }
                     // An empty field mid-edit is not a duration of zero; the form keeps the last
                     // real value until another one is typed.

@@ -135,19 +135,26 @@ extension SankalpaApplicationService {
     /// The most recent `limit` windows, oldest first. Anchored to the terminal transition when
     /// there is one, so a stopped sankalpa still shows the periods it was judged on (DD-16).
     public func recentPeriodOutcomes(_ id: SankalpaId, limit: Int = 12) -> [PeriodOutcome] {
-        guard limit > 0, let sankalpa = findSankalpa(id) else { return [] }
-        let commitment = sankalpa.commitment
+        guard limit > 0, let sankalpa = findSankalpa(id),
+              let anchorWindow = reportingAnchorWindow(for: sankalpa)
+        else { return [] }
 
+        let firstIndex = max(0, anchorWindow.index - limit + 1)
+        guard let firstWindow = sankalpa.commitment.window(at: firstIndex) else { return [] }
+
+        return outcomes(for: sankalpa, range: firstWindow.start...anchorWindow.start)
+    }
+
+    /// The newest window a report ends at: today, or the day before a terminal transition,
+    /// clamped into the commitment's own coverage. Both the list and the truncation check read
+    /// from here so they cannot answer differently.
+    private func reportingAnchorWindow(for sankalpa: Sankalpa) -> PeriodWindow? {
+        let commitment = sankalpa.commitment
         var anchor = sankalpa.lifecycle.terminalTransition
             .map { $0.effectiveAt.day.addingDays(-1) } ?? today()
         anchor = max(anchor, commitment.startDate)
         if let endDate = commitment.endDate { anchor = min(anchor, endDate) }
-
-        guard let anchorWindow = commitment.windowContaining(anchor) else { return [] }
-        let firstIndex = max(0, anchorWindow.index - limit + 1)
-        guard let firstWindow = commitment.window(at: firstIndex) else { return [] }
-
-        return outcomes(for: sankalpa, range: firstWindow.start...anchorWindow.start)
+        return commitment.windowContaining(anchor)
     }
 
     /// The largest history the period screens report: ten years of daily periods, which is also
@@ -166,15 +173,10 @@ extension SankalpaApplicationService {
     /// Whether `limit` actually cut anything off, so a screen can say so instead of quietly
     /// showing part of a history as if it were all of it.
     public func hasPeriodsBeyond(_ id: SankalpaId, limit: Int) -> Bool {
-        guard limit > 0, let sankalpa = findSankalpa(id) else { return false }
-        let commitment = sankalpa.commitment
-
-        var anchor = sankalpa.lifecycle.terminalTransition
-            .map { $0.effectiveAt.day.addingDays(-1) } ?? today()
-        anchor = max(anchor, commitment.startDate)
-        if let endDate = commitment.endDate { anchor = min(anchor, endDate) }
-
-        guard let anchorWindow = commitment.windowContaining(anchor) else { return false }
+        guard limit > 0, let sankalpa = findSankalpa(id),
+              let anchorWindow = reportingAnchorWindow(for: sankalpa)
+        else { return false }
+        // The same arithmetic `recentPeriodOutcomes` clamps with: anything above zero was cut.
         return anchorWindow.index - limit + 1 > 0
     }
 
