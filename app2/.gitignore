@@ -1,0 +1,4 @@
+build/
+SankalpaCore/.build/
+SankalpaCore/.swiftpm/
+*.xcuserstate
