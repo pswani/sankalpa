@@ -1,1 +1,6 @@
 tmp
+
+# iOS app build output
+app/build/
+app/SankalpaCore/.build/
+*.xcuserdatad

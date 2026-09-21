@@ -14,6 +14,8 @@ final class AppModel {
 
     /// Everything the list and Today screens render, refreshed after each command.
     private(set) var summaries: [SankalpaSummary] = []
+    /// The closed-period strip for each sankalpa, rebuilt with the summaries.
+    private(set) var recentStandings: [SankalpaId: [PeriodOutcome]] = [:]
     private(set) var today: CalendarDay
 
     /// A refusal to show in an alert. Commands that have their own inline error surface return the
@@ -47,6 +49,18 @@ final class AppModel {
     func refresh() {
         today = service.today()
         summaries = service.summaries()
+        // Built once per refresh rather than per card per render. The work is small, but calling
+        // into the application layer from inside a view's body is the kind of thing that stops
+        // being small without anyone noticing.
+        recentStandings = Dictionary(
+            uniqueKeysWithValues: summaries.map { ($0.id, closedOutcomes(for: $0.id)) }
+        )
+    }
+
+    private func closedOutcomes(for id: SankalpaId, limit: Int = 7) -> [PeriodOutcome] {
+        let closed = service.recentPeriodOutcomes(id, limit: limit + 4)
+            .filter { $0.standing != .open }
+        return Array(closed.suffix(limit))
     }
 
     var activeSummaries: [SankalpaSummary] { summaries.filter { !$0.state.isTerminal } }
@@ -63,10 +77,8 @@ final class AppModel {
 
     /// Only periods that have closed, newest last — the strip on a card shows judged history, not
     /// the period still in progress.
-    func recentClosedOutcomes(_ id: SankalpaId, limit: Int = 7) -> [PeriodOutcome] {
-        let closed = service.recentPeriodOutcomes(id, limit: limit + 4)
-            .filter { $0.standing != .open }
-        return Array(closed.suffix(limit))
+    func recentClosedOutcomes(_ id: SankalpaId) -> [PeriodOutcome] {
+        recentStandings[id] ?? []
     }
 
     func periodTally(_ id: SankalpaId) -> PeriodTally {

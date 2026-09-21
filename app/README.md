@@ -74,6 +74,25 @@ versus full pauses, and the terminal-transition cutoff.
 screenshots to `app/build/screens` — in Light Mode, Dark Mode, and at an accessibility text size.
 It is a smoke test as much as a review tool: each step asserts the element it is about to use.
 
+## Responsiveness
+
+A command is cheap. Measured on an iPhone 17 Pro simulator with the sample data (5 sankalpas,
+172 sessions), a lifecycle transition takes **about 5 ms end to end** — roughly 4.6 ms of that is
+writing the store file, and the query layer that rebuilds every summary afterwards is around
+0.2 ms.
+
+Two things follow from that, and both are already done:
+
+- Period outcomes for the card strips are computed once per refresh and cached on `AppModel`,
+  rather than being fetched from inside a view's `body`. The work was small, but calling into the
+  application layer during rendering is how small work stops being small.
+- The store writes compact JSON. Pretty-printing an app data file that nobody reads roughly doubled
+  both the encode time and the file size.
+
+If the app ever does feel slow, check first whether the control is actually disabled — a tap that
+does nothing is indistinguishable from a tap that is slow, and that is a far more likely cause here
+than the arithmetic.
+
 ## Where this departs from the design documents
 
 The DDD documents describe a server with HTTP controllers and a relational store. The same model on

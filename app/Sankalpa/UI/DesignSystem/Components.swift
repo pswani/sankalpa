@@ -223,17 +223,31 @@ struct TallyRow: View {
 /// the same style works for a full-width card action and for a button in an empty state.
 struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(.semibold))
-            .foregroundStyle(Palette.onAccentFill)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .frame(minHeight: 50)
-            .background(
-                Palette.accentFill.opacity(configuration.isPressed ? 0.82 : 1),
-                in: .capsule
-            )
-            .contentShape(.capsule)
+        StyledLabel(configuration: configuration)
+    }
+
+    /// A nested view so the style can read `isEnabled`. A `ButtonStyle` does not inherit it, so a
+    /// disabled button would otherwise render at full strength and look tappable — and a tap that
+    /// does nothing reads as the app being slow, not as the button being unavailable.
+    private struct StyledLabel: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .font(.body.weight(.semibold))
+                .foregroundStyle(isEnabled ? AnyShapeStyle(Palette.onAccentFill) : AnyShapeStyle(.secondary))
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+                .frame(minHeight: 50)
+                .background(background, in: .capsule)
+                .contentShape(.capsule)
+        }
+
+        private var background: some ShapeStyle {
+            guard isEnabled else { return AnyShapeStyle(Color(uiColor: .tertiarySystemFill)) }
+            return AnyShapeStyle(Palette.accentFill.opacity(configuration.isPressed ? 0.82 : 1))
+        }
     }
 }
 
@@ -244,14 +258,29 @@ struct QuietButtonStyle: ButtonStyle {
     var tint: Color = Palette.accent
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(.medium))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .frame(minHeight: 50)
-            .background(tint.opacity(configuration.isPressed ? 0.20 : 0.12), in: .capsule)
-            .contentShape(.capsule)
+        StyledLabel(configuration: configuration, tint: tint)
+    }
+
+    private struct StyledLabel: View {
+        let configuration: Configuration
+        let tint: Color
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .font(.body.weight(.medium))
+                .foregroundStyle(isEnabled ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary))
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+                .frame(minHeight: 50)
+                .background(
+                    isEnabled
+                        ? AnyShapeStyle(tint.opacity(configuration.isPressed ? 0.20 : 0.12))
+                        : AnyShapeStyle(Color(uiColor: .quaternarySystemFill)),
+                    in: .capsule
+                )
+                .contentShape(.capsule)
+        }
     }
 }
 

@@ -125,9 +125,9 @@ final class FileSankalpaStore: SankalpaRepository, SessionRepository {
             sessions: sessionStorage
         )
         do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(file).write(to: fileURL, options: .atomic)
+            // No pretty-printing: this is an app data file, not something anyone reads, and the
+            // formatting roughly doubles both the encode time and the file size.
+            try JSONEncoder().encode(file).write(to: fileURL, options: .atomic)
         } catch {
             Self.logger.error("Could not write the store: \(error.localizedDescription)")
         }

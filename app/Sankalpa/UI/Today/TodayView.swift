@@ -221,10 +221,12 @@ private struct TodayCard: View {
                 .accessibilityLabel("Log a session at another time")
             }
         case .paused:
-            Button("Resume") { model.resume(summary.id) }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
+            Button {
+                model.resume(summary.id)
+            } label: {
+                Text("Resume").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.quiet)
         case .notStarted:
             Button {
                 model.begin(summary.id)
