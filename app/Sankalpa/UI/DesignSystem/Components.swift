@@ -116,17 +116,32 @@ struct PeriodProgressRing: View {
 struct StandingStrip: View {
     let outcomes: [PeriodOutcome]
 
+    private static let trackHeight: CGFloat = 10
+
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(alignment: .bottom, spacing: 4) {
             ForEach(outcomes) { outcome in
-                RoundedRectangle(cornerRadius: 2.5)
+                // Colour alone would leave satisfied and missed identical to a red-green
+                // colour-blind reader, and this is the one status surface in the app that has no
+                // room for a symbol. Height carries it instead: a satisfied period stands full
+                // height, a missed one sits low. That is also just what the strip means.
+                RoundedRectangle(cornerRadius: 2)
                     .fill(outcome.standing == .open ? outcome.standing.softTint : outcome.standing.tint)
-                    .frame(width: 14, height: 6)
+                    .frame(width: 14, height: Self.height(for: outcome.standing))
             }
         }
+        .frame(height: Self.trackHeight, alignment: .bottom)
         .accessibilityElement()
         .accessibilityLabel("Recent periods")
         .accessibilityValue(Self.summary(outcomes))
+    }
+
+    private static func height(for standing: PeriodStanding) -> CGFloat {
+        switch standing {
+        case .satisfied: return trackHeight
+        case .paused: return 6
+        case .unsatisfied, .open: return 4
+        }
     }
 
     private static func summary(_ outcomes: [PeriodOutcome]) -> String {
@@ -139,17 +154,24 @@ struct StandingStrip: View {
 struct StandingTile: View {
     let outcome: PeriodOutcome
 
+    /// The tile was the one place left in the app with a fixed frame and a hard-coded point size,
+    /// so it stayed 10pt while everything around it scaled. Capped, because a horizontal strip of
+    /// these cannot grow without bound.
+    @ScaledMetric(relativeTo: .caption) private var scale: CGFloat = 1
+
+    private var side: CGFloat { 44 * min(scale, 1.6) }
+
     var body: some View {
         VStack(spacing: 3) {
             Image(systemName: outcome.standing.symbolName)
-                .font(.caption.weight(.bold))
+                .font(.system(size: side * 0.27, weight: .bold))
                 .foregroundStyle(outcome.standing.tint)
             Text("\(outcome.performed)/\(outcome.required)")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(.system(size: side * 0.23, weight: .medium, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
-        .frame(width: 44, height: 44)
+        .frame(width: side, height: side)
         .background(outcome.standing.softTint, in: .rect(cornerRadius: 10))
         .accessibilityElement()
         .accessibilityLabel(outcome.window.displayText)

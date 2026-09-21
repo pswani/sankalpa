@@ -97,7 +97,14 @@ struct DeclareSankalpaView: View {
         } header: {
             Text("What you are committing to")
         } footer: {
-            if case .declaration(.invalidTitle(let problem)) = error {
+            // The limit was only ever mentioned after tapping Declare, which is late to hear that
+            // what you typed will not be accepted.
+            if trimmedTitle.count > Title.maxLength {
+                errorText(
+                    DeclarationError.invalidTitle(.tooLong(max: Title.maxLength)).message
+                        + " That is \(trimmedTitle.count) so far."
+                )
+            } else if case .declaration(.invalidTitle(let problem)) = error {
                 errorText(DeclarationError.invalidTitle(problem).message)
             }
         }

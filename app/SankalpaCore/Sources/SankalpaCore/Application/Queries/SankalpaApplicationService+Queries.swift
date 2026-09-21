@@ -121,15 +121,26 @@ extension SankalpaApplicationService {
 
     // MARK: - Period outcomes
 
-    /// `GetPeriodOutcomes` — windows whose start date falls in `from...until`.
+    /// `GetPeriodOutcomes` — windows whose start date falls in `from...until`, newest end of the
+    /// range first if it has to be trimmed.
+    ///
+    /// The range is caller supplied, so it carries the same ceiling as every other period read.
+    /// Without one, a wide range on a daily commitment materialises a window per day.
     public func periodOutcomes(
         _ id: SankalpaId,
         from: CalendarDay,
-        until: CalendarDay
+        until: CalendarDay,
+        limit: Int = SankalpaApplicationService.historyPeriodLimit
     ) -> [PeriodOutcome] {
         // An inverted range would trap when `from...until` is constructed.
-        guard from <= until, let sankalpa = findSankalpa(id) else { return [] }
-        return outcomes(for: sankalpa, range: from...until)
+        guard from <= until, limit > 0, let sankalpa = findSankalpa(id) else { return [] }
+        // Two steps, because they do different jobs. Narrowing the range first is what stops a
+        // century-wide request building a century of windows; `until` is not aligned to a
+        // boundary, so that bound is deliberately generous. Trimming afterwards is what makes
+        // "at most `limit`" exact. Either way the newest end is the end that is kept.
+        let earliest = until.addingDays(-(limit * sankalpa.commitment.periodUnit.maxDayCount))
+        let all = outcomes(for: sankalpa, range: max(from, earliest)...until)
+        return all.count <= limit ? all : Array(all.suffix(limit))
     }
 
     /// The most recent `limit` windows, oldest first. Anchored to the terminal transition when

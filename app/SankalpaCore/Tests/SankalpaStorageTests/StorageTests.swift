@@ -54,6 +54,59 @@ struct StorageTests {
         #expect(reopened.totalCount(for: sankalpa.id) == 1)
     }
 
+    // MARK: - Getting out of an unreadable store
+
+    @Test("An unreadable file can be set aside, leaving a usable store and the original bytes")
+    func unreadableFileCanBeSetAside() throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let originalBytes = Data("this is not a store".utf8)
+        try originalBytes.write(to: url)
+
+        let store = FileStore(fileURL: url)
+        #expect(store.loadError != nil)
+        // Nothing can be written while the file is unreadable — including a clear, which is why
+        // refusing to write is not on its own a way out.
+        #expect(throws: (any Error).self) { try store.clear() }
+
+        let setAside = try store.setAsideUnreadableFile()
+        defer { try? FileManager.default.removeItem(at: setAside) }
+
+        // The app is usable again...
+        #expect(store.loadError == nil)
+        #expect(store.isNew)
+        var sankalpa = declared(startingOn: day(2026, 9, 21), now: moment(2026, 9, 21, 6))
+        try sankalpa.begin(BeginTiming(now: moment(2026, 9, 21, 6)))
+        try store.save(sankalpa)
+        #expect(store.all().count == 1)
+
+        // ...and the damaged file was renamed, not destroyed.
+        #expect(setAside != url)
+        #expect(try Data(contentsOf: setAside) == originalBytes)
+    }
+
+    @Test("A store that opened cleanly has nothing to set aside")
+    func readableFileIsNeverSetAside() throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let store = FileStore(fileURL: url)
+        try store.save(declared(startingOn: day(2026, 9, 21), now: moment(2026, 9, 21, 6)))
+        #expect(store.loadError == nil)
+        #expect(throws: (any Error).self) { try store.setAsideUnreadableFile() }
+        #expect(store.all().count == 1)
+    }
+
+    @Test("Deleting a session that is not there reports it instead of rewriting the file")
+    func deletingAnAbsentSessionReportsFalse() throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let store = FileStore(fileURL: url)
+        #expect(try store.delete(SessionId()) == false)
+    }
+
     // MARK: - Failed writes (P1)
 
     @Test("A failed write publishes nothing, in memory or on disk")

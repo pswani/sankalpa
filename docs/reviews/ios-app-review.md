@@ -36,6 +36,48 @@ only.
 Still open, and deliberately so: editing or deleting an older session (Q3 — undo covers only the
 session just logged), and the time-zone questions in 09-open-questions.
 
+## Second pass, September 21
+
+A full re-read of every layer after the findings below were closed. Twelve further issues; ten
+fixed, two deliberately left.
+
+**Fixed**
+
+- **An unreadable store was a dead end.** Verified by driving the simulator: every write is refused
+  while the file will not parse, the recovery screen replaces the whole app, and "Try opening
+  again" re-read the same broken file. Deleting the app was the only way back to a usable one —
+  destroying the file the screen promises is still there. The screen now says so when a retry
+  fails, offers to save a copy of the file, and offers to start fresh, which renames the damaged
+  file rather than removing it. Covered by a UI test that escapes it.
+- **No way to get the data out.** The store file can now be handed to the share sheet from the
+  Sankalpas tab and from recovery. There is no import; see the README for why.
+- **Undo's window was cut short by a second log.** The banner's dismissal timer keyed off the
+  confirmation *text*, and two logs produce the identical string, so SwiftUI never restarted it.
+  It keys off a token that changes every time.
+- **A clock that has gone backwards** (travelling west, or the hour daylight saving gives back)
+  made Pause and Stop fail with "A sankalpa that is In progress cannot move to Paused." It now has
+  its own error naming the clock.
+- **Two error messages were wrong at the upper bound** — an over-long duration was told it must be
+  "at least one whole period".
+- **`undoLoggedSession` claimed an invariant it did not enforce.** Deleting an id that names
+  nothing now reports that instead of confirming "Session removed"; the comment says what is
+  actually true.
+- **`periodOutcomes(from:until:)` was public with no ceiling.** The range is narrowed before any
+  windows are built, and the result trimmed.
+- **`StandingTile` ignored Dynamic Type** — a fixed frame with 10pt text.
+- **`StandingStrip` signalled with colour alone.** Satisfied now stands full height and missed sits
+  low, so the strip reads without colour.
+- **Title length was only checked on submit.**
+
+**Left alone, on purpose**
+
+- **Every write re-serialises the whole history.** Linear, about 4.6 ms at 172 sessions. Fixing it
+  means incremental persistence or a different store format — a large change for a cost that stays
+  small for years. Worth revisiting if the app is ever kept for that long.
+- **Double-tapping logs two sessions.** There is no duplicate detection and the only correction is
+  the undo window. Adding a rule here means deciding what counts as a duplicate, which is Q3 and a
+  product decision, not a defect to patch.
+
 ## Findings
 
 ### 1. P1 — A failed load can overwrite the user's data with samples

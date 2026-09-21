@@ -47,7 +47,7 @@ struct RootView: View {
                     undo: model.undoableSession == nil ? nil : { model.undoLastSession() }
                 )
                 .transition(.move(edge: .top).combined(with: .opacity))
-                .task(id: confirmation) {
+                .task(id: model.confirmationToken) {
                     // Long enough to notice and undo, short enough not to linger.
                     try? await Task.sleep(for: .seconds(4))
                     withAnimation(.snappy) { model.clearConfirmation() }

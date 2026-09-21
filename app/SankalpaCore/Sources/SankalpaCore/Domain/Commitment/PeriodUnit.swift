@@ -43,6 +43,17 @@ public enum PeriodUnit: String, CaseIterable, Codable, Sendable {
         count == 1 ? displayName.lowercased() : "\(displayName.lowercased())s"
     }
 
+    /// The most days one period of this unit can span. Used to bound a caller-supplied date
+    /// range before any windows are built, so "at most n periods" costs at most n periods.
+    var maxDayCount: Int {
+        switch self {
+        case .day: return 1
+        case .week: return 7
+        case .month: return 31
+        case .year: return 366
+        }
+    }
+
     /// The start of the window `index` periods after `start`.
     ///
     /// Every boundary is derived from the original start date plus the period index, never by

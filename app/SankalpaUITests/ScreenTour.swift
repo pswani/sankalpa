@@ -301,6 +301,42 @@ final class ScreenTour: XCTestCase {
         capture("24-recovery")
     }
 
+    /// Refusing to write over a file that will not parse is only half an answer. Without a way
+    /// forward the app is bricked: every write is refused, so deleting the app is the only way
+    /// back to a usable one — which destroys the file this screen says is still there.
+    func testUnreadableStoreCanBeEscaped() throws {
+        launch(corruptStore: true)
+        XCTAssertTrue(
+            app.staticTexts["Your data needs attention"].waitForExistence(timeout: 10)
+        )
+
+        // Retrying is worth offering for a transient failure, but it must answer when it fails
+        // rather than looking like a button that does nothing.
+        app.buttons["Try opening again"].tap()
+        XCTAssertTrue(
+            app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS 'still could not be opened'")
+            ).firstMatch.waitForExistence(timeout: 5),
+            "a failed retry gave no answer"
+        )
+        // The file itself can be taken out of the app before anything is moved.
+        XCTAssertTrue(app.buttons["Save a copy of the file"].exists)
+        capture("27-recovery-retry-failed")
+
+        app.buttons["Start fresh…"].tap()
+        app.buttons["Start fresh"].tap()
+
+        // The app is usable again.
+        XCTAssertTrue(
+            app.tabBars.buttons["Sankalpas"].waitForExistence(timeout: 10),
+            "starting fresh did not give back a usable app"
+        )
+        capture("28-after-starting-fresh")
+
+        app.tabBars.buttons["Sankalpas"].tap()
+        XCTAssertTrue(app.buttons["Declare a sankalpa"].firstMatch.waitForExistence(timeout: 5))
+    }
+
     /// A logged session has to still be there after the app is closed and reopened.
     func testSessionSurvivesRelaunch() throws {
         launch()

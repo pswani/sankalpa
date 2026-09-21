@@ -24,10 +24,14 @@ public enum DeclarationError: DomainError {
             return "Give the sankalpa a title."
         case .invalidTitle(.tooLong(let max)):
             return "Keep the title to \(max) characters or fewer."
-        case .invalidTimesPerPeriod:
-            return "Commit to at least one session per period."
-        case .invalidPeriodCount:
-            return "A duration must be at least one whole period."
+        case .invalidTimesPerPeriod(let value):
+            return value < 1
+                ? "Commit to at least one session per period."
+                : "\(TimesPerPeriod.maxValue) times per period is the most that can be committed to."
+        case .invalidPeriodCount(let value):
+            return value < 1
+                ? "A duration must be at least one whole period."
+                : "A duration cannot be longer than \(PeriodCount.maxValue) periods."
         case .startDateTooFarInPast(let earliest):
             return "The start date cannot be earlier than \(earliest.longDisplayText) — a sankalpa may start at most one year in the past."
         }
@@ -38,6 +42,9 @@ public enum LifecycleTransitionError: DomainError {
     case invalidLifecycleTransition(from: LifecycleState, to: LifecycleState)
     case transitionInFuture
     case transitionBeforeStart(startDate: CalendarDay)
+    /// The change would land before one already recorded. The transition itself is legal; the
+    /// clock is the problem.
+    case transitionOutOfOrder(lastRecorded: CalendarMoment)
 
     public var message: String {
         switch self {
@@ -47,6 +54,8 @@ public enum LifecycleTransitionError: DomainError {
             return "A lifecycle change cannot take effect in the future."
         case .transitionBeforeStart(let startDate):
             return "A sankalpa cannot begin before its start date, \(startDate.longDisplayText)."
+        case .transitionOutOfOrder(let lastRecorded):
+            return "This device's clock reads earlier than the last change to this sankalpa, which was \(lastRecorded.day.longDisplayText). Check the date and time, then try again."
         }
     }
 }

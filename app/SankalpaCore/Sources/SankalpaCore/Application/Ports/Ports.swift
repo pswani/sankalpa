@@ -42,9 +42,11 @@ public protocol SankalpaRepository {
 /// read is day-range bounded, which is what keeps an indefinite daily commitment cheap (DD-17).
 public protocol SessionRepository {
     func save(_ session: Session) throws(PersistenceError)
-    /// Removes one session. This exists only so the user can take back a log they just made; it is
-    /// not a general session-editing capability (09-open-questions Q3).
-    func delete(_ sessionId: SessionId) throws(PersistenceError)
+    /// Removes one session, reporting whether it was there to remove. This exists only so the
+    /// user can take back a log they just made; it is not a general session-editing capability
+    /// (09-open-questions Q3).
+    @discardableResult
+    func delete(_ sessionId: SessionId) throws(PersistenceError) -> Bool
     func sessions(for sankalpaId: SankalpaId, from: CalendarDay, until: CalendarDay) -> [Session]
     func sessions(from: CalendarDay, until: CalendarDay) -> [Session]
     func totalCount(for sankalpaId: SankalpaId) -> Int

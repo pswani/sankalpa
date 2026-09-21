@@ -139,14 +139,20 @@ public final class SankalpaApplicationService {
     ///
     /// A logged session is a recorded past fact, and the requirements have no edit or delete use
     /// case for one. Undoing the tap you just made is a different thing from amending history, so
-    /// this is deliberately narrow: the caller passes the id it received from `logSession`, and
-    /// nothing else can be removed.
+    /// this is deliberately narrow *by how it is offered*: the UI only ever passes the id it just
+    /// received from `logSession`, and only while that confirmation is still on screen. Nothing
+    /// here enforces which session an id names, so this is not an editing back door to build on.
+    ///
+    /// An id that names nothing is reported rather than silently succeeding, because "Session
+    /// removed" over a session that is still there is worse than an error.
     public func undoLoggedSession(_ sessionId: SessionId) throws(SankalpaCommandError) {
+        let removed: Bool
         do {
-            try sessions.delete(sessionId)
+            removed = try sessions.delete(sessionId)
         } catch {
             throw .storage(error)
         }
+        guard removed else { throw .sessionNotFound(sessionId) }
     }
 
     private func mutate(

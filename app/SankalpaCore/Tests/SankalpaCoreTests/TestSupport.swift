@@ -64,9 +64,12 @@ final class InMemorySessionRepository: SessionRepository {
         storage.append(session)
     }
 
-    func delete(_ sessionId: SessionId) throws(PersistenceError) {
+    @discardableResult
+    func delete(_ sessionId: SessionId) throws(PersistenceError) -> Bool {
         if failWrites { throw .writeFailed }
+        guard storage.contains(where: { $0.id == sessionId }) else { return false }
         storage.removeAll { $0.id == sessionId }
+        return true
     }
 
     func sessions(for sankalpaId: SankalpaId, from: CalendarDay, until: CalendarDay) -> [Session] {

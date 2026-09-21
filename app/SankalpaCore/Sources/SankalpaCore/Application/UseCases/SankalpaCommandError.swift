@@ -4,6 +4,7 @@ import Foundation
 /// domain cannot see — that the sankalpa is not there.
 public enum SankalpaCommandError: Error, Equatable, Sendable {
     case sankalpaNotFound(SankalpaId)
+    case sessionNotFound(SessionId)
     case declaration(DeclarationError)
     case lifecycle(LifecycleTransitionError)
     case session(SessionNotLoggable)
@@ -13,6 +14,8 @@ public enum SankalpaCommandError: Error, Equatable, Sendable {
         switch self {
         case .sankalpaNotFound:
             return "That sankalpa is no longer available."
+        case .sessionNotFound:
+            return "That session is no longer there, so there was nothing to take back."
         case .declaration(let error):
             return error.message
         case .lifecycle(let error):

@@ -26,6 +26,10 @@ final class AppModel {
     var alertMessage: String?
     /// A short confirmation banner after a successful action (state 6 — success feedback).
     var confirmation: String?
+    /// Changes on every confirmation, including two identical ones in a row. The banner's
+    /// dismissal timer keys off this rather than the text: logging twice inside four seconds
+    /// would otherwise leave the second undo offer running out the first one's clock.
+    private(set) var confirmationToken: Int = 0
     /// Bumped on every successful log so views can trigger haptics without owning the state.
     private(set) var successCount: Int = 0
     /// The session the confirmation banner can still take back, if any.
@@ -34,6 +38,14 @@ final class AppModel {
     /// Non-nil when the store could not be opened. The whole app drops into recovery rather than
     /// showing an empty practice, which would look identical to a fresh install.
     var storageProblem: String? { store.loadError }
+    /// Bumped whenever the store is re-examined, so a retry that changes nothing still reaches
+    /// the recovery screen as an answer.
+    private(set) var storageAttempts: Int = 0
+    /// Where an unreadable file was moved to, once the user has chosen to start fresh.
+    private(set) var setAsideFileURL: URL?
+
+    /// The store file, for handing to the share sheet. Absent until something has been written.
+    var exportableFileURL: URL? { store.fileExists ? store.fileURL : nil }
 
     init(store: FileStore, clock: SankalpaClock = SystemClock(), seedDemoData: Bool = false) {
         self.store = store
@@ -182,6 +194,7 @@ final class AppModel {
             try service.undoLoggedSession(sessionId)
             refresh()
             confirmation = "Session removed"
+            confirmationToken += 1
         } catch {
             alertMessage = error.message
         }
@@ -218,6 +231,7 @@ final class AppModel {
             try store.clear()
             refresh()
             confirmation = "Cleared"
+            confirmationToken += 1
         } catch {
             alertMessage = error.message
         }
@@ -228,7 +242,24 @@ final class AppModel {
     /// Tries to open the store again, for when the failure was transient.
     func retryLoadingStore() {
         store.reload()
+        storageAttempts += 1
         refresh()
+    }
+
+    /// Moves an unreadable file aside and carries on with an empty store.
+    ///
+    /// Refusing to write over a file that will not parse is right; leaving the user with no way
+    /// forward is not. The damaged bytes are renamed, never deleted, so they can still be shared
+    /// out of the app afterwards.
+    func startFreshPreservingUnreadableFile() {
+        do {
+            setAsideFileURL = try store.setAsideUnreadableFile()
+            storageAttempts += 1
+            refresh()
+            confirmation = "Started fresh"
+        } catch {
+            alertMessage = "The damaged file could not be moved aside. \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Plumbing
@@ -248,6 +279,7 @@ final class AppModel {
     private func succeed(_ text: String) {
         refresh()
         confirmation = text
+        confirmationToken += 1
         successCount += 1
     }
 

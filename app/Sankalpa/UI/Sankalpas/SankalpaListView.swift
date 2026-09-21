@@ -79,10 +79,18 @@ struct SankalpaListView: View {
             }
 
             Section {
+                // The practice is one file with nothing else pointing at it. Handing a copy to
+                // the share sheet is the whole of "export": no format to design, and the file it
+                // gives out is the one the app actually reads.
+                if let fileURL = model.exportableFileURL {
+                    ShareLink(item: fileURL) {
+                        Label("Save a copy of my data", systemImage: "square.and.arrow.up")
+                    }
+                }
                 Button("Clear all data", role: .destructive) { confirmingClear = true }
                     .frame(maxWidth: .infinity)
             } footer: {
-                Text("Your practice is stored on this device only. There is no backup, so clearing it cannot be undone.")
+                Text("Your practice is stored on this device only. Saving a copy gives you the file the app reads; clearing cannot be undone.")
             }
         }
         .listStyle(.insetGrouped)

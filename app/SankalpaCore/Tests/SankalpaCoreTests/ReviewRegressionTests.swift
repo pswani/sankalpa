@@ -170,6 +170,73 @@ struct ReviewRegressionTests {
         )
     }
 
+    @Test("A clock that has gone backwards is reported as the clock, not an illegal transition")
+    func clockGoingBackwardsIsReportedPlainly() throws {
+        // Begun at 14:00 in one zone; the device is relaunched somewhere several hours west, so
+        // "now" reads earlier than the change already recorded.
+        var sankalpa = Sankalpa.testDeclared(
+            startDate: day(2026, 9, 21), unit: .day, timesPerPeriod: 1,
+            now: moment(2026, 9, 21, 14)
+        )
+        try sankalpa.begin(BeginTiming(now: moment(2026, 9, 21, 14)))
+
+        #expect(
+            throws: LifecycleTransitionError.transitionOutOfOrder(
+                lastRecorded: moment(2026, 9, 21, 14)
+            )
+        ) {
+            try sankalpa.pause(now: moment(2026, 9, 21, 9))
+        }
+        // The sankalpa is untouched, and the message names the real problem.
+        #expect(sankalpa.state == .inProgress)
+        #expect(
+            LifecycleTransitionError
+                .transitionOutOfOrder(lastRecorded: moment(2026, 9, 21, 14))
+                .message.contains("clock")
+        )
+    }
+
+    @Test("Taking back a session that is not there is refused, not confirmed")
+    func undoingAnAbsentSessionIsRefused() throws {
+        let environment = TestEnvironment(today: moment(2026, 9, 21, 9))
+        let unknown = SessionId()
+        #expect(throws: SankalpaCommandError.sessionNotFound(unknown)) {
+            try environment.service.undoLoggedSession(unknown)
+        }
+    }
+
+    @Test("A period-outcome range wider than the ceiling costs the ceiling, not the range")
+    func aWideRangeIsNarrowedBeforeAnyWindowsAreBuilt() throws {
+        let environment = TestEnvironment(today: moment(2036, 9, 21, 9))
+        let sankalpa = try environment.service.declareSankalpa(
+            Declaration(title: "Sahaj", actionType: .meditation, startDate: day(2036, 9, 21),
+                        periodUnit: .day, timesPerPeriod: 1)
+        )
+        // A century of daily windows, asked for in one call.
+        let outcomes = environment.service.periodOutcomes(
+            sankalpa.id, from: day(2036, 9, 21), until: day(2136, 9, 21), limit: 10
+        )
+        #expect(outcomes.count <= 10)
+    }
+
+    @Test("A bound that is exceeded says so, rather than reporting the opposite bound")
+    func upperBoundsExplainThemselves() {
+        #expect(
+            DeclarationError.invalidPeriodCount(PeriodCount.maxValue + 1)
+                .message.contains("cannot be longer")
+        )
+        #expect(
+            DeclarationError.invalidPeriodCount(0).message.contains("at least one")
+        )
+        #expect(
+            DeclarationError.invalidTimesPerPeriod(TimesPerPeriod.maxValue + 1)
+                .message.contains("the most")
+        )
+        #expect(
+            DeclarationError.invalidTimesPerPeriod(0).message.contains("at least one")
+        )
+    }
+
     @Test("An inverted period-outcome range returns nothing instead of trapping")
     func invertedRangeIsRefused() throws {
         let environment = TestEnvironment(today: moment(2026, 9, 21, 9))

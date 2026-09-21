@@ -43,9 +43,12 @@ public struct LifecycleTimeline: Hashable, Codable, Sendable {
         guard effectiveAt == recordedAt || (current == .notStarted && target == .inProgress) else {
             throw .invalidLifecycleTransition(from: current, to: target)
         }
-        // A backdated Begin must still land after everything already recorded.
+        // A change must land after everything already recorded. For a backdated Begin that is
+        // the user's choice to correct; for every other transition it means the device clock now
+        // reads earlier than it did — travelling west, or the hour daylight saving gives back —
+        // so it is reported as the clock problem it is rather than as an illegal transition.
         if let last = transitions.last, effectiveAt < last.effectiveAt {
-            throw .invalidLifecycleTransition(from: current, to: target)
+            throw .transitionOutOfOrder(lastRecorded: last.effectiveAt)
         }
 
         transitions.append(

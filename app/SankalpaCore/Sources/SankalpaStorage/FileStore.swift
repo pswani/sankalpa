@@ -77,6 +77,32 @@ public final class FileStore: SankalpaRepository, SessionRepository {
         }
     }
 
+    /// True once anything has been written, so a caller knows whether there is a file to hand to
+    /// the user at all.
+    public var fileExists: Bool { FileManager.default.fileExists(atPath: fileURL.path) }
+
+    /// Moves an unreadable file aside and opens an empty store in its place.
+    ///
+    /// Refusing to write over a file that will not parse is right, but on its own it leaves the
+    /// app with nothing it can do: every write is refused, so there is no way back to a usable
+    /// app except deleting it, which destroys the very bytes the recovery screen promises are
+    /// still there. This keeps that promise and still lets the user carry on — the damaged file
+    /// is renamed, never deleted, and its new location is returned so it can be shown or shared.
+    @discardableResult
+    public func setAsideUnreadableFile() throws -> URL {
+        guard loadError != nil else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let stamp = Int(Date().timeIntervalSince1970)
+        let destination = fileURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("sankalpa-store-damaged-\(stamp).json")
+        try FileManager.default.moveItem(at: fileURL, to: destination)
+        // With the file gone, this takes the fresh-install path: an empty store, no load error.
+        reload()
+        return destination
+    }
+
     // MARK: - SankalpaRepository
 
     public func all() -> [Sankalpa] { snapshot.sankalpas }
@@ -103,10 +129,13 @@ public final class FileStore: SankalpaRepository, SessionRepository {
         try commit(candidate)
     }
 
-    public func delete(_ sessionId: SessionId) throws(PersistenceError) {
+    @discardableResult
+    public func delete(_ sessionId: SessionId) throws(PersistenceError) -> Bool {
+        guard snapshot.sessions.contains(where: { $0.id == sessionId }) else { return false }
         var candidate = snapshot
         candidate.sessions.removeAll { $0.id == sessionId }
         try commit(candidate)
+        return true
     }
 
     public func sessions(

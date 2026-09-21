@@ -40,7 +40,7 @@ app/
     Sources/SankalpaStorage/
       FileStore.swift    The JSON store, with its load/write failure behaviour
       AppTime.swift      The one place instants become dates
-    Tests/               71 core tests + 6 storage tests
+    Tests/               75 core tests + 9 storage tests
   Sankalpa/              The iOS app
     Adapters/            Demo data — the driven side
     UI/                  SwiftUI screens and the design system — the driving side
@@ -52,10 +52,18 @@ app/
 tested. A store that cannot be read, and a write that fails, are the two ways this app could lose
 someone's practice history; both now have tests.
 
-There is no backup or restore. An unreadable store is reported, left exactly as it is, and can be
-retried — that is what stops data being lost. Restoring from a backup was built and then removed:
-the only way to produce a backup was a button you could reach only after your store was already
-broken, so the loop was never going to close.
+An unreadable store is reported, left exactly as it is, and can be retried — that is what stops
+data being lost. But refusing to write over a file that will not parse is only half an answer: with
+every write refused, the app would otherwise have no way forward at all, and deleting it would be
+the only way back to a usable one — destroying the very file the recovery screen promises is still
+there. So the recovery screen also offers to **save a copy** of the file, and to **start fresh**,
+which renames the damaged file rather than removing it.
+
+**Saving a copy is the whole of export.** The practice is one JSON file and nothing else points at
+it, so handing it to the share sheet needs no format to design, and what it gives out is exactly
+what the app reads. It is on the Sankalpas tab and on the recovery screen. There is no import:
+reading a file back in means deciding what happens when it disagrees with what is already there,
+and that is a question the requirements have not answered.
 
 The dependency rule from
 [06-hexagonal-architecture](../docs/architecture/ddd/06-hexagonal-architecture.md) holds: the
@@ -95,9 +103,11 @@ script's exit status is the tests' own. It finishes with a Release build, which 
 optimiser difference or a `#if DEBUG` mistake would show up.
 
 Beyond the tour, it drives the things that would lose or misreport someone's practice: an
-unreadable store raises recovery instead of looking like a fresh install, a logged session
-survives a relaunch, undo is offered once and consumed, a forgotten session can still be recorded
-from Paused and from a finished sankalpa, and a duration can be typed rather than stepped to.
+unreadable store raises recovery instead of looking like a fresh install *and can be escaped from*
+— a failed retry says so, and starting fresh gives back a usable app with the damaged file renamed
+rather than removed — a logged session survives a relaunch, undo is offered once and consumed, a
+forgotten session can still be recorded from Paused and from a finished sankalpa, and a duration
+can be typed rather than stepped to.
 
 ## How much history is reported
 
