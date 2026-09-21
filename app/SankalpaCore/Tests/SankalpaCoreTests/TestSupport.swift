@@ -44,7 +44,11 @@ final class InMemorySankalpaRepository: SankalpaRepository {
 
     func find(_ id: SankalpaId) -> Sankalpa? { storage[id] }
 
-    func save(_ sankalpa: Sankalpa) {
+    /// Set to make every write fail, so a caller's handling of a storage failure can be tested.
+    var failWrites = false
+
+    func save(_ sankalpa: Sankalpa) throws(PersistenceError) {
+        if failWrites { throw .writeFailed }
         if storage[sankalpa.id] == nil { order.append(sankalpa.id) }
         storage[sankalpa.id] = sankalpa
     }
@@ -53,9 +57,17 @@ final class InMemorySankalpaRepository: SankalpaRepository {
 final class InMemorySessionRepository: SessionRepository {
     private(set) var storage: [Session] = []
 
-    func save(_ session: Session) { storage.append(session) }
+    var failWrites = false
 
-    func delete(_ sessionId: SessionId) { storage.removeAll { $0.id == sessionId } }
+    func save(_ session: Session) throws(PersistenceError) {
+        if failWrites { throw .writeFailed }
+        storage.append(session)
+    }
+
+    func delete(_ sessionId: SessionId) throws(PersistenceError) {
+        if failWrites { throw .writeFailed }
+        storage.removeAll { $0.id == sessionId }
+    }
 
     func sessions(for sankalpaId: SankalpaId, from: CalendarDay, until: CalendarDay) -> [Session] {
         storage.filter {

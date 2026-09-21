@@ -115,13 +115,13 @@ extension LifecycleState {
         case .inProgress:
             return "Sessions can be logged. Each period is judged once it closes."
         case .paused:
-            return "Nothing can be logged while paused. Periods keep their boundaries and the end date does not move."
+            return "Nothing new can be logged while paused, but a session from an earlier In progress stretch can still be recorded. Periods keep their boundaries and the end date does not move."
         case .completedSuccessfully:
-            return "You completed this sankalpa successfully. Only periods that closed before then were judged."
+            return "You completed this sankalpa successfully. Only periods that closed before then were judged, and eligible past sessions can still be recorded."
         case .completedUnsuccessfully:
-            return "You completed this sankalpa unsuccessfully. Only periods that closed before then were judged."
+            return "You completed this sankalpa unsuccessfully. Only periods that closed before then were judged, and eligible past sessions can still be recorded."
         case .stopped:
-            return "You stopped this sankalpa. Only periods that closed before then were judged."
+            return "You stopped this sankalpa. Only periods that closed before then were judged, and eligible past sessions can still be recorded."
         }
     }
 }

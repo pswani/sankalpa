@@ -81,6 +81,38 @@ extension SankalpaApplicationService {
         )
     }
 
+    /// The newest moment for which a session could still be accepted, or `nil` if there is none.
+    ///
+    /// A session is eligible only where commitment coverage and an In progress stretch overlap, so
+    /// after a Pause or a Stop the newest eligible moment is *before* that transition, not now.
+    /// Handing this to a date picker means the picker cannot offer a time the domain will refuse.
+    public func latestEligibleMoment(for sankalpa: Sankalpa, now: CalendarMoment) -> CalendarMoment? {
+        var upper = now
+        if let endDate = sankalpa.commitment.endDate {
+            upper = min(upper, .endOfDay(endDate))
+        }
+        guard upper >= .startOfDay(sankalpa.commitment.startDate) else { return nil }
+
+        let transitions = sankalpa.lifecycle.transitions
+        for index in transitions.indices.reversed() where transitions[index].to == .inProgress {
+            let start = transitions[index].effectiveAt
+            var end = upper
+            if index + 1 < transitions.count {
+                end = min(end, Self.momentJustBefore(transitions[index + 1].effectiveAt))
+            }
+            if end >= start { return end }
+        }
+        return nil
+    }
+
+    /// One second earlier — or the end of the previous day, because a transition effective at
+    /// midnight means the last eligible instant belongs to the day before.
+    private static func momentJustBefore(_ moment: CalendarMoment) -> CalendarMoment {
+        moment.secondOfDay == 0
+            ? .endOfDay(moment.day.addingDays(-1))
+            : CalendarMoment(day: moment.day, secondOfDay: moment.secondOfDay - 1)
+    }
+
     /// How many sessions have been performed inside one window — used to preview what logging a
     /// backdated session would do.
     public func performedCount(_ id: SankalpaId, in window: PeriodWindow) -> Int {
@@ -95,7 +127,8 @@ extension SankalpaApplicationService {
         from: CalendarDay,
         until: CalendarDay
     ) -> [PeriodOutcome] {
-        guard let sankalpa = findSankalpa(id) else { return [] }
+        // An inverted range would trap when `from...until` is constructed.
+        guard from <= until, let sankalpa = findSankalpa(id) else { return [] }
         return outcomes(for: sankalpa, range: from...until)
     }
 

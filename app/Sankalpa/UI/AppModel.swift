@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SankalpaCore
+import SankalpaStorage
 
 /// The driving adapter between SwiftUI and the application layer.
 ///
@@ -9,7 +10,7 @@ import SankalpaCore
 @MainActor
 @Observable
 final class AppModel {
-    private let store: FileSankalpaStore
+    private let store: FileStore
     private let service: SankalpaApplicationService
 
     /// Everything the list and Today screens render, refreshed after each command.
@@ -28,20 +29,32 @@ final class AppModel {
     /// The session the confirmation banner can still take back, if any.
     private(set) var undoableSession: SessionId?
 
-    init(store: FileSankalpaStore, clock: SankalpaClock = SystemClock(), seedIfEmpty: Bool = true) {
+    /// Non-nil when the store could not be opened. The whole app drops into recovery rather than
+    /// showing an empty practice, which would look identical to a fresh install.
+    var storageProblem: String? { store.loadError }
+
+    init(store: FileStore, clock: SankalpaClock = SystemClock(), seedDemoData: Bool = false) {
         self.store = store
         self.service = SankalpaApplicationService(
             sankalpas: store, sessions: store, clock: clock
         )
         self.today = clock.today()
-        if seedIfEmpty, store.isEmpty {
+        // Demo data is opt-in and only ever seeds a genuinely new store. Seeding on "the store came
+        // back empty" is how a failed load, or a deliberate Clear, silently gets overwritten.
+        if seedDemoData, store.isNew {
             SampleData.seed(into: store, clock: clock)
         }
         refresh()
     }
 
     convenience init() {
-        self.init(store: FileSankalpaStore(fileURL: FileSankalpaStore.defaultFileURL()))
+        let wantsDemoData: Bool
+        #if DEBUG
+        wantsDemoData = ProcessInfo.processInfo.arguments.contains("-demo")
+        #else
+        wantsDemoData = false
+        #endif
+        self.init(store: FileStore(fileURL: FileStore.defaultFileURL()), seedDemoData: wantsDemoData)
     }
 
     // MARK: - Reading
@@ -98,6 +111,12 @@ final class AppModel {
         service.performedCount(id, in: window)
     }
 
+    /// The newest moment a session could still be recorded for, so a picker cannot offer a time
+    /// the domain will refuse.
+    func latestEligibleMoment(for sankalpa: Sankalpa) -> CalendarMoment? {
+        service.latestEligibleMoment(for: sankalpa, now: service.now())
+    }
+
     func journal(days: Int = 120) -> [JournalEntry] {
         service.journal(from: today.addingDays(-days), until: today)
     }
@@ -132,10 +151,14 @@ final class AppModel {
     /// undo is only ever offered for the action the user can still see.
     func undoLastSession() {
         guard let sessionId = undoableSession else { return }
-        service.undoLoggedSession(sessionId)
         undoableSession = nil
-        refresh()
-        confirmation = "Session removed"
+        do {
+            try service.undoLoggedSession(sessionId)
+            refresh()
+            confirmation = "Session removed"
+        } catch {
+            alertMessage = error.message
+        }
     }
 
     // MARK: - Commands with alert error reporting
@@ -163,11 +186,23 @@ final class AppModel {
         perform("Stopped") { try service.stopSankalpa(id) }
     }
 
-    /// Clears the sample data this app seeds on a first launch.
+    /// Removes everything. A cleared store stays cleared: nothing re-seeds it on the next launch.
     func clearAll() {
-        store.replaceAll(sankalpas: [], sessions: [])
+        do {
+            try store.clear()
+            refresh()
+            confirmation = "Cleared"
+        } catch {
+            alertMessage = error.message
+        }
+    }
+
+    // MARK: - Recovery
+
+    /// Tries to open the store again, for when the failure was transient.
+    func retryLoadingStore() {
+        store.reload()
         refresh()
-        confirmation = "Cleared"
     }
 
     // MARK: - Plumbing

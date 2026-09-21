@@ -32,8 +32,16 @@ public struct LifecycleTimeline: Hashable, Codable, Sendable {
         guard effectiveAt <= recordedAt else {
             throw .transitionInFuture
         }
-        guard effectiveAt.day >= commitmentStart else {
+        // The start date bounds when a sankalpa may be *acted on*, so it gates entering In
+        // progress. Ending one early is always allowed: a sankalpa declared for next week can be
+        // stopped today, and simply has no evaluated periods.
+        guard target.isTerminal || effectiveAt.day >= commitmentStart else {
             throw .transitionBeforeStart(startDate: commitmentStart)
+        }
+        // S14 — only the first transition, Not started → In progress, may separate its effective
+        // time from when it was recorded. Everything else takes effect when the user performs it.
+        guard effectiveAt == recordedAt || (current == .notStarted && target == .inProgress) else {
+            throw .invalidLifecycleTransition(from: current, to: target)
         }
         // A backdated Begin must still land after everything already recorded.
         if let last = transitions.last, effectiveAt < last.effectiveAt {

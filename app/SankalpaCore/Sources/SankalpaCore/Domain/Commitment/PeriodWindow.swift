@@ -1,7 +1,7 @@
 import Foundation
 
 /// One concrete occurrence of a period, with inclusive bounds (DD-12).
-public struct PeriodWindow: Hashable, Codable, Sendable {
+public struct PeriodWindow: Hashable, Sendable {
     /// Zero-based: window 0 begins on the commitment's start date.
     public let index: Int
     public let unit: PeriodUnit

@@ -7,6 +7,7 @@ public enum SankalpaCommandError: Error, Equatable, Sendable {
     case declaration(DeclarationError)
     case lifecycle(LifecycleTransitionError)
     case session(SessionNotLoggable)
+    case storage(PersistenceError)
 
     public var message: String {
         switch self {
@@ -17,6 +18,8 @@ public enum SankalpaCommandError: Error, Equatable, Sendable {
         case .lifecycle(let error):
             return error.message
         case .session(let error):
+            return error.message
+        case .storage(let error):
             return error.message
         }
     }

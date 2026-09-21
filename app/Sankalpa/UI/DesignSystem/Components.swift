@@ -19,15 +19,24 @@ struct ActionChip: View {
 /// Lifecycle state, always as symbol plus words so the badge never relies on colour alone.
 struct StateBadge: View {
     let state: LifecycleState
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         Label(state.badgeText, systemImage: state.symbolName)
             .font(.caption.weight(.semibold))
             .labelStyle(.titleAndIcon)
+            // At accessibility sizes a capsule this size forces the words to break mid-syllable
+            // ("In / progres / s"), so the pill is dropped and the label is left to wrap.
+            .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+            .fixedSize(horizontal: false, vertical: true)
             .foregroundStyle(state.tint)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(state.tint.opacity(0.13), in: .capsule)
+            .padding(.horizontal, typeSize.isAccessibilitySize ? 0 : 8)
+            .padding(.vertical, typeSize.isAccessibilitySize ? 0 : 4)
+            .background {
+                if !typeSize.isAccessibilitySize {
+                    Capsule().fill(state.tint.opacity(0.13))
+                }
+            }
             .accessibilityLabel("Status: \(state.displayName)")
     }
 }

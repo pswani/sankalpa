@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		AA0000000000000000000001 /* SankalpaCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000012 /* SankalpaCore */; };
+		AA0000000000000000000031 /* SankalpaStorage in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000032 /* SankalpaStorage */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,6 +45,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA0000000000000000000001 /* SankalpaCore in Frameworks */,
+				AA0000000000000000000031 /* SankalpaStorage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -96,6 +98,7 @@
 			name = Sankalpa;
 			packageProductDependencies = (
 				AA0000000000000000000012 /* SankalpaCore */,
+				AA0000000000000000000032 /* SankalpaStorage */,
 			);
 			productName = Sankalpa;
 			productReference = AA0000000000000000000002 /* Sankalpa.app */;
@@ -288,7 +291,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.sankalpa.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -314,7 +317,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.sankalpa.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -328,7 +331,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.sankalpa.app.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = Sankalpa;
 			};
 			name = Debug;
@@ -343,7 +346,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.sankalpa.app.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = Sankalpa;
 			};
 			name = Release;
@@ -391,6 +394,10 @@
 		AA0000000000000000000012 /* SankalpaCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SankalpaCore;
+		};
+		AA0000000000000000000032 /* SankalpaStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SankalpaStorage;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

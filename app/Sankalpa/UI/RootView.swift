@@ -14,15 +14,14 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
 
-        TabView(selection: $selectedTab) {
-            Tab("Today", systemImage: "sun.horizon", value: AppTab.today) {
-                TodayView(onDeclare: { declaringSankalpa = true })
-            }
-            Tab("Sankalpas", systemImage: "list.bullet.rectangle", value: AppTab.sankalpas) {
-                SankalpaListView(onDeclare: { declaringSankalpa = true })
-            }
-            Tab("Journal", systemImage: "book.closed", value: AppTab.journal) {
-                JournalView()
+        Group {
+            // A store that could not be read takes over the whole app. Showing an empty practice
+            // instead would be indistinguishable from a fresh install, and inviting the user to
+            // start declaring would write over data that is still recoverable.
+            if let problem = model.storageProblem {
+                RecoveryView(message: problem)
+            } else {
+                tabs
             }
         }
         .sheet(isPresented: $declaringSankalpa) {
@@ -56,6 +55,20 @@ struct RootView: View {
         }
         .animation(.snappy, value: model.confirmation)
         .sensoryFeedback(.success, trigger: model.successCount)
+    }
+
+    private var tabs: some View {
+        TabView(selection: $selectedTab) {
+            Tab("Today", systemImage: "sun.horizon", value: AppTab.today) {
+                TodayView(onDeclare: { declaringSankalpa = true })
+            }
+            Tab("Sankalpas", systemImage: "list.bullet.rectangle", value: AppTab.sankalpas) {
+                SankalpaListView(onDeclare: { declaringSankalpa = true })
+            }
+            Tab("Journal", systemImage: "book.closed", value: AppTab.journal) {
+                JournalView()
+            }
+        }
     }
 }
 

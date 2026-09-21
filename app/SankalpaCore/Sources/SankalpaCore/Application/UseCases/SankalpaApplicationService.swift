@@ -63,7 +63,11 @@ public final class SankalpaApplicationService {
         } catch {
             throw .declaration(error)
         }
-        sankalpas.save(sankalpa)
+        do {
+            try sankalpas.save(sankalpa)
+        } catch {
+            throw .storage(error)
+        }
         return sankalpa
     }
 
@@ -123,7 +127,11 @@ public final class SankalpaApplicationService {
         } catch {
             throw .session(error)
         }
-        sessions.save(session)
+        do {
+            try sessions.save(session)
+        } catch {
+            throw .storage(error)
+        }
         return session
     }
 
@@ -133,8 +141,12 @@ public final class SankalpaApplicationService {
     /// case for one. Undoing the tap you just made is a different thing from amending history, so
     /// this is deliberately narrow: the caller passes the id it received from `logSession`, and
     /// nothing else can be removed.
-    public func undoLoggedSession(_ sessionId: SessionId) {
-        sessions.delete(sessionId)
+    public func undoLoggedSession(_ sessionId: SessionId) throws(SankalpaCommandError) {
+        do {
+            try sessions.delete(sessionId)
+        } catch {
+            throw .storage(error)
+        }
     }
 
     private func mutate(
@@ -147,6 +159,10 @@ public final class SankalpaApplicationService {
         } catch {
             throw .lifecycle(error)
         }
-        sankalpas.save(sankalpa)
+        do {
+            try sankalpas.save(sankalpa)
+        } catch {
+            throw .storage(error)
+        }
     }
 }

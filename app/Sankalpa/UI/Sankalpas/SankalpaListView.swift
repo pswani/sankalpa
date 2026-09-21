@@ -120,34 +120,55 @@ struct SankalpaRow: View {
     @Environment(AppModel.self) private var model
     let summary: SankalpaSummary
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        // At accessibility sizes the icon moves above the text instead of competing with it for a
+        // shrinking column, and the badge and progress stack rather than sharing a row.
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+
+        return layout {
             ActionChip(actionType: summary.actionType, size: 38)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(summary.title)
                     .font(.body.weight(.medium))
-                    .lineLimit(2)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Text(summary.commitment.fullPhrase)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 6) {
-                    StateBadge(state: summary.state)
-                    if let period = summary.currentPeriod, summary.state == .inProgress {
-                        Text(period.progressPhrase)
-                            .font(.caption)
-                            .foregroundStyle(period.isSatisfied ? Palette.satisfied : .secondary)
-                    }
-                }
-                .padding(.top, 2)
+                statusLine
+                    .padding(.top, 2)
             }
 
-            Spacer(minLength: 0)
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        let progress = (summary.state == .inProgress) ? summary.currentPeriod : nil
+        let statusLayout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(spacing: 6))
+
+        statusLayout {
+            StateBadge(state: summary.state)
+            if let progress {
+                Text(progress.progressPhrase)
+                    .font(.caption)
+                    .foregroundStyle(progress.isSatisfied ? Palette.satisfied : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }

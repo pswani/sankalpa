@@ -1,5 +1,6 @@
 import SwiftUI
 import SankalpaCore
+import SankalpaStorage
 
 struct SankalpaDetailView: View {
     @Environment(AppModel.self) private var model
@@ -9,6 +10,8 @@ struct SankalpaDetailView: View {
     @State private var beginningWithDate = false
     @State private var confirmingComplete = false
     @State private var confirmingStop = false
+
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var summary: SankalpaSummary? { model.summary(sankalpaId) }
 
@@ -27,6 +30,18 @@ struct SankalpaDetailView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(summary?.title ?? "Sankalpa")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // Recording a forgotten session stays reachable from every state that ever had
+            // eligible time — including Paused and the terminal ones. The domain already allows a
+            // session dated inside an earlier In progress stretch; until now no screen offered it.
+            if let summary, summary.sankalpa.lifecycle.beganAt != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Log a past session", systemImage: "clock.arrow.circlepath") {
+                        loggingSession = true
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $loggingSession) {
             if let summary { LogSessionView(summary: summary) }
         }
@@ -59,16 +74,23 @@ struct SankalpaDetailView: View {
     private func headerCard(_ summary: SankalpaSummary) -> some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
+                // Three things abreast is fine at standard sizes and unreadable at accessibility
+                // ones, where the title wraps to a sliver and the badge breaks mid-word.
+                let headerLayout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+
+                headerLayout {
                     ActionChip(actionType: summary.actionType, size: 48)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(summary.title)
                             .font(.title3.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
                         Text(summary.actionType.displayName)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
-                    Spacer(minLength: 0)
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
                     StateBadge(state: summary.state)
                 }
 
@@ -354,10 +376,12 @@ struct SankalpaDetailView: View {
                     lifecycleButton("Begin now", style: .primary) { model.begin(summary.id) }
                         .disabled(summary.commitment.startDate > model.today)
 
-                    lifecycleButton("Begin on an earlier date…", style: .quiet) {
+                    // Enabled on the start date itself: declaring at noon and beginning at 07:00
+                    // the same morning is exactly how a session already performed gets recorded.
+                    lifecycleButton("Begin at an earlier time…", style: .quiet) {
                         beginningWithDate = true
                     }
-                    .disabled(summary.commitment.startDate >= model.today)
+                    .disabled(summary.commitment.startDate > model.today)
                 }
 
                 if state == .inProgress {

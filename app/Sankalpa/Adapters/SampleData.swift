@@ -1,13 +1,15 @@
 import Foundation
 import SankalpaCore
+import SankalpaStorage
 
-/// Seeds a first launch with a few sankalpas so there is something to explore.
+/// Demo content for exploring the app, seeded only on an explicit `-demo` launch.
 ///
-/// Every sankalpa here is built through the real domain API — declared, begun, logged — so the
-/// sample data cannot contain a state the rules would not allow.
+/// This is never part of a normal launch or a release build: a real practice history should not
+/// have to be told apart from examples. Every sankalpa here is built through the real domain API —
+/// declared, begun, logged — so the demo cannot contain a state the rules would not allow.
 enum SampleData {
 
-    static func seed(into store: FileSankalpaStore, clock: SankalpaClock) {
+    static func seed(into store: FileStore, clock: SankalpaClock) {
         let now = clock.now()
         let today = now.day
         var sankalpas: [Sankalpa] = []
@@ -24,7 +26,9 @@ enum SampleData {
         add(dreamJournal(today: today, now: now))
         add(morningWalk(today: today, now: now))
 
-        store.replaceAll(sankalpas: sankalpas, sessions: sessions)
+        // Demo seeding is best-effort: if it cannot be written, the app simply starts empty rather
+        // than failing to launch.
+        try? store.replaceAll(sankalpas: sankalpas, sessions: sessions)
     }
 
     // MARK: - The requirement's first example

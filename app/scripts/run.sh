@@ -35,7 +35,13 @@ xcrun simctl boot "$DEVICE" 2>/dev/null || true
 
 APP="$DERIVED/Build/Products/Debug-iphonesimulator/Sankalpa.app"
 xcrun simctl install "$DEVICE" "$APP"
-xcrun simctl launch "$DEVICE" "$BUNDLE_ID" >/dev/null
+
+# Demo content is opt-in: a normal launch starts empty, like a real install.
+if [ "${DEMO:-0}" = "1" ]; then
+  xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -demo >/dev/null
+else
+  xcrun simctl launch "$DEVICE" "$BUNDLE_ID" >/dev/null
+fi
 
 echo
 echo "Sankalpa is running on $DEVICE."

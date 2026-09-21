@@ -100,6 +100,12 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
     /// S11 — the only transition that may be backdated. Its effective time may be in the past, but
     /// never in the future and never before the commitment's start date.
     public mutating func begin(_ timing: BeginTiming) throws(LifecycleTransitionError) {
+        // Begin is specifically the first transition. Without this, `begin` on a Paused sankalpa
+        // would be accepted as a resume — and, because Begin may be backdated, would rewrite the
+        // end of the paused interval into the past.
+        guard state == .notStarted else {
+            throw .invalidLifecycleTransition(from: state, to: .inProgress)
+        }
         try lifecycle.record(
             to: .inProgress,
             effectiveAt: timing.effectiveAt,
@@ -113,6 +119,9 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
     }
 
     public mutating func resume(now: CalendarMoment) throws(LifecycleTransitionError) {
+        guard state == .paused else {
+            throw .invalidLifecycleTransition(from: state, to: .inProgress)
+        }
         try transitionNow(to: .inProgress, now: now)
     }
 
@@ -167,15 +176,5 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
             occurredAt: occurredAt,
             loggedAt: now
         )
-    }
-
-    /// Whether logging is worth offering at all right now — used to decide whether the UI shows a
-    /// log affordance, not as a substitute for `logSession`'s checks.
-    public func acceptsSessions(asOf now: CalendarMoment) -> Bool {
-        guard commitment.startDate <= now.day else { return false }
-        if let endDate = commitment.endDate, now.day > endDate, lifecycle.beganAt == nil {
-            return false
-        }
-        return lifecycle.beganAt != nil
     }
 }

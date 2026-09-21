@@ -1,5 +1,6 @@
 import SwiftUI
 import SankalpaCore
+import SankalpaStorage
 
 /// Logging a session for a moment other than right now. The rules that can refuse it are stated up
 /// front, and the picker is bounded so most refusals never arise.
@@ -13,15 +14,26 @@ struct LogSessionView: View {
 
     private var commitment: Commitment { summary.commitment }
 
-    /// The picker never offers a moment before the start date or in the future. The end date, and
-    /// whether the sankalpa was In progress then, are still checked by the domain.
+    /// The newest moment the domain would still accept. After a pause or a stop this is before
+    /// that transition, not now — so the picker cannot offer a time that would be refused.
+    private var latestEligible: CalendarMoment? {
+        model.latestEligibleMoment(for: summary.sankalpa)
+    }
+
+    /// The picker never offers a moment before the start date, after the commitment, or outside an
+    /// In progress stretch.
     private var range: ClosedRange<Date> {
         let lower = AppTime.date(from: CalendarMoment.startOfDay(commitment.startDate))
-        var upper = AppTime.date(from: model.now())
-        if let endDate = commitment.endDate {
-            upper = min(upper, AppTime.date(from: CalendarMoment.endOfDay(endDate)))
-        }
+        let upper = AppTime.date(from: latestEligible ?? model.now())
         return lower...max(lower, upper)
+    }
+
+    private var footerText: String {
+        let base = "A session records something you have already done, so it cannot be in the future."
+        guard summary.state != .inProgress, latestEligible != nil else { return base }
+        // Paused and finished sankalpas can still be backfilled, but only inside a stretch when
+        // they were actually running — say so rather than letting the domain refuse it later.
+        return base + " It must also fall inside a time when this sankalpa was In progress."
     }
 
     /// What this session would do to the period it lands in.
@@ -49,7 +61,7 @@ struct LogSessionView: View {
                 } header: {
                     Text("When you performed it")
                 } footer: {
-                    Text("A session records something you have already done, so it cannot be in the future.")
+                    Text(footerText)
                 }
 
                 if let landing = landingPeriod {
@@ -83,7 +95,9 @@ struct LogSessionView: View {
                     Button("Log", action: log).fontWeight(.semibold)
                 }
             }
-            .onAppear { occurredAt = min(Date(), range.upperBound) }
+            // Opens at the newest eligible moment rather than now, so a paused or finished
+            // sankalpa starts on a time that will actually be accepted.
+            .onAppear { occurredAt = range.upperBound }
         }
         .presentationDetents([.medium, .large])
     }

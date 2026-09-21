@@ -234,7 +234,7 @@ struct ApplicationServiceTests {
         let second = try env.service.logSession(sankalpa.id, occurredAt: moment(2026, 1, 1, 19))
         #expect(env.service.currentPeriodProgress(for: sankalpa)?.isSatisfied == true)
 
-        env.service.undoLoggedSession(second.id)
+        try env.service.undoLoggedSession(second.id)
 
         let current = try #require(env.service.currentPeriodProgress(for: sankalpa))
         #expect(current.performed == 1)

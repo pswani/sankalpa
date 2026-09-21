@@ -20,25 +20,42 @@ Pick the **Sankalpa** scheme and an iPhone 17 Pro simulator. From the command li
 xcodebuild -project app/Sankalpa.xcodeproj -scheme Sankalpa -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
-On a first launch the app shows a short introduction and seeds five sample sankalpas — one per
-lifecycle state and one per action type — so every screen has something in it. **Clear all data**
-at the foot of the Sankalpas list removes them.
+**A normal launch starts empty.** Demo content — five sankalpas, one per lifecycle state and one
+per action type — is seeded only in a Debug build launched with `-demo`, and only into a store that
+is genuinely new. It is never seeded by a release build, and clearing the data keeps it cleared.
+
+```bash
+./app/scripts/run.sh          # your own practice, starts empty
+DEMO=1 ./app/scripts/run.sh   # with the demo content
+```
 
 ## Layout
 
 ```text
 app/
-  SankalpaCore/          Swift package: domain + application. Foundation only, no UI.
+  SankalpaCore/          Swift package, two library targets
     Sources/SankalpaCore/
       Domain/            Sankalpa, Session, Commitment, LifecycleTimeline, PeriodOutcomeCalculator
       Application/       Ports, use cases, queries, read models
-    Tests/               60 tests over the commitment arithmetic and lifecycle rules
+    Sources/SankalpaStorage/
+      FileStore.swift    The JSON store, with its load/write failure behaviour
+      AppTime.swift      The one place instants become dates
+    Tests/               69 core tests + 8 storage tests
   Sankalpa/              The iOS app
-    Adapters/            Clock, JSON store, sample data — the driven side
+    Adapters/            Demo data — the driven side
     UI/                  SwiftUI screens and the design system — the driving side
   SankalpaUITests/       A tour that drives every screen and captures it
-  scripts/               screen-tour.sh, make-app-icon.py
+  scripts/               screen-tour.sh, run.sh, make-app-icon.py
 ```
+
+`SankalpaStorage` is a library target rather than app code specifically so its failure paths can be
+tested. A store that cannot be read, and a write that fails, are the two ways this app could lose
+someone's practice history; both now have tests.
+
+There is no backup or restore. An unreadable store is reported, left exactly as it is, and can be
+retried — that is what stops data being lost. Restoring from a backup was built and then removed:
+the only way to produce a backup was a button you could reach only after your store was already
+broken, so the loop was never going to close.
 
 The dependency rule from
 [06-hexagonal-architecture](../docs/architecture/ddd/06-hexagonal-architecture.md) holds: the
@@ -104,9 +121,12 @@ a local single-user iPhone app leads to a few deliberate differences.
 | Seven single-method use-case classes | One `SankalpaApplicationService`, one method per use case | The use-case names stay visible without seven files of constructor boilerplate. No rules moved into it. |
 | `Result<T, E>` returns | Swift typed `throws(E)` | The same thing in Swift, and it reads better at the call site. Every domain error type is still explicit in the signature. |
 | `LocalDate` / `LocalDateTime` | `CalendarDay` / `CalendarMoment` | Foundation has no zone-free date. These are integer-only value types, so a daylight-saving shift cannot move a period boundary. Conversion happens once, in `AppTime`. |
+| iPhone and iPad | iPhone only (`TARGETED_DEVICE_FAMILY = 1`) | The requirement is an iPhone app. Declaring iPad without designing or testing a layout for it produced an orientation warning and would have claimed support that does not exist. |
 | Domain objects mapped to persistence rows | Domain types are `Codable`, stored in a versioned JSON envelope | For a local file store, hand-written DTO mapping would be ceremony. The envelope carries a schema version so the shape can change later. |
 | HTTP controllers | SwiftUI views and `AppModel` | The driving adapter for this app is the UI. |
 | `SessionRepository.findForSankalpa` | Plus `sessions(from:until:)` across all sankalpas | The Journal reads performed sessions across sankalpas. Still day-range bounded, per DD-17. |
+| iPhone and iPad | iPhone only (`TARGETED_DEVICE_FAMILY = 1`) | The requirement is an iPhone app. Declaring iPad without designing or testing a layout for it produced an orientation warning and would have claimed support that does not exist. |
+| Domain objects mapped to persistence rows | Domain types are `Codable`, stored in a versioned JSON envelope | For a local file store, hand-written DTO mapping would be ceremony. The envelope carries a schema version, and a file written by a newer version is refused rather than replaced. |
 | No session delete use case | `SessionRepository.delete` plus `undoLoggedSession` | Logging is one tap on the largest control in the app. Taking back the tap you just made is a different thing from amending history, so the capability is deliberately narrow: only the id returned by `logSession`, only while the confirmation is still on screen. Editing an older session is still out of scope (Q3). |
 
 Two debug-only launch arguments exist, compiled out of release builds, both for the screen tour:
@@ -116,7 +136,8 @@ captured and then dismissed normally.
 
 ## Interpretations
 
-Two things the requirements do not settle, decided here so the behaviour is at least explicit:
+Decisions the requirements do not settle, recorded so the behaviour is explicit rather than
+accidental. Each is *decision → reason → what is still open*.
 
 - **Periods that closed before the sankalpa was begun are evaluated as missed.** "When a period ends,
   each session not logged as performed counts as missed" has no carve-out for them, and a backdated
@@ -126,5 +147,18 @@ Two things the requirements do not settle, decided here so the behaviour is at l
   may be. A sankalpa declared with a start date still to come simply waits in Not started, and
   Begin is refused until that date.
 
-Both are worth confirming before this is taken further; they belong with the questions in
+- **A declared sankalpa cannot be edited**, because the requirements leave editing unresolved
+  (Q2/A3). The detail screen says so rather than leaving the user hunting for a button. *Open:
+  amendment A3 would allow changing Key Information while Not started, which is the natural way to
+  move a start date.*
+- **Undo is limited to the session just logged**, while its confirmation is still on screen. A
+  recorded fact is not otherwise editable (Q3). *Open: whether older sessions should be
+  correctable.*
+- **The time zone is captured once per launch**, so a day already recorded keeps its meaning if the
+  device travels mid-session; a relaunch picks up the new zone. *Open: Q1 — no per-sankalpa zone is
+  modelled, and repeated daylight-saving hours have no stated policy.*
+- **A period is judged only once it closes**, so the current period is neither satisfied nor missed
+  and is shown as open.
+
+All of these are worth confirming before this is taken further; they belong with the questions in
 [09-open-questions](../docs/architecture/ddd/09-open-questions.md).

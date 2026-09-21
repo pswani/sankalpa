@@ -1,6 +1,6 @@
 import Foundation
 
-public enum PeriodStanding: String, Codable, Sendable {
+public enum PeriodStanding: String, Sendable {
     /// The window has not closed yet, so it is neither satisfied nor missed.
     case open
     /// S13 — the sankalpa was Paused for this window's entire span.
@@ -20,7 +20,7 @@ public enum PeriodStanding: String, Codable, Sendable {
 
 /// A derived result for one period. Never stored — a stored copy would be a second truth that can
 /// drift from the commitment, the lifecycle and the sessions it comes from (DD-6).
-public struct PeriodOutcome: Hashable, Codable, Sendable, Identifiable {
+public struct PeriodOutcome: Hashable, Sendable, Identifiable {
     public let window: PeriodWindow
     public let required: Int
     public let performed: Int
@@ -42,13 +42,6 @@ public struct PeriodOutcome: Hashable, Codable, Sendable, Identifiable {
         self.performed = performed
         self.missed = missed
         self.standing = standing
-    }
-
-    /// Progress toward the minimum, clamped at 1 because performing more than committed still just
-    /// satisfies the period.
-    public var completionFraction: Double {
-        guard required > 0 else { return 1 }
-        return min(1, Double(performed) / Double(required))
     }
 
     public var exceededCommitment: Bool { performed > required }

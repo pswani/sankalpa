@@ -15,17 +15,45 @@ final class ScreenTour: XCTestCase {
 
     /// Launches with optional overrides. Appearance is set before launch so the first frame is
     /// already in the right mode.
-    private func launch(dark: Bool = false, contentSize: String? = nil) {
-        // Tests run in alphabetical order and share one app container, so the first-run flag is
-        // reset per launch rather than relying on a fresh install.
-        app.launchArguments.append("-resetIntroduction")
-        if dark {
-            app.launchArguments.append("-forceDarkMode")
-        }
+    ///
+    /// Every test gets its own store file and wipes it first, so tests cannot leak state into one
+    /// another and can never touch a real practice history on the simulator.
+    private func launch(
+        demo: Bool = true,
+        dark: Bool = false,
+        corruptStore: Bool = false,
+        contentSize: String? = nil
+    ) {
+        XCUIDevice.shared.orientation = .portrait
+        app.launchEnvironment["SANKALPA_TEST_STORE"] = UUID().uuidString
+        app.launchArguments = ["-resetStore", "-resetIntroduction"]
+        if demo { app.launchArguments.append("-demo") }
+        if dark { app.launchArguments.append("-forceDarkMode") }
+        if corruptStore { app.launchArguments.append("-corruptStore") }
         if let contentSize {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize]
         }
         app.launch()
+    }
+
+    /// Relaunches against the same store without wiping it, to prove data survived.
+    private func relaunch() {
+        app.terminate()
+        app.launchArguments.removeAll {
+            $0 == "-resetStore" || $0 == "-demo" || $0 == "-resetIntroduction"
+        }
+        app.launch()
+    }
+
+    /// Scrolls until the element is actually on screen. An element that merely `exists` can still
+    /// be off screen, and tapping it then silently misses.
+    @discardableResult
+    private func reveal(_ element: XCUIElement, attempts: Int = 12) -> Bool {
+        for _ in 0..<attempts {
+            if element.exists && element.isHittable { return true }
+            app.swipeUp()
+        }
+        return element.exists && element.isHittable
     }
 
     func testTourEveryScreen() throws {
@@ -178,6 +206,39 @@ final class ScreenTour: XCTestCase {
         // keeps removing things.
         XCTAssertTrue(undo.waitForNonExistence(timeout: 4), "the undo offer was still on screen")
         capture("23-after-undo")
+    }
+
+    /// An unreadable store must take over the app rather than looking like a fresh install, and
+    /// must never be overwritten by the demo seed.
+    func testUnreadableStoreShowsRecovery() throws {
+        launch(corruptStore: true)
+
+        XCTAssertTrue(
+            app.staticTexts["Your data needs attention"].waitForExistence(timeout: 10),
+            "a corrupt store did not raise the recovery screen"
+        )
+        // The app is not usable as if it were empty.
+        XCTAssertFalse(app.buttons["Declare a sankalpa"].exists)
+        XCTAssertTrue(app.buttons["Try opening again"].exists)
+        capture("24-recovery")
+    }
+
+    /// A logged session has to still be there after the app is closed and reopened.
+    func testSessionSurvivesRelaunch() throws {
+        launch()
+        dismissIntroduction()
+        XCTAssertTrue(app.staticTexts["Vipassana"].waitForExistence(timeout: 10))
+
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Log a")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 3))
+
+        relaunch()
+        XCTAssertTrue(
+            app.staticTexts["Vipassana"].waitForExistence(timeout: 10),
+            "the practice did not survive a relaunch"
+        )
+        // The introduction was dismissed before, and the demo seed must not run again.
+        XCTAssertFalse(app.buttons["Got it"].exists)
     }
 
     /// The first-run card covers the board, so every tour dismisses it before going further.
