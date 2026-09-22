@@ -2,18 +2,24 @@ import XCTest
 
 /// What every UI test needs to drive this app, in one place.
 ///
-/// The two things that matter here are isolation and honesty. Each test gets its own store file
-/// and wipes it first, so no test can read, write or depend on another's data — or on a real
-/// practice history that happens to be on the simulator. And every helper that cannot do what it
-/// was asked fails the test rather than carrying on: a tap that silently misses is the one thing
-/// that turns a UI suite into decoration.
+/// The two things that matter here are isolation and honesty. The practice now lives in the
+/// service, so isolation comes from pointing the app at a throwaway one — `scripts/uitest.sh`
+/// starts a fresh backend per test class and passes its address in, which is what keeps a run from
+/// inheriting the last one's sankalpas or touching a real practice. And every helper that cannot
+/// do what it was asked fails the test rather than carrying on: a tap that silently misses is the
+/// one thing that turns a UI suite into decoration.
 class UITestCase: XCTestCase {
 
     var app: XCUIApplication!
 
     /// Long enough for a cold launch on a busy machine, short enough that a hang is still
     /// reported as a failure rather than as a timed-out run.
-    static let timeout: TimeInterval = 10
+    ///
+    /// It went up when the practice moved into the service. First paint is no longer a file read:
+    /// it is a list request plus a lifecycle and a session read per sankalpa, against a JVM that
+    /// may still be warming up on the first test of a run. The old three- and five-second content
+    /// waits were measuring the network, not the app.
+    static let timeout: TimeInterval = 30
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -22,38 +28,83 @@ class UITestCase: XCTestCase {
 
     // MARK: - Launching
 
+    /// Where the service for this run lives, passed in by `scripts/uitest.sh`.
+    ///
+    /// There is deliberately no default. Falling back to the app's own address would point the
+    /// suite at whatever is running on this Mac — quite possibly a real practice, which these
+    /// tests would then declare into and which has no delete to undo it with. Worse, the run would
+    /// report ordinary test failures rather than saying it was misconfigured, which is exactly how
+    /// a whole run gets spent chasing the wrong thing.
+    static func serviceURL(file: StaticString = #filePath, line: UInt = #line) -> String {
+        guard let url = ProcessInfo.processInfo.environment["SANKALPA_API_BASE_URL"] else {
+            XCTFail(
+                """
+                SANKALPA_API_BASE_URL was not set, so there is no service to test against. \
+                Run the UI suites with scripts/uitest.sh (or scripts/test.sh), which starts a \
+                throwaway service per test class and passes its address in.
+                """,
+                file: file, line: line
+            )
+            return ""
+        }
+        return url
+    }
+
+    /// A port nothing is listening on, for driving the app's behaviour when the service is out of
+    /// reach. This replaces the old corrupt-store argument: there is no local file to damage any
+    /// more, and an unreachable service is the failure that actually happens now.
+    static let unreachableServiceURL = "http://localhost:9"
+    /// How the app names that computer back to the user. The screens show where to look, not a
+    /// URL, so this is what a test should expect to read.
+    static let unreachableServiceDisplayText = "localhost:9"
+
     /// Launches with optional overrides. Appearance and text size are set before launch so the
     /// first frame is already in the right mode.
     ///
-    /// - Parameter demo: seed the five example sankalpas. Tests that build their own fixture
-    ///   through the UI pass `false`, which is also the state a real first run is in.
+    /// - Parameters:
+    ///   - unreachableService: point the app at a service that will not answer.
+    ///   - offline: keep the service address but behave as though it cannot be reached, which is
+    ///     the only way to drive the offline screens from inside the simulator.
+    ///   - keepCache: leave the phone's copy of the practice in place. Every launch starts from
+    ///     nothing by default — the cache is built to survive, so a test that did not ask would
+    ///     otherwise inherit the last run's practice.
     func launch(
-        demo: Bool = true,
         dark: Bool = false,
-        corruptStore: Bool = false,
+        unreachableService: Bool = false,
+        offline: Bool = false,
+        keepCache: Bool = false,
         contentSize: String? = nil
     ) {
         XCUIDevice.shared.orientation = .portrait
-        app.launchEnvironment["SANKALPA_TEST_STORE"] = UUID().uuidString
-        app.launchArguments = ["-resetStore", "-resetIntroduction"]
-        if demo { app.launchArguments.append("-demo") }
+        app.launchEnvironment["SANKALPA_API_BASE_URL"] = unreachableService
+            ? UITestCase.unreachableServiceURL
+            : UITestCase.serviceURL()
+        app.launchArguments = ["-resetIntroduction"]
+        if !keepCache { app.launchArguments.append("-resetCache") }
+        if offline { app.launchArguments.append("-offline") }
         if dark { app.launchArguments.append("-forceDarkMode") }
-        if corruptStore { app.launchArguments.append("-corruptStore") }
         if let contentSize {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize]
         }
         app.launch()
     }
 
-    /// Relaunches against the same store without wiping it, to prove data survived.
+    /// Relaunches with the phone's copy intact but the service out of reach, which is what a
+    /// second launch away from the Mac actually looks like.
+    func relaunchOffline() {
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "-resetIntroduction" || $0 == "-resetCache" }
+        app.launchArguments.append("-offline")
+        app.launch()
+    }
+
+    /// Relaunches against the same service, to prove what was recorded is still there.
     ///
-    /// The seed and reset arguments are dropped, which is the point: if `-demo` ran again the
-    /// relaunch would prove nothing, and a store that was deliberately cleared has to stay clear.
+    /// The introduction reset is dropped so the relaunch is a genuine second run rather than a
+    /// first one repeated.
     func relaunch() {
         app.terminate()
-        app.launchArguments.removeAll {
-            $0 == "-resetStore" || $0 == "-demo" || $0 == "-resetIntroduction"
-        }
+        app.launchArguments.removeAll { $0 == "-resetIntroduction" || $0 == "-resetCache" }
         app.launch()
     }
 
@@ -63,10 +114,18 @@ class UITestCase: XCTestCase {
     ///
     /// An element that merely `exists` can still be off screen, and tapping it then silently
     /// misses — the test goes green having done nothing.
+    ///
+    /// Waiting and scrolling are interleaved, because there are two reasons an element is not
+    /// there yet and they need opposite things. Content still arriving from the service needs a
+    /// moment of patience — without it a screen is swiped straight past before it has filled in,
+    /// and the failure reads as "the button is missing" rather than "the practice had not arrived
+    /// yet". A row in a lazily rendered list is the other way round: it does not exist *until*
+    /// something scrolls near it, so waiting alone would never find it.
     @discardableResult
     func reveal(_ element: XCUIElement, attempts: Int = 12) -> Bool {
         for _ in 0..<attempts {
             if element.exists && element.isHittable { return true }
+            if element.waitForExistence(timeout: 1), element.isHittable { return true }
             app.swipeUp()
         }
         return element.exists && element.isHittable
@@ -110,9 +169,13 @@ class UITestCase: XCTestCase {
     /// Dismisses the one-time introduction if it is showing.
     ///
     /// It lives on the board, which only exists once there is a sankalpa on it — so on an empty
-    /// store there is nothing to dismiss, and a journey that declares its own fixture should call
-    /// this after the first declare rather than at launch.
-    func dismissIntroduction(capturingAs name: String? = nil, timeout: TimeInterval = 5) {
+    /// practice there is nothing to dismiss, and a journey that declares its own fixture should
+    /// call this after the first declare rather than at launch. Waiting the full timeout is what
+    /// makes it double as "wait until the first refresh has landed".
+    func dismissIntroduction(
+        capturingAs name: String? = nil,
+        timeout: TimeInterval = UITestCase.timeout
+    ) {
         let gotIt = app.buttons["Got it"]
         guard gotIt.waitForExistence(timeout: timeout) else { return }
         if let name { capture(name) }

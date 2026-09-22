@@ -11,6 +11,8 @@ struct LogSessionView: View {
     let summary: SankalpaSummary
     @State private var occurredAt = Date()
     @State private var error: SankalpaCommandError?
+    /// True while the service is being asked, so the button cannot be tapped twice.
+    @State private var isLogging = false
 
     private var commitment: Commitment { summary.commitment }
 
@@ -92,7 +94,9 @@ struct LogSessionView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Log", action: log).fontWeight(.semibold)
+                    Button("Log", action: log)
+                        .fontWeight(.semibold)
+                        .disabled(isLogging)
                 }
             }
             // Opens at the newest eligible moment rather than now, so a paused or finished
@@ -103,10 +107,15 @@ struct LogSessionView: View {
     }
 
     private func log() {
-        withAnimation(.snappy) {
-            error = model.logSession(summary.id, occurredAt: AppTime.moment(from: occurredAt))
+        isLogging = true
+        Task {
+            let refusal = await model.logSession(
+                summary.id, occurredAt: AppTime.moment(from: occurredAt)
+            )
+            isLogging = false
+            withAnimation(.snappy) { error = refusal }
+            if refusal == nil { dismiss() }
         }
-        if error == nil { dismiss() }
     }
 }
 

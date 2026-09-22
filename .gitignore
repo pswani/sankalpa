@@ -4,3 +4,4 @@ tmp
 app/build/
 app/SankalpaCore/.build/
 *.xcuserdatad
+__pycache__/

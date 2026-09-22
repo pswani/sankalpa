@@ -16,10 +16,10 @@ struct RootView: View {
         @Bindable var model = model
 
         Group {
-            // A store that could not be read takes over the whole app. Showing an empty practice
-            // instead would be indistinguishable from a fresh install, and inviting the user to
-            // start declaring would write over data that is still recoverable.
-            if let problem = model.storageProblem {
+            // A service that has never answered takes over the whole app. Showing an empty
+            // practice instead would be indistinguishable from a first run, and inviting the user
+            // to declare into a service that is not listening would lose what they typed.
+            if let problem = model.connectionProblem {
                 RecoveryView(message: problem)
             } else {
                 tabs
@@ -29,7 +29,7 @@ struct RootView: View {
             DeclareSankalpaView()
         }
         .alert(
-            "That is not allowed",
+            model.alertTitle,
             isPresented: Binding(
                 get: { model.alertMessage != nil },
                 set: { if !$0 { model.alertMessage = nil } }
@@ -40,15 +40,24 @@ struct RootView: View {
         } message: { message in
             Text(message)
         }
+        .safeAreaInset(edge: .top) {
+            // Saying the practice may be behind matters more than it looks: without it, a session
+            // logged offline and a session the service has taken are indistinguishable, and the
+            // user has no way to know whether their practice is actually recorded anywhere but
+            // this phone.
+            if model.isShowingCachedPractice || model.pendingSessionCount > 0 {
+                OfflineNotice(
+                    isCached: model.isShowingCachedPractice,
+                    pendingCount: model.pendingSessionCount
+                )
+            }
+        }
         .overlay(alignment: .top) {
             if let confirmation = model.confirmation {
-                ConfirmationBanner(
-                    text: confirmation,
-                    undo: model.undoableSession == nil ? nil : { model.undoLastSession() }
-                )
+                ConfirmationBanner(text: confirmation)
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .task(id: model.confirmationToken) {
-                    // Long enough to notice and undo, short enough not to linger.
+                    // Long enough to notice, short enough not to linger.
                     try? await Task.sleep(for: .seconds(4))
                     withAnimation(.snappy) { model.clearConfirmation() }
                 }
@@ -82,27 +91,55 @@ struct RootView: View {
     }
 }
 
+/// Says that what is on screen came from this phone rather than from the service just now, and
+/// how much is still waiting to reach it.
+///
+/// It is a strip rather than an alert because this is a state, not an event: it lasts as long as
+/// the service is away, and an alert that kept coming back would be worse than useless.
+private struct OfflineNotice: View {
+    let isCached: Bool
+    let pendingCount: Int
+
+    private var text: String {
+        switch (isCached, pendingCount) {
+        case (_, let waiting) where waiting > 0 && isCached:
+            return "Showing this phone's copy · \(waiting) session\(waiting == 1 ? "" : "s") waiting to be sent"
+        case (false, let waiting) where waiting > 0:
+            return "\(waiting) session\(waiting == 1 ? "" : "s") waiting to be sent"
+        default:
+            return "Showing this phone's copy — the service could not be reached"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90.icloud")
+                .accessibilityHidden(true)
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(Palette.pausedTint)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+    }
+}
+
 /// Non-disruptive success feedback, paired with a haptic at the call site.
 ///
-/// When the action can be taken back, the banner carries the undo. Logging a session is one tap on
-/// the largest control in the app, so the way out needs to be in the same place as the way in.
+/// It used to carry an Undo for a session just logged. The service has no way to remove a logged
+/// session — deleting one is deliberately outside the requirements — so offering to take it back
+/// would be a promise the app cannot keep.
 private struct ConfirmationBanner: View {
     let text: String
-    var undo: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
             Label(text, systemImage: "checkmark.circle.fill")
                 .font(.subheadline.weight(.semibold))
-
-            if let undo {
-                Divider()
-                    .frame(height: 18)
-                    .overlay(.white.opacity(0.45))
-                Button("Undo", action: undo)
-                    .font(.subheadline.weight(.bold))
-                    .buttonStyle(.plain)
-            }
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 16)

@@ -35,6 +35,7 @@ struct TodayView: View {
                 }
             }
             .background(Color(uiColor: .systemGroupedBackground))
+            .refreshable { await model.refresh() }
             .navigationTitle("Today")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -239,7 +240,7 @@ private struct TodayCard: View {
             let satisfied = summary.currentPeriod?.isSatisfied ?? false
             HStack(spacing: 8) {
                 Button {
-                    _ = model.logSession(summary.id, occurredAt: model.now())
+                    Task { _ = await model.logSession(summary.id, occurredAt: model.now()) }
                 } label: {
                     Label(
                         satisfied ? "Log another" : "Log a session",

@@ -23,7 +23,7 @@ struct SankalpaListView: View {
     /// Owned by the root so Today can send the user straight to the finished ones.
     @Binding var filter: Filter
 
-    @State private var confirmingClear = false
+    @State private var changingService = false
 
     private var visible: [SankalpaSummary] {
         model.summaries.filter(filter.matches)
@@ -49,12 +49,6 @@ struct SankalpaListView: View {
             .navigationDestination(for: SankalpaId.self) { id in
                 SankalpaDetailView(sankalpaId: id)
             }
-            .alert("Clear every sankalpa and session?", isPresented: $confirmingClear) {
-                Button("Cancel", role: .cancel) {}
-                Button("Clear everything", role: .destructive) { model.clearAll() }
-            } message: {
-                Text("This removes every sankalpa and every session you have logged. It cannot be undone.")
-            }
         }
     }
 
@@ -79,21 +73,25 @@ struct SankalpaListView: View {
             }
 
             Section {
-                // The practice is one file with nothing else pointing at it. Handing a copy to
-                // the share sheet is the whole of "export": no format to design, and the file it
-                // gives out is the one the app actually reads.
-                if let fileURL = model.exportableFileURL {
-                    ShareLink(item: fileURL) {
-                        Label("Save a copy of my data", systemImage: "square.and.arrow.up")
-                    }
+                Button {
+                    changingService = true
+                } label: {
+                    LabeledContent("Sankalpa service", value: model.serviceLocation.displayText)
                 }
-                Button("Clear all data", role: .destructive) { confirmingClear = true }
-                    .frame(maxWidth: .infinity)
+                .tint(.primary)
             } footer: {
-                Text("Your practice is stored on this device only. Saving a copy gives you the file the app reads; clearing cannot be undone.")
+                Text(
+                    """
+                    Your practice is kept by the Sankalpa service on \
+                    \(model.serviceLocation.displayText), and a copy is kept on this phone so it \
+                    can still be read and added to when that computer is not reachable.
+                    """
+                )
             }
         }
         .listStyle(.insetGrouped)
+        .refreshable { await model.refresh() }
+        .sheet(isPresented: $changingService) { ServiceSettingsView() }
     }
 
     private var noSankalpasState: some View {

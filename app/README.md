@@ -6,9 +6,22 @@ implementing the model in [docs/architecture/ddd](../docs/architecture/ddd).
 Declare an intent with a commitment ("twice a day for 180 days"), begin it, log the sessions you
 perform, and see how each period turned out once it closes.
 
+**The [backend service](../backend/README.md) owns the practice; the phone keeps a copy.** Every
+command goes to the service, which decides what is allowed. What it returns is cached on the phone,
+so the practice is still readable when that computer is not reachable — and a session logged while
+it is away is held and sent as soon as it answers.
+
 ## Running it
 
-Requires Xcode 27 and an iOS 27 simulator runtime.
+Requires Xcode 27, an iOS 27 simulator runtime, and the service running.
+
+```bash
+cd backend && SANKALPA_TIMEZONE=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||') mvn spring-boot:run
+```
+
+`SANKALPA_TIMEZONE` must be the zone the phone is in. Both ends exchange offset-free wall-clock
+times, so if they disagree the service will reject sessions as being in the future and judge
+periods against the wrong day.
 
 ```bash
 open app/Sankalpa.xcodeproj
@@ -20,13 +33,21 @@ Pick the **Sankalpa** scheme and an iPhone 17 Pro simulator. From the command li
 xcodebuild -project app/Sankalpa.xcodeproj -scheme Sankalpa -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
-**A normal launch starts empty.** Demo content — five sankalpas, one per lifecycle state and one
-per action type — is seeded only in a Debug build launched with `-demo`, and only into a store that
-is genuinely new. It is never seeded by a release build, and clearing the data keeps it cleared.
+The app looks for the service on `localhost` by default, which is where a **simulator** reaches one
+running on the same Mac. On a **real phone** that never works — `localhost` is the phone — so the
+name of the Mac has to be set: **Sankalpas → Sankalpa service**, then type something like
+`studio.local` (add `:port` if it is not 8080). The same screen is reachable from the recovery
+screen, which is where someone with nothing on screen yet will be. `SANKALPA_API_BASE_URL` in the
+scheme's environment overrides the setting without disturbing it, which is how a UI run points the
+app at its own service.
+
+**A normal launch shows whatever the service holds.** There is no demo seed inside the app any
+more: with a shared service there is no per-launch sandbox to seed and no delete endpoint to undo
+it with. [`scripts/seed-demo.py`](scripts/seed-demo.py) builds the same five-sankalpa fixture
+through the API instead — point it at a throwaway service, never at your own.
 
 ```bash
-./app/scripts/run.sh          # your own practice, starts empty
-DEMO=1 ./app/scripts/run.sh   # with the demo content
+./app/scripts/seed-demo.py --base-url http://localhost:8080
 ```
 
 ## Layout
@@ -38,32 +59,70 @@ app/
       Domain/            Sankalpa, Session, Commitment, LifecycleTimeline, PeriodOutcomeCalculator
       Application/       Ports, use cases, queries, read models
     Sources/SankalpaStorage/
-      FileStore.swift    The JSON store, with its load/write failure behaviour
-      AppTime.swift      The one place instants become dates
-    Tests/               90 core tests + 9 storage tests
+      SankalpaAPIClient.swift     HTTP against the service, and nothing else
+      RemoteSankalpaService.swift Commands out, a snapshot back, the read side over it
+      PracticeCache.swift         The phone's copy, and the outbox of what it still owes
+      ServiceLocation.swift       Which computer the service is on, and where that is stored
+      APIModels/APIMapping        The wire shapes and their translation to domain values
+      ServerRefusal.swift         Problem codes back into the app's own domain errors
+      WireFormat.swift            Zone-free dates and times, without going through `Date`
+      AppTime.swift               The one place instants become dates
+    Tests/               90 core tests + 64 adapter tests
   Sankalpa/              The iOS app
-    Adapters/            Demo data — the driven side
     UI/                  SwiftUI screens and the design system — the driving side
   SankalpaUITests/       Journeys through the app, and a tour that captures every screen
-  scripts/               test.sh, report.py, run.sh, make-app-icon.py
+  scripts/               test.sh, uitest.sh, seed-demo.py, report.py, run.sh, make-app-icon.py
 ```
 
-`SankalpaStorage` is a library target rather than app code specifically so its failure paths can be
-tested. A store that cannot be read, and a write that fails, are the two ways this app could lose
-someone's practice history; both now have tests.
+### How the two halves divide
 
-An unreadable store is reported, left exactly as it is, and can be retried — that is what stops
-data being lost. But refusing to write over a file that will not parse is only half an answer: with
-every write refused, the app would otherwise have no way forward at all, and deleting it would be
-the only way back to a usable one — destroying the very file the recovery screen promises is still
-there. So the recovery screen also offers to **save a copy** of the file, and to **start fresh**,
-which renames the damaged file rather than removing it.
+The service owns every rule. The app sends a command, the service accepts or refuses it, and the
+app maps the refusal's stable `code` back into the domain error the screens were already written
+around — so a refusal reads in the app's own voice rather than as an API `detail` string.
 
-**Saving a copy is the whole of export.** The practice is one JSON file and nothing else points at
-it, so handing it to the share sheet needs no format to design, and what it gives out is exactly
-what the app reads. It is on the Sankalpas tab and on the recovery screen. There is no import:
-reading a file back in means deciding what happens when it disagrees with what is already there,
-and that is a question the requirements have not answered.
+Reads work the other way. `GET /sankalpas` returns declarations only: no current period, no session
+count, no transitions. Everything the screens actually show — the Today board's progress rings, the
+period strip, the satisfied/missed tally, the journal, the list ordering — is derived on the device
+from the sankalpas, sessions and lifecycle transitions a refresh pulls down, using the same
+`PeriodOutcomeCalculator` and query surface as before. That is why a refresh is `1 + 2N` requests,
+and why `SankalpaCore` still holds a full domain model rather than a set of view structs.
+
+`SankalpaStorage` is a library target rather than app code specifically so this seam can be tested
+without a simulator: the wire format, the mapping, the refusal translation and the refresh fan-out
+all have tests that answer from a stub transport.
+
+### Away from the service
+
+Three rules decide what happens when the Mac is not reachable, and they are easier to keep straight
+as a set than one at a time:
+
+1. **The service owns the rules.** Every command goes to it, and it is the only thing that can say
+   yes.
+2. **The service wins.** A refresh replaces the phone's copy outright rather than merging into it.
+   Nothing cached can contradict what the service says about a sankalpa.
+3. **Except what the service has not seen.** A session logged while it was away is held in an
+   outbox, counts towards the period straight away, and is sent at the first opportunity. If the
+   service then refuses it — the sankalpa was paused elsewhere in the meantime — rule 2 applies: it
+   is dropped and the person is told why, in the service's own words rather than a sentence rebuilt
+   from the copy that was wrong.
+
+Two files hold this, and the split is the point. The **cache** is a copy of what the service last
+said; losing it costs a round trip, so one that cannot be read is simply discarded. The **outbox**
+holds sessions that exist nowhere else; losing it loses someone's practice, so one that cannot be
+read is renamed and kept rather than written over, and a session is reported as logged only once it
+has reached the disk. A corrupt cache must not be able to take the outbox with it.
+
+**Only session logging works offline.** Lifecycle transitions are refused with a clear reason:
+queuing them would need ordering and backdating rules the requirements do not settle, and "the
+service wins" cannot reconcile a queued Pause against a service that has moved on. Offline logging
+still applies the rules — the phone has the commitment and the lifecycle, so a session the domain
+would refuse is refused there too. Going offline defers *who* says no, never *whether*.
+
+The recovery screen now appears only when the phone has nothing cached either. Once there is a
+copy, a failure becomes a strip across the top saying the practice may be behind and how much is
+waiting to be sent — a state, not an event, so not an alert that keeps coming back.
+
+**There is no export.** The practice is in the service, which is where a copy would come from.
 
 The dependency rule from
 [06-hexagonal-architecture](../docs/architecture/ddd/06-hexagonal-architecture.md) holds: the
@@ -102,17 +161,23 @@ full pauses, the terminal-transition cutoff, and the limits the declare form sho
 The simulator suites are in two halves. `JourneyTests` drives the app from an empty store the way
 a person would — declare, begin, log, pause, resume, complete, stop, filter, clear — and checks
 that what the screens offer actually happens, including that a period moves when a session is
-logged and that a cleared store stays cleared across a relaunch. `ScreenTour` walks every screen
+logged and that a stopped sankalpa leaves the active list. `ScreenTour` walks every screen
 in Light Mode, Dark Mode and at an accessibility text size and captures it; every step asserts the
 element it is about to use rather than skipping quietly when a screen fails to appear.
 
-Between them they drive the things that would lose or misreport someone's practice: an unreadable
-store raises recovery instead of looking like a fresh install *and can be escaped from* — a failed
-retry says so, and starting fresh gives back a usable app with the damaged file renamed rather than
-removed — a logged session survives a relaunch, undo is offered once and consumed, a forgotten
-session can still be recorded from Paused and from a finished sankalpa, and a duration can be typed
+Between them they drive the things that would lose or misreport someone's practice: a service that
+has never answered raises recovery instead of looking like a first run, and a retry that fails says
+so and names the address it tried; a logged session is still there after a relaunch; a forgotten
+session can still be recorded from Paused and from a finished sankalpa; and a duration can be typed
 rather than stepped to. The Release build at the end is where an optimiser difference or a
 `#if DEBUG` mistake would show up, since every test hook is debug-only.
+
+Run them with [`scripts/uitest.sh`](scripts/uitest.sh), not `xcodebuild test` directly. Isolation
+used to come from giving each test its own store file; with the practice in a service it comes from
+giving each test *class* its own service — the script starts a backend per class on a throwaway
+database, seeds the demo fixture into the one `ScreenTour` uses, and leaves the one `JourneyTests`
+uses empty. Run against a service that already holds sankalpas and the empty-state assertions will
+fail, and nothing in the suite can put it back: the API has no delete.
 
 For design review, every run leaves its numbered gallery at the stable path
 `app/build/screens`, pointing at the newest run — so reviewing a change means opening the same
@@ -168,15 +233,17 @@ a local single-user iPhone app leads to a few deliberate differences.
 | HTTP controllers | SwiftUI views and `AppModel` | The driving adapter for this app is the UI. |
 | `SessionRepository.findForSankalpa` | Plus `sessions(from:until:)` across all sankalpas | The Journal reads performed sessions across sankalpas. Still day-range bounded, per DD-17. |
 | iPhone and iPad | iPhone only (`TARGETED_DEVICE_FAMILY = 1`), portrait only | The requirement is an iPhone app. Declaring iPad, or the landscape orientations the template turns on, would claim support for layouts that were never designed or tested. Every screen here is a single vertical column; landscape adds nothing it does not already do. |
-| Domain objects mapped to persistence rows | Domain types are `Codable`, stored in a versioned JSON envelope | For a local file store, hand-written DTO mapping would be ceremony. The envelope carries a schema version, and a file written by a newer version is refused rather than replaced. |
-| No session delete use case | `SessionRepository.delete` plus `undoLoggedSession` | Logging is one tap on the largest control in the app. Taking back the tap you just made is a different thing from amending history, so the capability is deliberately narrow: only the id returned by `logSession`, only while the confirmation is still on screen. Editing an older session is still out of scope (Q3). |
+| Domain objects mapped to persistence rows | Explicit DTOs and a hand-written mapping in `SankalpaStorage` | The service is a separate deployable with its own release cycle, so its wire shape is a contract rather than an internal detail. A field this version cannot read is reported instead of guessed at. |
+| The repository port is the persistence seam | It is a read-through snapshot of the service, plus an outbox | Commands never go through it — they go to the service, or to the outbox — so its `save` methods refuse rather than pretend. The conformance exists so the query surface can run unchanged over server-sourced facts; reads merge in what is still waiting to be sent, because a session just logged has to count whether or not the service has heard about it. |
 
-Several launch arguments exist for the screen tour, all compiled out of release builds: `-demo`
-seeds the demo content, `-forceDarkMode` forces the appearance because the simulator's own switch
-does not reliably repaint this runtime, `-resetIntroduction` clears the first-run flag so the
-introduction card can be captured and then dismissed normally, and `-resetStore` / `-corruptStore`
-prepare the store a UI test is about to open. `SANKALPA_TEST_STORE` gives each UI test its own
-store file, so a test can never read or write a real practice history.
+Four launch arguments remain, all compiled out of release builds: `-forceDarkMode` forces the
+appearance because the simulator's own switch does not reliably repaint this runtime,
+`-resetIntroduction` clears the first-run flag so the introduction card can be captured and then
+dismissed normally, `-resetCache` starts from an empty phone because the cache is built to survive
+and a test that did not ask would inherit the last run's practice, and `-offline` makes every
+request fail so the offline screens can be driven — nothing inside the simulator can stop the
+service a test is running against. `SANKALPA_API_BASE_URL` points the app at a service, which is
+how a UI run reaches its own throwaway one.
 
 ## Interpretations
 
@@ -195,9 +262,15 @@ accidental. Each is *decision → reason → what is still open*.
   (Q2/A3). The detail screen says so rather than leaving the user hunting for a button. *Open:
   amendment A3 would allow changing Key Information while Not started, which is the natural way to
   move a start date.*
-- **Undo is limited to the session just logged**, while its confirmation is still on screen. A
-  recorded fact is not otherwise editable (Q3). *Open: whether older sessions should be
-  correctable.*
+- **A logged session cannot be taken back.** The app used to offer one Undo on the confirmation
+  banner, backed by a local delete. The service has no way to remove a session — deleting one is
+  deliberately outside the requirements (Q3) — so the offer went rather than becoming a promise the
+  app cannot keep. *Open: whether taking back a just-logged session should become a use case.*
+- **A session sent twice is matched on its sankalpa and its moment, not its id.** The service
+  assigns the id, so a request that arrived while its answer was lost comes back with an id the
+  phone has never seen. Without matching on what the user actually chose, a flaky connection would
+  turn one session into two. *Open: an idempotency key on the API would settle it properly; two
+  sessions deliberately logged in the same second for the same sankalpa would be treated as one.*
 - **The time zone is captured once per launch**, so a day already recorded keeps its meaning if the
   device travels mid-session; a relaunch picks up the new zone. *Open: Q1 — no per-sankalpa zone is
   modelled, and repeated daylight-saving hours have no stated policy.*

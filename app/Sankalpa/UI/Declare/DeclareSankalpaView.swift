@@ -19,6 +19,8 @@ struct DeclareSankalpaView: View {
     /// The duration field's own text, so it can be emptied and retyped.
     @State private var periodCountText = "30"
     @State private var error: SankalpaCommandError?
+    /// True while the service is being asked, so the button cannot be tapped twice.
+    @State private var isDeclaring = false
 
     @FocusState private var titleFocused: Bool
     @FocusState private var periodCountFocused: Bool
@@ -64,7 +66,7 @@ struct DeclareSankalpaView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Declare", action: declare)
                         .fontWeight(.semibold)
-                        .disabled(trimmedTitle.isEmpty)
+                        .disabled(trimmedTitle.isEmpty || isDeclaring)
                 }
                 // The number pad has no return key, so it needs a way out that is not a guess.
                 ToolbarItemGroup(placement: .keyboard) {
@@ -315,7 +317,12 @@ struct DeclareSankalpaView: View {
             timesPerPeriod: timesPerPeriod,
             periodCount: hasDuration ? periodCount : nil
         )
-        withAnimation(.snappy) { error = model.declare(declaration) }
-        if error == nil { dismiss() }
+        isDeclaring = true
+        Task {
+            let refusal = await model.declare(declaration)
+            isDeclaring = false
+            withAnimation(.snappy) { error = refusal }
+            if refusal == nil { dismiss() }
+        }
     }
 }

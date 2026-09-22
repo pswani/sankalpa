@@ -8,37 +8,64 @@ That is the whole thing. It runs every suite, leaves a report in
 `app/build/test-runs/<timestamp>/`, and points `app/build/test-runs/latest` at it. The exit
 status is the worst result, so it can gate anything that cares.
 
+It also starts and stops the backend services the UI suites need, so nothing has to be running
+first. It needs Maven and a working `backend/` checkout for that.
+
 ```bash
-./app/scripts/test.sh --core     # domain, application and storage only — seconds, no simulator
+./app/scripts/test.sh --core     # domain, application and adapters only — seconds, no simulator
 ./app/scripts/test.sh --ui       # the simulator suites only
 ./app/scripts/test.sh --quick    # everything except the Release build
 ./app/scripts/test.sh --only testPauseAndResume
+./app/scripts/uitest.sh          # just the UI suites, without the report
 ```
 
 ## What runs
 
 | Suite | What it covers | Where it runs |
 |---|---|---|
-| Core | The domain rules, the application service, and the file store — including the failure paths that could lose someone's practice | macOS toolchain, no simulator |
+| Core | The domain rules, the application service, and the adapter that talks to the service — the wire format, the mapping, the refusal translation, the refresh fan-out, and everything about being away from the service: the phone's copy, the outbox, and who wins when the two disagree. All against a stub transport | macOS toolchain, no simulator |
 | UI | The journeys a person takes, the screens they see, and the states that are hard to reach by hand | iPhone simulator |
 | Release | That the app still compiles with every debug-only test hook removed | Unsigned, generic iOS device |
 
 The UI suites are in two files because they answer two different questions.
 `SankalpaUITests/JourneyTests.swift` asks whether the app *does* what its screens offer —
-declaring, beginning, logging, pausing, resuming, completing, stopping, filtering, clearing —
-each one built from an empty store through the interface, which is the state a real first run is
-in. `SankalpaUITests/ScreenTour.swift` asks what every screen *looks like*, in Light Mode, Dark
-Mode and at an accessibility text size, and captures it.
+declaring, beginning, logging, pausing, resuming, completing, stopping, filtering — each one
+built from an empty practice through the interface, which is the state a real first run is in.
+`SankalpaUITests/ScreenTour.swift` asks what every screen *looks like*, in Light Mode, Dark Mode
+and at an accessibility text size, and captures it.
 
 Both inherit `SankalpaUITests/UITestCase.swift`, which is where the launching, scrolling and
-capturing live. Two rules there are worth knowing before adding a test:
+capturing live. Three rules there are worth knowing before adding a test:
 
-- **Every test gets its own store file.** `SANKALPA_TEST_STORE` is a fresh UUID per launch, so a
-  test can never read another test's data, never depend on the order they run in, and never
-  touch a real practice history that happens to be on the simulator.
+- **Each test class gets its own service.** Isolation used to be a store file per test; the
+  practice now lives in the backend, so it is a backend per class instead — its own port, its own
+  SQLite database, thrown away afterwards (`scripts/service.sh`). `ScreenTour` gets the demo
+  fixture seeded into it by `scripts/seed-demo.py`; `JourneyTests` gets an empty one, which is
+  what its empty-state assertions need. Tests within a class still share, so two tests in the
+  same class must not expect the practice to be empty.
+- **There is no default service.** `UITestCase.serviceURL()` fails the test when
+  `SANKALPA_API_BASE_URL` is missing rather than falling back to `localhost:8080`. A fallback
+  would point the suite at whatever is running on the machine — possibly a real practice, which
+  these tests would declare into and which the API has no delete to undo — and the run would
+  report ordinary test failures instead of saying it was misconfigured.
+- **Every launch starts from an empty phone.** The cache and the outbox are built to survive, so
+  without `-resetCache` a run would inherit the last one's practice — the same trap the old store
+  file had. Pass `keepCache: true` when the point of the test is that something survived, and
+  `relaunchOffline()` when it is that the practice is still readable with the service away.
 - **A helper that cannot do what it was asked fails the test.** `tap` and `expect` take a
   sentence saying what the absence would mean. A tap that silently misses is the one thing that
   turns a UI suite into decoration.
+
+Driving the offline screens needs one test hook the app carries: `-offline` makes every request
+fail. Nothing inside the simulator can stop the service the test is running against, and the
+alternative — trusting that the banner and the cached render work because the unit tests pass — is
+exactly the gap a UI suite exists to close. It is compiled out of release builds like every other
+hook here.
+
+`UITestCase.timeout` is 30 seconds rather than 10 because first paint is now a round trip: a list
+request plus a lifecycle and a session read per sankalpa. `reveal` waits for an element to exist
+before it starts scrolling, so a screen whose content arrives a moment after the screen does is
+not swiped straight past.
 
 ## Reading the report
 

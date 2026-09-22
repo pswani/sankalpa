@@ -27,6 +27,10 @@ It keeps the raw Maven output and a compact, LLM-readable Markdown verdict under
 SANKALPA_TIMEZONE=America/Chicago mvn -Dmaven.repo.local=.m2/repository spring-boot:run
 ```
 
+The [iOS app](../app/README.md) is a client of this service and holds no data of its own. It must
+be pointed at the same time zone: both ends exchange offset-free wall-clock times, so a mismatch
+makes the service reject sessions as being in the future and judge periods against the wrong day.
+
 By default the API listens on `http://localhost:8080` and stores data in `data/sankalpa.db`. Override
 the database with `SANKALPA_DB_URL` and the port with `PORT`. `SANKALPA_TIMEZONE` is required and
 must be an IANA zone id shared with the client (for example, `America/Chicago`). Startup fails when

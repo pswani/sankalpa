@@ -46,6 +46,7 @@ struct JournalView: View {
                     }
                 }
             }
+            .refreshable { await model.refresh() }
             .navigationTitle("Journal")
         }
     }

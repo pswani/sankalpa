@@ -65,6 +65,9 @@ fail() { printf '\033[31m    %s\033[0m\n' "$*"; }
 CORE_TIMEOUT="${CORE_TIMEOUT:-600}"
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-900}"
 UI_TIMEOUT="${UI_TIMEOUT:-1800}"
+# Ports for the throwaway services the UI suites run against.
+TOUR_PORT="${TOUR_PORT:-8181}"
+JOURNEY_PORT="${JOURNEY_PORT:-8182}"
 RELEASE_TIMEOUT="${RELEASE_TIMEOUT:-900}"
 
 limited() { # $1 = seconds, rest = command
@@ -181,21 +184,65 @@ if [ "$run_ui" = 1 ]; then
     fi
 fi
 
+# The practice lives in the service, so the UI suites need one — and the two classes need
+# opposite fixtures, so they get one each. See scripts/service.sh.
 if [ "$run_ui" = 1 ]; then
-    note "UI: journeys, screens and recovery"
-    only_args=()
-    [ -n "$only_test" ] && only_args=(-only-testing:"SankalpaUITests/$only_test")
+    # shellcheck source=service.sh
+    source "$APP_DIR/scripts/service.sh"
+    trap 'service_stop_all "$TOUR_PORT" "$JOURNEY_PORT"' EXIT
+
+    note "Starting throwaway services for the UI suites"
+    if ! service_start "$TOUR_PORT" screentour || ! service_start "$JOURNEY_PORT" journeys; then
+        worst=1
+        fail "the UI suites need the backend service, which did not start"
+        run_ui=0
+    elif ! "$APP_DIR/scripts/seed-demo.py" --base-url "http://localhost:$TOUR_PORT" \
+            > "$RUN/logs/seed.log" 2>&1; then
+        worst=1
+        fail "the demo fixture could not be seeded (see logs/seed.log)"
+        run_ui=0
+    fi
+fi
+
+# Each class runs against its own service: ScreenTour walks the seeded demo practice, JourneyTests
+# builds everything it needs through the interface and asserts on empty states. One `xcodebuild
+# test` run could not give them different fixtures.
+run_ui_class() {
+    local class="$1" port="$2"
+    local only_args=()
+    if [ -n "$only_test" ]; then
+        case "$only_test" in
+            "$class"|"$class"/*) only_args=(-only-testing:"SankalpaUITests/$only_test") ;;
+            */*) return 0 ;;
+            # A bare test name could belong to either class; -only-testing simply matches nothing
+            # in the one it is not in, which xcodebuild reports rather than passing silently.
+            *) only_args=(-only-testing:"SankalpaUITests/$class/$only_test") ;;
+        esac
+    else
+        only_args=(-only-testing:"SankalpaUITests/$class")
+    fi
+
+    # The prefix is stripped and the rest handed to the test runner process, which is where
+    # UITestCase reads it. It has to be in xcodebuild's environment: passed as an argument it
+    # would be taken for a build setting and never reach the runner.
+    TEST_RUNNER_SANKALPA_API_BASE_URL="http://localhost:$port" \
     limited "$UI_TIMEOUT" xcodebuild test-without-building \
         -project Sankalpa.xcodeproj \
         -scheme Sankalpa \
         -destination "platform=iOS Simulator,id=$DEVICE_ID" \
         -derivedDataPath "$DERIVED" \
-        -resultBundlePath "$RUN/raw/ui.xcresult" \
+        -resultBundlePath "$RUN/raw/$class.xcresult" \
         -parallel-testing-enabled NO \
-        ${only_args[@]+"${only_args[@]}"} \
+        "${only_args[@]}" \
         CODE_SIGNING_ALLOWED=NO \
-        > "$RUN/logs/ui.log" 2>&1
-    status=$?
+        >> "$RUN/logs/ui.log" 2>&1
+}
+
+if [ "$run_ui" = 1 ]; then
+    note "UI: journeys, screens and recovery"
+    status=0
+    run_ui_class ScreenTour "$TOUR_PORT" || status=$?
+    run_ui_class JourneyTests "$JOURNEY_PORT" || status=$?
     if [ "$status" -ne 0 ]; then
         worst=1
         if [ "$status" -ge 128 ]; then
@@ -208,12 +255,13 @@ if [ "$run_ui" = 1 ]; then
 
     # Screenshots are evidence: a failure report that names a screen is worth far more with the
     # picture beside it. Exported whether the run passed or failed.
-    if [ -f "$RUN/raw/ui.xcresult/Info.plist" ]; then
+    for bundle in "$RUN"/raw/*.xcresult; do
+        [ -f "$bundle/Info.plist" ] || continue
         xcrun xcresulttool export attachments \
-            --path "$RUN/raw/ui.xcresult" \
+            --path "$bundle" \
             --output-path "$RUN/raw/attachments" \
-            > "$RUN/logs/attachments.log" 2>&1
-    fi
+            >> "$RUN/logs/attachments.log" 2>&1
+    done
 fi
 
 # ------------------------------------------------------------------------ release

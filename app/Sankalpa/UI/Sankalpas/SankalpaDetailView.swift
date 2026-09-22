@@ -160,7 +160,7 @@ struct SankalpaDetailView: View {
 
                 HStack(spacing: 8) {
                     Button {
-                        _ = model.logSession(summary.id, occurredAt: model.now())
+                        Task { _ = await model.logSession(summary.id, occurredAt: model.now()) }
                     } label: {
                         Label(
                             period.isSatisfied ? "Log another" : "Log a session",

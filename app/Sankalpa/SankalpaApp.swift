@@ -9,44 +9,17 @@ struct SankalpaApp: App {
 
     init() {
         #if DEBUG
-        // The screen tour needs the first-run card back on every launch. Clearing the stored value
+        // The UI suite needs the first-run card back on every launch. Clearing the stored value
         // rather than overriding it from the argument domain leaves "Got it" able to dismiss it,
         // which is the behaviour being reviewed.
         if ProcessInfo.processInfo.arguments.contains("-resetIntroduction") {
             UserDefaults.standard.removeObject(forKey: "hasSeenIntroduction")
         }
         #endif
-        _model = State(initialValue: SankalpaApp.makeModel())
+        _model = State(initialValue: AppModel())
     }
 
-    /// Builds the model, honouring the debug-only launch arguments the UI tour relies on.
-    ///
-    /// A UI test gets its own store file, so it is hermetic and can never touch a real practice
-    /// history — and `-corruptStore` writes a deliberately broken file so the recovery screen is
-    /// exercised for real rather than merely drawn.
-    private static func makeModel() -> AppModel {
-        var url = FileStore.defaultFileURL()
-        var seedDemoData = false
-
-        #if DEBUG
-        let arguments = ProcessInfo.processInfo.arguments
-        if let name = ProcessInfo.processInfo.environment["SANKALPA_TEST_STORE"] {
-            url = url.deletingLastPathComponent()
-                .appendingPathComponent("test-\(name).json")
-            if arguments.contains("-resetStore") {
-                try? FileManager.default.removeItem(at: url)
-            }
-            if arguments.contains("-corruptStore") {
-                try? Data("not a store".utf8).write(to: url, options: .atomic)
-            }
-        }
-        seedDemoData = arguments.contains("-demo")
-        #endif
-
-        return AppModel(store: FileStore(fileURL: url), seedDemoData: seedDemoData)
-    }
-
-    /// Debug-only override used by the screen tour. The simulator's own appearance switch does not
+    /// Debug-only override used by the UI suite. The simulator's own appearance switch does not
     /// reliably repaint this runtime, and Dark Mode is worth verifying on every screen.
     private static var forcedColorScheme: ColorScheme? {
         #if DEBUG
@@ -61,19 +34,27 @@ struct SankalpaApp: App {
                 .environment(model)
                 .tint(Palette.accent)
                 .preferredColorScheme(SankalpaApp.forcedColorScheme)
+                .task {
+                    // Nothing is on screen until the service answers, so this is the first thing
+                    // the app does.
+                    await model.refresh()
+                }
                 .onChange(of: scenePhase) { _, phase in
-                    // The day can roll over while the app is backgrounded, which changes which
-                    // period is current.
-                    if phase == .active { model.refresh() }
+                    // Coming back can mean the day rolled over, which changes which period is
+                    // current, and that something else changed the practice while we were away.
+                    if phase == .active {
+                        Task { await model.refresh() }
+                    }
                 }
                 .task {
                     // An app left open across midnight would otherwise keep showing yesterday's
                     // period. The system tells us when the day changes; polling for it would be a
-                    // timer running for the life of the app to catch one event.
+                    // timer running for the life of the app to catch one event. Re-deriving is
+                    // enough — the sessions have not changed, only which window is current.
                     let dayChanged = NotificationCenter.default.notifications(
                         named: .NSCalendarDayChanged
                     )
-                    for await _ in dayChanged { model.refresh() }
+                    for await _ in dayChanged { model.rebuild() }
                 }
         }
     }

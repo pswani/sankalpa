@@ -144,10 +144,12 @@ def suite_of(test_id: str, known: dict) -> str:
 
 
 def parse_ui(run: Path) -> dict | None:
-    bundle = run / "raw" / "ui.xcresult"
+    # One bundle per test class: each runs against its own throwaway service, because the tour
+    # needs the demo fixture and the journeys need an empty practice.
+    bundles = sorted((run / "raw").glob("*.xcresult")) if (run / "raw").exists() else []
     log = run / "logs" / "ui.log"
     build_log = run / "logs" / "ui-build.log"
-    if not bundle.exists():
+    if not bundles:
         if log.exists():
             return parse_ui_log(run)
         # The suites were built but never ran, or never even built. Either way the report has to
@@ -157,11 +159,33 @@ def parse_ui(run: Path) -> dict | None:
             return {"name": "UI (simulator journeys)", "tests": [], "log": "ui-build.log"}
         return None
 
+    merged: list[dict] = []
+    device = ""
+    unreadable = False
+    for bundle in bundles:
+        suite = parse_ui_bundle(run, bundle)
+        if suite is None:
+            unreadable = True
+            continue
+        merged.extend(suite["tests"])
+        device = device or suite.get("device", "")
+    if unreadable and not merged:
+        return parse_ui_log(run)
+    merged.sort(key=lambda t: (t["suite"], t["name"]))
+    return {
+        "name": "UI (simulator journeys)",
+        "tests": merged,
+        "device": device,
+        "log": "ui.log",
+    }
+
+
+def parse_ui_bundle(run: Path, bundle: Path) -> dict | None:
     payload = xcresult(bundle, "tests")
     if payload is None:
         # The bundle exists but cannot be read, which is what a killed or timed-out xcodebuild
-        # leaves behind. The log still knows what ran.
-        return parse_ui_log(run)
+        # leaves behind. The caller falls back to the log, which still knows what ran.
+        return None
     tests: list[dict] = []
     if payload:
         for node in payload.get("testNodes", []):
