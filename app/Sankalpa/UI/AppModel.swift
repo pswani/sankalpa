@@ -20,6 +20,14 @@ final class AppModel {
     /// The satisfied/missed count for each sankalpa, over the whole reported history.
     private(set) var tallies: [SankalpaId: PeriodTally] = [:]
     private(set) var today: CalendarDay
+    /// Bumped on every refresh.
+    ///
+    /// Most screens read `summaries`, so observation reaches them for free. The history screens
+    /// and the Journal ask the application layer a question instead, and a method call touches
+    /// no observed property — so a view that has already been built has nothing to notice when
+    /// the answer changes. The Journal is a tab, which means it stays alive after the first
+    /// visit: without this, a session logged after that visit never appeared in it.
+    private(set) var revision: Int = 0
 
     /// A refusal to show in an alert. Commands that have their own inline error surface return the
     /// error instead of setting this.
@@ -84,6 +92,7 @@ final class AppModel {
     // MARK: - Reading
 
     func refresh() {
+        revision += 1
         today = service.today()
         summaries = service.summaries()
         // Built once per refresh rather than per card per render. The work is small, but calling

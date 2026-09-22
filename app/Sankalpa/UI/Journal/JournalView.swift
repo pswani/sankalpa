@@ -8,7 +8,12 @@ struct JournalView: View {
     @Environment(AppModel.self) private var model
 
     private var grouped: [(day: CalendarDay, entries: [JournalEntry])] {
-        Dictionary(grouping: model.journal(), by: { $0.occurredAt.day })
+        // The journal is a query, not a stored property, so nothing here would otherwise tell
+        // SwiftUI that the answer has changed — and this is a tab, so the view outlives the
+        // visit that built it. Reading the revision is what makes a session logged on another
+        // tab show up on the next visit to this one.
+        _ = model.revision
+        return Dictionary(grouping: model.journal(), by: { $0.occurredAt.day })
             .map { (day: $0.key, entries: $0.value.sorted { $0.occurredAt > $1.occurredAt }) }
             .sorted { $0.day > $1.day }
     }

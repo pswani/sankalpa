@@ -40,12 +40,12 @@ app/
     Sources/SankalpaStorage/
       FileStore.swift    The JSON store, with its load/write failure behaviour
       AppTime.swift      The one place instants become dates
-    Tests/               75 core tests + 9 storage tests
+    Tests/               90 core tests + 9 storage tests
   Sankalpa/              The iOS app
     Adapters/            Demo data — the driven side
     UI/                  SwiftUI screens and the design system — the driving side
-  SankalpaUITests/       A tour that drives every screen and captures it
-  scripts/               screen-tour.sh, run.sh, make-app-icon.py
+  SankalpaUITests/       Journeys through the app, and a tour that captures every screen
+  scripts/               test.sh, report.py, screen-tour.sh, run.sh, make-app-icon.py
 ```
 
 `SankalpaStorage` is a library target rather than app code specifically so its failure paths can be
@@ -85,29 +85,37 @@ system clock.
 ## Testing
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift test --package-path app/SankalpaCore
-./app/scripts/screen-tour.sh
+./app/scripts/test.sh
 ```
 
-`swift test` runs the domain and application suites on the macOS toolchain — no simulator needed.
-They cover the requirement's own examples (Vipassana twice a day for six months, gym four times a
-week with no duration) plus the boundary rules: January 31 monthly anchoring, February 29 yearly
-anchoring, inclusive end dates, the transition table, backdated Begin, session eligibility, partial
-versus full pauses, and the terminal-transition cutoff.
+One command runs everything — the domain, application and storage suites, the simulator suites,
+and a Release build — and writes a report to `app/build/test-runs/latest/`. The exit status is
+the worst result. [TESTING.md](TESTING.md) covers the options, the report layout, and how to add
+a test.
 
-`screen-tour.sh` builds the app, walks every screen in the simulator, and writes numbered
-screenshots to `app/build/screens` — in Light Mode, Dark Mode, and at an accessibility text
-size. It is a behaviour suite as much as a review tool: every step asserts the
-element it is about to use rather than skipping quietly when a screen fails to appear, and the
-script's exit status is the tests' own. It finishes with a Release build, which is where an
-optimiser difference or a `#if DEBUG` mistake would show up.
+The core suites run on the macOS toolchain with no simulator, in about a second. They cover the
+requirement's own examples (Vipassana twice a day for six months, gym four times a week with no
+duration) plus the boundary rules: January 31 monthly anchoring, February 29 yearly anchoring,
+inclusive end dates, the transition table, backdated Begin, session eligibility, partial versus
+full pauses, the terminal-transition cutoff, and the limits the declare form shows the user.
 
-Beyond the tour, it drives the things that would lose or misreport someone's practice: an
-unreadable store raises recovery instead of looking like a fresh install *and can be escaped from*
-— a failed retry says so, and starting fresh gives back a usable app with the damaged file renamed
-rather than removed — a logged session survives a relaunch, undo is offered once and consumed, a
-forgotten session can still be recorded from Paused and from a finished sankalpa, and a duration
-can be typed rather than stepped to.
+The simulator suites are in two halves. `JourneyTests` drives the app from an empty store the way
+a person would — declare, begin, log, pause, resume, complete, stop, filter, clear — and checks
+that what the screens offer actually happens, including that a period moves when a session is
+logged and that a cleared store stays cleared across a relaunch. `ScreenTour` walks every screen
+in Light Mode, Dark Mode and at an accessibility text size and captures it; every step asserts the
+element it is about to use rather than skipping quietly when a screen fails to appear.
+
+Between them they drive the things that would lose or misreport someone's practice: an unreadable
+store raises recovery instead of looking like a fresh install *and can be escaped from* — a failed
+retry says so, and starting fresh gives back a usable app with the damaged file renamed rather than
+removed — a logged session survives a relaunch, undo is offered once and consumed, a forgotten
+session can still be recorded from Paused and from a finished sankalpa, and a duration can be typed
+rather than stepped to. The Release build at the end is where an optimiser difference or a
+`#if DEBUG` mistake would show up, since every test hook is debug-only.
+
+`./app/scripts/screen-tour.sh` remains for design review alone: it writes the numbered gallery to
+the stable path `app/build/screens`, with Light and Dark as separate simulator-level passes.
 
 ## How much history is reported
 

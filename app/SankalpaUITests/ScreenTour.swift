@@ -4,57 +4,7 @@ import XCTest
 ///
 /// It doubles as a smoke test: each step asserts that the element it is about to use actually
 /// exists, so a screen that fails to build fails the test rather than producing a blank picture.
-final class ScreenTour: XCTestCase {
-
-    private var app: XCUIApplication!
-
-    override func setUpWithError() throws {
-        continueAfterFailure = false
-        app = XCUIApplication()
-    }
-
-    /// Launches with optional overrides. Appearance is set before launch so the first frame is
-    /// already in the right mode.
-    ///
-    /// Every test gets its own store file and wipes it first, so tests cannot leak state into one
-    /// another and can never touch a real practice history on the simulator.
-    private func launch(
-        demo: Bool = true,
-        dark: Bool = false,
-        corruptStore: Bool = false,
-        contentSize: String? = nil
-    ) {
-        XCUIDevice.shared.orientation = .portrait
-        app.launchEnvironment["SANKALPA_TEST_STORE"] = UUID().uuidString
-        app.launchArguments = ["-resetStore", "-resetIntroduction"]
-        if demo { app.launchArguments.append("-demo") }
-        if dark { app.launchArguments.append("-forceDarkMode") }
-        if corruptStore { app.launchArguments.append("-corruptStore") }
-        if let contentSize {
-            app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize]
-        }
-        app.launch()
-    }
-
-    /// Relaunches against the same store without wiping it, to prove data survived.
-    private func relaunch() {
-        app.terminate()
-        app.launchArguments.removeAll {
-            $0 == "-resetStore" || $0 == "-demo" || $0 == "-resetIntroduction"
-        }
-        app.launch()
-    }
-
-    /// Scrolls until the element is actually on screen. An element that merely `exists` can still
-    /// be off screen, and tapping it then silently misses.
-    @discardableResult
-    private func reveal(_ element: XCUIElement, attempts: Int = 12) -> Bool {
-        for _ in 0..<attempts {
-            if element.exists && element.isHittable { return true }
-            app.swipeUp()
-        }
-        return element.exists && element.isHittable
-    }
+final class ScreenTour: UITestCase {
 
     func testTourEveryScreen() throws {
         launch()
@@ -353,22 +303,5 @@ final class ScreenTour: XCTestCase {
         )
         // The introduction was dismissed before, and the demo seed must not run again.
         XCTAssertFalse(app.buttons["Got it"].exists)
-    }
-
-    /// The first-run card covers the board, so every tour dismisses it before going further.
-    private func dismissIntroduction(capturingAs name: String? = nil) {
-        let gotIt = app.buttons["Got it"]
-        guard gotIt.waitForExistence(timeout: 5) else { return }
-        if let name { capture(name) }
-        gotIt.tap()
-    }
-
-    private func capture(_ name: String) {
-        // Let presentation and push animations finish so screenshots are not caught mid-blur.
-        Thread.sleep(forTimeInterval: 0.9)
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
     }
 }

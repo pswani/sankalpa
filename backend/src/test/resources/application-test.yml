@@ -1,0 +1,13 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:sankalpa;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+    hikari:
+      connection-init-sql:
+  sql:
+    init:
+      mode: always
+sankalpa:
+  timezone: UTC

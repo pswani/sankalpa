@@ -1,0 +1,7 @@
+/target/
+/.m2/
+/data/*.db
+/data/*.db-*
+/logs/*.log
+/logs/*-summary.md
+/logs/latest-summary.md
