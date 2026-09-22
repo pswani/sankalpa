@@ -53,6 +53,11 @@ logs/             raw console output from each step
 raw/              the result bundle, the swift-testing event stream, build output
 ```
 
+Alongside them, `app/build/screens` always points at the newest run's gallery. Design review
+means opening the same path twice and seeing what moved, which a timestamped directory cannot
+offer. Only a run that actually captured screens moves the link, so `--core` leaves the last
+gallery where it was.
+
 `report.md` is written to be read by a language model as much as by a person: every failure
 carries its suite, the test's own sentence-long name, the source location, the message, and the
 screens that test had captured before it failed — so a failure can be understood without opening

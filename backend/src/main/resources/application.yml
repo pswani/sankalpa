@@ -18,4 +18,4 @@ springdoc:
 server:
   port: ${PORT:8080}
 sankalpa:
-  timezone: ${SANKALPA_TIMEZONE:UTC}
+  timezone: ${SANKALPA_TIMEZONE}

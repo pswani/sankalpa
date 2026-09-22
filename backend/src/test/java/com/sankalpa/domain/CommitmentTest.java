@@ -2,6 +2,7 @@ package com.sankalpa.domain;
 
 import com.sankalpa.domain.commitment.Commitment;
 import com.sankalpa.domain.commitment.PeriodUnit;
+import com.sankalpa.domain.commitment.PeriodWindow;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -52,5 +53,37 @@ class CommitmentTest {
         Commitment commitment = new Commitment(LocalDate.now(), PeriodUnit.DAY, 1, null);
         assertThatThrownBy(() -> commitment.windowsStartingBetween(LocalDate.now(), LocalDate.now().minusDays(1)))
                 .isInstanceOf(DomainException.class);
+    }
+
+    @Test
+    void enforcesDeclarationAndOutcomeRangeCaps() {
+        LocalDate start = LocalDate.of(2026, 1, 1);
+        assertThat(new Commitment(start, PeriodUnit.DAY,
+                Commitment.MAX_TIMES_PER_PERIOD, Commitment.MAX_PERIOD_COUNT).endDate()).isPresent();
+        assertThatThrownBy(() -> new Commitment(start, PeriodUnit.DAY,
+                Commitment.MAX_TIMES_PER_PERIOD + 1, null))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("INVALID_TIMES_PER_PERIOD");
+        assertThatThrownBy(() -> new Commitment(start, PeriodUnit.DAY,
+                1, Commitment.MAX_PERIOD_COUNT + 1))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("INVALID_PERIOD_COUNT");
+
+        Commitment indefinite = new Commitment(start, PeriodUnit.DAY, 1, null);
+        assertThatThrownBy(() -> indefinite.windowsStartingBetween(
+                start, start.plusDays(Commitment.MAX_OUTCOME_WINDOWS)))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("PERIOD_RANGE_TOO_LARGE");
+    }
+
+    @Test
+    void jumpsDirectlyToRangesFarFromAnIndefiniteCommitmentStart() {
+        Commitment commitment = new Commitment(LocalDate.of(2026, 1, 31), PeriodUnit.MONTH, 1, null);
+
+        assertThat(commitment.windowsStartingBetween(
+                LocalDate.of(9999, 6, 1), LocalDate.of(9999, 6, 30)))
+                .singleElement()
+                .extracting(PeriodWindow::start)
+                .isEqualTo(LocalDate.of(9999, 6, 30));
     }
 }

@@ -46,4 +46,4 @@ fi
 echo
 echo "Sankalpa is running on $DEVICE."
 echo "To see it, open Xcode's simulator window, or capture the screens with:"
-echo "  ./app/scripts/screen-tour.sh"
+echo "  ./app/scripts/test.sh --ui        # gallery lands in app/build/screens"

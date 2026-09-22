@@ -24,12 +24,14 @@ It keeps the raw Maven output and a compact, LLM-readable Markdown verdict under
 ## Run
 
 ```bash
-mvn -Dmaven.repo.local=.m2/repository spring-boot:run
+SANKALPA_TIMEZONE=America/Chicago mvn -Dmaven.repo.local=.m2/repository spring-boot:run
 ```
 
 By default the API listens on `http://localhost:8080` and stores data in `data/sankalpa.db`. Override
-the database with `SANKALPA_DB_URL`, the application timezone with `SANKALPA_TIMEZONE`, and the port
-with `PORT`. Authentication and TLS termination are intentionally not configured.
+the database with `SANKALPA_DB_URL` and the port with `PORT`. `SANKALPA_TIMEZONE` is required and
+must be an IANA zone id shared with the client (for example, `America/Chicago`). Startup fails when
+it is absent or invalid, avoiding silent interpretation of offset-free timestamps in the wrong zone.
+Authentication and TLS termination are intentionally not configured.
 
 ## Published API contract
 
@@ -56,17 +58,19 @@ endpoint cannot disappear unnoticed.
 
 Business-rule failures use `application/problem+json` with a stable `code` property. Request enums
 use uppercase names such as `MEDITATION`, `PHYSICAL_ACTIVITY`, `DAY`, and `SUCCESSFUL`.
+`timesPerPeriod` is limited to 1–99; a supplied `periodCount` is limited to 1–3,650.
 
 Session pages contain `content`, `page`, `size`, `totalElements`, and `totalPages`. Page numbering is
 zero-based, the default size is 50, and the maximum size is 200. Optional `from` and `until` filters
 must be supplied together. Offset-free timestamps are interpreted in `SANKALPA_TIMEZONE`.
+Period-outcome queries may select at most 3,650 windows.
 
 ## Persistence
 
 The normalized schema is in `src/main/resources/schema.sql`:
 
 - `sankalpa` stores declaration, commitment, current lifecycle state, and optimistic version.
-- `sankalpa_lifecycle_transition` stores ordered lifecycle audit facts.
+- `sankalpa_lifecycle_transition` stores ordered lifecycle audit facts using append-only writes.
 - `practice_session` stores performed-session facts.
 
 The derived end date and period outcomes are deliberately not stored. Production uses SQLite;

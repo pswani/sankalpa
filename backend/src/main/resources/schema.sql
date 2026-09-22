@@ -5,8 +5,8 @@ CREATE TABLE IF NOT EXISTS sankalpa (
     action_type VARCHAR(32) NOT NULL,
     start_date VARCHAR(10) NOT NULL,
     period_unit VARCHAR(16) NOT NULL,
-    times_per_period INTEGER NOT NULL CHECK (times_per_period > 0),
-    period_count INTEGER CHECK (period_count IS NULL OR period_count > 0),
+    times_per_period INTEGER NOT NULL CHECK (times_per_period BETWEEN 1 AND 99),
+    period_count INTEGER CHECK (period_count IS NULL OR period_count BETWEEN 1 AND 3650),
     current_state VARCHAR(32) NOT NULL,
     declared_at VARCHAR(30) NOT NULL,
     version INTEGER NOT NULL DEFAULT 0

@@ -23,7 +23,7 @@ import java.util.concurrent.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest
+@SpringBootTest(properties = "spring.datasource.hikari.maximum-pool-size=2")
 @ActiveProfiles("test")
 class ConcurrentCommandIntegrationTest {
     @Autowired SankalpaUseCases useCases;

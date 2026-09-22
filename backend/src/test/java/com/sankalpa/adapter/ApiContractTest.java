@@ -64,7 +64,7 @@ class ApiContractTest {
         assertThat(sessionGet.path("responses").has("200")).isTrue();
         assertThat(sessionGet.path("responses").has("400")).isTrue();
         assertThat(sessionGet.path("responses").has("404")).isTrue();
-        assertThat(sessionGet.path("responses").has("422")).isTrue();
+        assertThat(sessionGet.path("responses").has("422")).isFalse();
         assertThat(sessionGet.path("responses").path("200").path("content")
                 .has(MediaType.APPLICATION_JSON_VALUE)).isTrue();
         assertThat(sessionGet.path("responses").path("400").path("content")
@@ -84,6 +84,15 @@ class ApiContractTest {
                 .path("type").toString()).contains("null");
         assertThat(schemas.path("LogSessionRequest").path("properties").path("occurredAt")
                 .path("description").asText()).contains("application timezone");
+        assertThat(schemas.path("DeclareRequest").path("properties").path("timesPerPeriod")
+                .path("maximum").asInt()).isEqualTo(99);
+        assertThat(schemas.path("DeclareRequest").path("properties").path("periodCount")
+                .path("maximum").asInt()).isEqualTo(3650);
+
+        JsonNode outcomeResponses = paths.path("/api/v1/sankalpas/{id}/period-outcomes")
+                .path("get").path("responses");
+        assertThat(outcomeResponses.has("400")).isTrue();
+        assertThat(outcomeResponses.has("422")).isFalse();
 
         JsonNode pauseResponses = paths.path("/api/v1/sankalpas/{id}/pause").path("post").path("responses");
         assertThat(pauseResponses.has("200")).isTrue();
@@ -163,6 +172,37 @@ class ApiContractTest {
                         .queryParam("page", "-1").queryParam("size", "500"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        mvc.perform(get("/api/v1/sankalpas/{id}/sessions", id)
+                        .queryParam("from", "2026-06-01"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_DATE_RANGE"));
+
+        mvc.perform(post("/api/v1/sankalpas").contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Too much","actionType":"MEDITATION","startDate":"2026-06-01",
+                                 "periodUnit":"DAY","timesPerPeriod":100,"periodCount":3651}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.timesPerPeriod").exists())
+                .andExpect(jsonPath("$.errors.periodCount").exists());
+
+        mvc.perform(post("/api/v1/sankalpas/{id}/begin", id)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/sankalpas/{id}/pause", id))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/sankalpas/{id}/begin", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"effectiveAt\":\"2026-06-01T00:00:00\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("INVALID_LIFECYCLE_TRANSITION"));
+
+        String indefiniteId = declareIndefinite();
+        mvc.perform(get("/api/v1/sankalpas/{id}/period-outcomes", indefiniteId)
+                        .queryParam("from", "2026-06-01").queryParam("until", "2036-06-01"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("PERIOD_RANGE_TOO_LARGE"));
     }
 
     private String declare() throws Exception {
@@ -175,6 +215,18 @@ class ApiContractTest {
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", org.hamcrest.Matchers.containsString("/api/v1/sankalpas/")))
                 .andExpect(jsonPath("$.endDate").value("2026-06-30"))
+                .andReturn().getResponse().getContentAsString();
+        return json.readTree(response).path("id").asText();
+    }
+
+    private String declareIndefinite() throws Exception {
+        String response = mvc.perform(post("/api/v1/sankalpas")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Walk","description":"","actionType":"PHYSICAL_ACTIVITY",
+                                 "startDate":"2026-06-01","periodUnit":"DAY","timesPerPeriod":1}
+                                """))
+                .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return json.readTree(response).path("id").asText();
     }

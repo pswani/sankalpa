@@ -64,6 +64,10 @@ public final class Sankalpa {
         if (effectiveAt == null || recordedAt == null) {
             throw new DomainException("INVALID_LIFECYCLE_TRANSITION", "Transition times are required");
         }
+        if (lifecycle.current() != LifecycleState.NOT_STARTED) {
+            throw new DomainException("INVALID_LIFECYCLE_TRANSITION",
+                    "Cannot begin from " + lifecycle.current());
+        }
         lifecycle.begin(commitment.startDate(), effectiveAt, recordedAt);
     }
     public void pause(LocalDateTime now) { transitionNow(LifecycleState.PAUSED, now); }
@@ -97,8 +101,13 @@ public final class Sankalpa {
         if (occurredAt.isAfter(now)) {
             throw new DomainException("SESSION_IN_FUTURE", "Session cannot occur in the future");
         }
-        if (!commitment.covers(occurredAt.toLocalDate())) {
-            throw new DomainException("SESSION_OUTSIDE_COMMITMENT", "Session is outside commitment coverage");
+        if (occurredAt.toLocalDate().isBefore(commitment.startDate())) {
+            throw new DomainException("SESSION_BEFORE_COMMITMENT_START",
+                    "Session cannot occur before the commitment start date");
+        }
+        if (commitment.endDate().map(end -> occurredAt.toLocalDate().isAfter(end)).orElse(false)) {
+            throw new DomainException("SESSION_AFTER_COMMITMENT_END",
+                    "Session cannot occur after the commitment end date");
         }
         if (!lifecycle.wasInProgressAt(occurredAt)) {
             throw new DomainException("SANKALPA_NOT_IN_PROGRESS", "Sankalpa was not in progress at that time");

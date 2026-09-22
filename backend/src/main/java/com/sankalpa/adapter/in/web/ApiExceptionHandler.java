@@ -17,10 +17,14 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 
 import java.net.URI;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    private static final Set<String> REQUEST_ERROR_CODES = Set.of(
+            "INVALID_DATE_RANGE", "INVALID_PAGINATION", "PERIOD_RANGE_TOO_LARGE");
+
     @ExceptionHandler(NotFoundException.class)
     ResponseEntity<ProblemDetail> notFound(NotFoundException exception) {
         return problem(HttpStatus.NOT_FOUND, "SANKALPA_NOT_FOUND", exception.getMessage(), null);
@@ -28,7 +32,9 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(DomainException.class)
     ResponseEntity<ProblemDetail> domain(DomainException exception) {
-        return problem(HttpStatus.UNPROCESSABLE_ENTITY, exception.code(), exception.getMessage(), null);
+        HttpStatus status = REQUEST_ERROR_CODES.contains(exception.code())
+                ? HttpStatus.BAD_REQUEST : HttpStatus.UNPROCESSABLE_ENTITY;
+        return problem(status, exception.code(), exception.getMessage(), null);
     }
 
     @ExceptionHandler(ConcurrentModificationException.class)

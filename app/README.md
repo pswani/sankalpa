@@ -45,7 +45,7 @@ app/
     Adapters/            Demo data — the driven side
     UI/                  SwiftUI screens and the design system — the driving side
   SankalpaUITests/       Journeys through the app, and a tour that captures every screen
-  scripts/               test.sh, report.py, screen-tour.sh, run.sh, make-app-icon.py
+  scripts/               test.sh, report.py, run.sh, make-app-icon.py
 ```
 
 `SankalpaStorage` is a library target rather than app code specifically so its failure paths can be
@@ -114,8 +114,9 @@ session can still be recorded from Paused and from a finished sankalpa, and a du
 rather than stepped to. The Release build at the end is where an optimiser difference or a
 `#if DEBUG` mistake would show up, since every test hook is debug-only.
 
-`./app/scripts/screen-tour.sh` remains for design review alone: it writes the numbered gallery to
-the stable path `app/build/screens`, with Light and Dark as separate simulator-level passes.
+For design review, every run leaves its numbered gallery at the stable path
+`app/build/screens`, pointing at the newest run — so reviewing a change means opening the same
+path again and seeing what moved.
 
 ## How much history is reported
 

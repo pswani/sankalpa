@@ -10,6 +10,7 @@ import com.sankalpa.domain.lifecycle.LifecycleState;
 import com.sankalpa.domain.lifecycle.LifecycleTimeline;
 import com.sankalpa.domain.lifecycle.LifecycleTransition;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
@@ -17,7 +18,10 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -30,16 +34,30 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
 
     @Override
     public Optional<Sankalpa> findById(SankalpaId id) {
+        List<LifecycleTransition> transitions = loadTransitions(id.toString());
         List<Sankalpa> results = jdbc.query("SELECT * FROM sankalpa WHERE id = ?",
-                (rs, rowNum) -> mapSankalpa(rs), id.toString());
+                (rs, rowNum) -> mapSankalpa(rs, transitions), id.toString());
         return results.stream().findFirst();
     }
 
     @Override
+    public Optional<Sankalpa> findByIdForUpdate(SankalpaId id) {
+        int matched = jdbc.update("UPDATE sankalpa SET version = version WHERE id = ?", id.toString());
+        return matched == 0 ? Optional.empty() : findById(id);
+    }
+
+    @Override
     public List<Sankalpa> findAll() {
-        List<String> ids = jdbc.query("SELECT id FROM sankalpa ORDER BY declared_at DESC",
-                (rs, rowNum) -> rs.getString(1));
-        return ids.stream().map(id -> findById(SankalpaId.parse(id)).orElseThrow()).toList();
+        Map<String, List<LifecycleTransition>> transitionsBySankalpa = new HashMap<>();
+        jdbc.query("""
+                SELECT * FROM sankalpa_lifecycle_transition
+                ORDER BY sankalpa_id, sequence_number
+                """, (RowCallbackHandler) rs -> transitionsBySankalpa
+                .computeIfAbsent(rs.getString("sankalpa_id"), ignored -> new ArrayList<>())
+                .add(mapTransition(rs)));
+        return jdbc.query("SELECT * FROM sankalpa ORDER BY declared_at DESC",
+                (rs, rowNum) -> mapSankalpa(rs,
+                        transitionsBySankalpa.getOrDefault(rs.getString("id"), List.of())));
     }
 
     @Override
@@ -47,7 +65,7 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM sankalpa WHERE id = ?", Integer.class,
                 sankalpa.id().toString());
         if (count != null && count > 0) update(sankalpa); else insert(sankalpa);
-        synchronizeTransitions(sankalpa);
+        appendTransitions(sankalpa);
     }
 
     private void insert(Sankalpa s) {
@@ -78,29 +96,40 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
         s.markPersistedAtVersion(s.version() + 1);
     }
 
-    private void synchronizeTransitions(Sankalpa s) {
-        jdbc.update("DELETE FROM sankalpa_lifecycle_transition WHERE sankalpa_id = ?", s.id().toString());
-        int sequence = 0;
-        for (LifecycleTransition transition : s.lifecycle().transitions()) {
+    private void appendTransitions(Sankalpa s) {
+        List<LifecycleTransition> stored = loadTransitions(s.id().toString());
+        List<LifecycleTransition> current = s.lifecycle().transitions();
+        if (stored.size() > current.size() || !current.subList(0, stored.size()).equals(stored)) {
+            throw new ConcurrentModificationException("Stored lifecycle audit does not match the aggregate history");
+        }
+        for (int sequence = stored.size(); sequence < current.size(); sequence++) {
+            LifecycleTransition transition = current.get(sequence);
             jdbc.update("""
                     INSERT INTO sankalpa_lifecycle_transition
                       (sankalpa_id, sequence_number, from_state, to_state, effective_at, recorded_at)
                     VALUES (?, ?, ?, ?, ?, ?)
-                    """, s.id().toString(), sequence++, transition.from().name(), transition.to().name(),
+                    """, s.id().toString(), sequence, transition.from().name(), transition.to().name(),
                     format(transition.effectiveAt()), format(transition.recordedAt()));
         }
     }
 
-    private Sankalpa mapSankalpa(ResultSet rs) throws SQLException {
-        String id = rs.getString("id");
-        List<LifecycleTransition> transitions = jdbc.query("""
+    private List<LifecycleTransition> loadTransitions(String id) {
+        return jdbc.query("""
                 SELECT * FROM sankalpa_lifecycle_transition
                 WHERE sankalpa_id = ? ORDER BY sequence_number
-                """, (transitionRs, rowNum) -> new LifecycleTransition(
-                LifecycleState.valueOf(transitionRs.getString("from_state")),
-                LifecycleState.valueOf(transitionRs.getString("to_state")),
-                parse(transitionRs.getString("effective_at")),
-                parse(transitionRs.getString("recorded_at"))), id);
+                """, (rs, rowNum) -> mapTransition(rs), id);
+    }
+
+    private LifecycleTransition mapTransition(ResultSet rs) throws SQLException {
+        return new LifecycleTransition(
+                LifecycleState.valueOf(rs.getString("from_state")),
+                LifecycleState.valueOf(rs.getString("to_state")),
+                parse(rs.getString("effective_at")),
+                parse(rs.getString("recorded_at")));
+    }
+
+    private Sankalpa mapSankalpa(ResultSet rs, List<LifecycleTransition> transitions) throws SQLException {
+        String id = rs.getString("id");
         LifecycleState current = LifecycleState.valueOf(rs.getString("current_state"));
         int storedPeriodCount = rs.getInt("period_count");
         Integer periodCount = rs.wasNull() ? null : storedPeriodCount;

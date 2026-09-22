@@ -4,6 +4,7 @@ import com.sankalpa.application.PageResult;
 import com.sankalpa.domain.ActionType;
 import com.sankalpa.domain.Sankalpa;
 import com.sankalpa.domain.Session;
+import com.sankalpa.domain.commitment.Commitment;
 import com.sankalpa.domain.commitment.PeriodOutcome;
 import com.sankalpa.domain.commitment.PeriodStanding;
 import com.sankalpa.domain.commitment.PeriodUnit;
@@ -11,6 +12,7 @@ import com.sankalpa.domain.lifecycle.CompletionOutcome;
 import com.sankalpa.domain.lifecycle.LifecycleState;
 import com.sankalpa.domain.lifecycle.LifecycleTransition;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -33,8 +35,11 @@ public final class ApiModels {
             @NotNull @Schema(example = "MEDITATION") ActionType actionType,
             @NotNull @Schema(example = "2026-06-01") LocalDate startDate,
             @NotNull @Schema(example = "DAY") PeriodUnit periodUnit,
-            @Min(1) @Schema(example = "2", minimum = "1") int timesPerPeriod,
-            @Min(1) @Schema(example = "30", minimum = "1", types = {"integer", "null"}, format = "int32",
+            @Min(1) @Max(Commitment.MAX_TIMES_PER_PERIOD)
+            @Schema(example = "2", minimum = "1", maximum = "99") int timesPerPeriod,
+            @Min(1) @Max(Commitment.MAX_PERIOD_COUNT)
+            @Schema(example = "30", minimum = "1", maximum = "3650",
+                    types = {"integer", "null"}, format = "int32",
                     description = "Whole-number duration in period units; omit for an indefinite commitment")
             Integer periodCount
     ) {}

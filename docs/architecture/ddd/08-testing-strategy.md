@@ -59,7 +59,8 @@ Keep these narrow:
 - Read adapter returns flat rows without constructing aggregates.
 - Persistence concurrency test starts an uncommitted Pause, then attempts to log a session whose
   `occurredAt` follows the Pause's effective time. It proves the session waits for or conflicts with
-  the lifecycle write and is not committed against the old In progress snapshot.
+  the lifecycle write and is not committed against the old In progress snapshot. The test uses at
+  least two database connections so pool serialization cannot satisfy the assertion by itself.
 - Period outcome query expands the session read to the selected windows' actual boundaries.
 
 ## Architecture Tests

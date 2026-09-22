@@ -80,7 +80,8 @@ public class SankalpaService implements SankalpaUseCases {
 
     @Override
     public Session logSession(SankalpaId id, LocalDateTime occurredAt) {
-        Sankalpa sankalpa = require(id);
+        Sankalpa sankalpa = sankalpas.findByIdForUpdate(id)
+                .orElseThrow(() -> new NotFoundException("Sankalpa " + id + " was not found"));
         Session session = sankalpa.logSession(SessionId.newId(), occurredAt, clock.now());
         sessions.save(session);
         return session;

@@ -418,6 +418,28 @@ def collect_screens(run: Path) -> list[dict]:
     return screens
 
 
+def link_latest_gallery(run: Path) -> None:
+    """Points app/build/screens at this run's screens, for design review.
+
+    Reviewing a gallery means opening the same path twice and seeing what changed, which a
+    timestamped directory cannot offer. Only runs that actually captured screens move the link,
+    so a core-only run leaves the last gallery where it was.
+    """
+    # Resolved, because the link is read from its own directory rather than from wherever the
+    # script happened to be run.
+    screens = (run / "screens").resolve()
+    gallery = run.resolve().parent.parent / "screens"
+    try:
+        if gallery.is_symlink() or gallery.is_file():
+            gallery.unlink()
+        elif gallery.is_dir():
+            shutil.rmtree(gallery)
+        gallery.symlink_to(screens, target_is_directory=True)
+    except OSError:
+        # A gallery link is a convenience. Failing to make one is not worth failing a run over.
+        pass
+
+
 # ---------------------------------------------------------------- release build
 
 ERROR_LINE = re.compile(r"(?:^|\s)(error|warning):\s")
@@ -518,6 +540,9 @@ def main(run: Path) -> int:
             "skipped": sum(s["counts"]["skipped"] for s in suites),
         },
     }
+    if screens:
+        link_latest_gallery(run)
+
     (run / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     (run / "report.md").write_text(render(results, run))
     (run / "summary.txt").write_text(render_summary(results))

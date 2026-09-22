@@ -164,9 +164,6 @@ public class SankalpaController {
                             schema = @Schema(implementation = ApiProblemResponse.class))),
             @ApiResponse(responseCode = "404", description = "Sankalpa not found",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
-                            schema = @Schema(implementation = ApiProblemResponse.class))),
-            @ApiResponse(responseCode = "422", description = "Invalid date range",
-                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class)))
     })
     public SessionPageResponse sessions(
@@ -197,16 +194,13 @@ public class SankalpaController {
 
     @GetMapping("/{id}/period-outcomes")
     @Operation(summary = "Get derived outcomes for windows whose start falls in the date range",
-            description = "from and until are inclusive local dates in the configured application timezone.")
+            description = "from and until are inclusive local dates in the configured application timezone. At most 3650 windows may be selected.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Outcomes returned"),
-            @ApiResponse(responseCode = "400", description = "Malformed id or date",
+            @ApiResponse(responseCode = "400", description = "Malformed id, invalid range, or range selecting more than 3650 windows",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class))),
             @ApiResponse(responseCode = "404", description = "Sankalpa not found",
-                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
-                            schema = @Schema(implementation = ApiProblemResponse.class))),
-            @ApiResponse(responseCode = "422", description = "Invalid date range",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class)))
     })

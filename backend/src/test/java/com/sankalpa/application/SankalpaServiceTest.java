@@ -124,6 +124,7 @@ class SankalpaServiceTest {
         assertThat(logged.occurredAt()).isEqualTo(occurredAt);
         assertThat(logged.loggedAt()).isEqualTo(clock.now());
         assertThat(sessions.saved).containsExactly(logged);
+        assertThat(sankalpas.forUpdateReads).isEqualTo(1);
     }
 
     private Sankalpa declare(PeriodUnit unit) {
@@ -134,8 +135,13 @@ class SankalpaServiceTest {
     private static final class FakeSankalpas implements SankalpaRepository {
         private final Map<SankalpaId, Sankalpa> values = new LinkedHashMap<>();
         private int saveCount;
+        private int forUpdateReads;
 
         @Override public Optional<Sankalpa> findById(SankalpaId id) { return Optional.ofNullable(values.get(id)); }
+        @Override public Optional<Sankalpa> findByIdForUpdate(SankalpaId id) {
+            forUpdateReads++;
+            return findById(id);
+        }
         @Override public List<Sankalpa> findAll() { return List.copyOf(values.values()); }
         @Override public void save(Sankalpa sankalpa) {
             values.put(sankalpa.id(), sankalpa);

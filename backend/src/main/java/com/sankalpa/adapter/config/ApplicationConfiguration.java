@@ -18,7 +18,7 @@ import java.time.ZoneId;
 @Configuration
 public class ApplicationConfiguration {
     @Bean
-    SankalpaClock sankalpaClock(@Value("${sankalpa.timezone:UTC}") String timezone) {
+    SankalpaClock sankalpaClock(@Value("${sankalpa.timezone}") String timezone) {
         return new SystemSankalpaClock(Clock.system(ZoneId.of(timezone)));
     }
 

@@ -51,6 +51,7 @@ window that crosses a query boundary or introducing stored projections.
 ```java
 public interface SankalpaRepository {
     Optional<Sankalpa> findById(SankalpaId id);
+    Optional<Sankalpa> findByIdForUpdate(SankalpaId id);
     void save(Sankalpa sankalpa);
 }
 

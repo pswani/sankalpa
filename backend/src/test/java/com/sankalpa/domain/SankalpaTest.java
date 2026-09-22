@@ -50,7 +50,36 @@ class SankalpaTest {
                 .extracting("code").isEqualTo("SESSION_IN_FUTURE");
         assertThatThrownBy(() -> active.logSession(SessionId.newId(), START.plusDays(4).atTime(12, 0), NOW))
                 .isInstanceOf(DomainException.class)
-                .extracting("code").isEqualTo("SESSION_OUTSIDE_COMMITMENT");
+                .extracting("code").isEqualTo("SESSION_AFTER_COMMITMENT_END");
+    }
+
+    @Test
+    void beginIsOnlyLegalFromNotStarted() {
+        Sankalpa sankalpa = declared(null);
+        sankalpa.begin(START.atStartOfDay(), NOW);
+        sankalpa.pause(NOW.plusMinutes(1));
+
+        assertThatThrownBy(() -> sankalpa.begin(START.plusDays(1).atStartOfDay(), NOW.plusMinutes(2)))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("INVALID_LIFECYCLE_TRANSITION");
+        assertThat(sankalpa.lifecycle().current()).isEqualTo(
+                com.sankalpa.domain.lifecycle.LifecycleState.PAUSED);
+        assertThat(sankalpa.lifecycle().transitions()).hasSize(2);
+    }
+
+    @Test
+    void distinguishesSessionsBeforeStartAndAfterEnd() {
+        Sankalpa sankalpa = declared(3);
+        sankalpa.begin(START.atStartOfDay(), NOW);
+
+        assertThatThrownBy(() -> sankalpa.logSession(
+                SessionId.newId(), START.minusDays(1).atTime(12, 0), NOW))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("SESSION_BEFORE_COMMITMENT_START");
+        assertThatThrownBy(() -> sankalpa.logSession(
+                SessionId.newId(), START.plusDays(3).atTime(12, 0), NOW))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("SESSION_AFTER_COMMITMENT_END");
     }
 
     @Test
