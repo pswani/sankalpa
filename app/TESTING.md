@@ -23,7 +23,7 @@ first. It needs Maven and a working `backend/` checkout for that.
 
 | Suite | What it covers | Where it runs |
 |---|---|---|
-| Core | The domain rules, the application service, and the adapter that talks to the service — the wire format, the mapping, the refusal translation, the refresh fan-out, and everything about being away from the service: the phone's copy, the outbox, and who wins when the two disagree. All against a stub transport | macOS toolchain, no simulator |
+| Core | The domain rules, application service, service adapter, and deterministic voice layer — including reducer transitions, title resolution, draft durability, and accepted-versus-pending results. Network behavior uses a stub transport; voice tests inject interpreted turns | macOS toolchain, no simulator |
 | UI | The journeys a person takes, the screens they see, and the states that are hard to reach by hand | iPhone simulator |
 | Release | That the app still compiles with every debug-only test hook removed | Unsigned, generic iOS device |
 
@@ -33,6 +33,13 @@ declaring, beginning, logging, pausing, resuming, completing, stopping, filterin
 built from an empty practice through the interface, which is the state a real first run is in.
 `SankalpaUITests/ScreenTour.swift` asks what every screen *looks like*, in Light Mode, Dark Mode
 and at an accessibility text size, and captures it.
+
+The UI journey also verifies that the app-level voice entry point opens from an empty practice and
+offers an explicit listening control. It deliberately does not automate real audio or Foundation
+Models output: the simulator has no usable on-device language model, and prompt quality is not a
+stable UI assertion. Run the physical-device checklist in
+[`docs/design/voice/README.md`](../docs/design/voice/README.md#ui-and-device-checks) for microphone,
+asset installation, locale, prompt-fixture and interruption coverage.
 
 Both inherit `SankalpaUITests/UITestCase.swift`, which is where the launching, scrolling and
 capturing live. Three rules there are worth knowing before adding a test:

@@ -91,8 +91,8 @@ boolean canLog = lifecycle.wasInProgressAt(occurredAt);
 
 ## DD-8 — No Event Infrastructure Yet
 
-**Decision.** Do not implement `DomainEventPublisher`, event handlers, outbox, process manager, or
-integration events.
+**Decision.** Do not implement `DomainEventPublisher`, event handlers, a backend event outbox,
+process manager, or integration events.
 
 **Why.** The current requirements have no asynchronous reaction and no external consumer. The audit
 requirement is satisfied by stored lifecycle history.
@@ -111,10 +111,11 @@ would wrap abstractions already provided by the platform.
 
 ---
 
-## DD-10 — Requirement Gaps Stay Open
+## DD-10 — Remaining Requirement Gaps Stay Open
 
 **Decision.** Do not design in behavior for editing/deleting sankalpas, editing sessions,
-per-sankalpa time zones, activity catalogues, or ownership until the requirements say so.
+per-sankalpa time zones, activity catalogues, or ownership until the requirements say so. Session
+deletion is no longer a gap and is handled by the narrow correction use case in DD-19.
 
 **Why.** These may become valuable, but adding them now would make the model do work the product has
 not asked it to do.
@@ -202,3 +203,52 @@ before calculating outcomes.
 
 **Why.** An indefinite daily commitment can accumulate thousands of windows. A bounded query keeps
 work proportional to what the caller is displaying and avoids premature projection infrastructure.
+
+---
+
+## DD-18 — Stable Session Identity Makes Logging Idempotent
+
+**Decision.** One logging action receives one stable `SessionId`, preserved across every delivery
+retry. An exact replay returns the existing session. While active, reusing the ID with different
+content is a conflict. After deletion, the tombstoned ID is consumed permanently and cannot create
+another session.
+
+**Why.** A connection failure cannot reveal whether a request committed before its response was
+lost. Temporal matching both misses repeats a few seconds apart and incorrectly merges legitimate
+sessions at the same time. Identity resolves the uncertainty without inventing a duplicate rule.
+
+---
+
+## DD-19 — Session Correction Is Hard Deletion
+
+**Decision.** Undo and later correction both invoke `DeleteSession`. The session is removed rather
+than marked deleted, and all history, totals, and period outcomes are derived from the sessions
+that remain. An opaque ID tombstone prevents delayed delivery of the original logging action from
+recreating it.
+
+**Why.** The requirements call for permanent deletion, not an audit history of corrections. The
+tombstone preserves command ordering without retaining performed-session details or exposing a
+soft-deleted record.
+
+---
+
+## DD-20 — Pending Session Mutations Belong At The Edge
+
+**Decision.** The phone persists pending session creations and deletions in one atomic, versioned
+operation envelope. The bounded context does not gain domain events, an event bus, or a backend
+event outbox.
+
+**Why.** Pending status is a user-visible transport condition. Keeping it in the driving adapter
+allows offline feedback and recovery without turning delivery mechanics into domain concepts.
+
+---
+
+## DD-21 — Rapid Repeats Require Confirmation, Not Deduplication
+
+**Decision.** While a logging action is running, another submission for the same sankalpa is
+blocked. For one minute after an accepted or durably pending log, a new action requires explicit
+confirmation. Confirmation creates a new ID and a distinct session; timestamps are never used as a
+uniqueness key.
+
+**Why.** This prevents the observed accidental repeat while preserving intentional extra sessions,
+including two sessions recorded at exactly the same performed time.

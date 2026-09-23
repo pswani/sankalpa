@@ -45,6 +45,34 @@ The user performs the intended actions in sessions.  Ex: Doing the Vipassana med
 
 Sessions can be logged for past dates.
 
+### Reliable Logging and Correction
+A logging action is one confirmed attempt by the user to record a session. Each logging action
+shall record at most one session, including when the system must retry that action. The same
+logging action cannot be submitted again while it is still being processed.
+
+The user shall be given a clear status for each logging action: being processed, retained as
+pending, accepted, or rejected. If a pending logging action is ultimately rejected, the user shall
+be informed and the displayed practice shall be corrected.
+
+When the user starts another logging action for the same sankalpa within one minute after a prior
+logging action was accepted or retained as pending, the user shall be asked to confirm that it is
+an additional session. Confirming records a distinct session; cancelling has no effect. Time
+proximity alone shall not silently merge or reject confirmed sessions, including sessions with the
+same performed date and time.
+
+Immediately after logging a session, the user shall be able to undo that session. The user shall
+also be able to permanently delete any logged session later. A deleted session shall no longer
+appear in session history or contribute to session totals, period outcomes, or missed-session
+calculations. Outcomes for both open and closed periods shall be derived again from the sessions
+that remain.
+
+Undoing or deleting a pending session shall also cancel its pending logging action. If a deletion
+cannot be finalized immediately, it shall be retained as pending, the session shall be excluded
+from the displayed practice, and the deletion shall complete automatically when possible. Once the
+deletion is accepted, the session shall not appear later as a result of an earlier pending logging
+action. If a pending deletion is ultimately rejected, the user shall be informed and the displayed
+practice shall be corrected.
+
 ## Start and End
 The sankalpa will have a definite start date and optional duration (end date implied).
 

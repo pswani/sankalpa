@@ -77,6 +77,8 @@ Included because the requirements need it:
 - One bounded context: `Sankalpa`.
 - A `Sankalpa` aggregate for commitment and lifecycle rules.
 - A separate `Session` record/aggregate so session history can grow without bloating `Sankalpa`.
+- Stable session identity so one logging action remains one session across uncertain delivery.
+- A narrow hard-deletion use case for Undo and later correction.
 - Value objects only for values with rules: commitment, period unit/count, number of times, title,
   description, period windows, lifecycle timeline.
 - A period-outcome calculator because the result spans commitment, lifecycle, and sessions.
@@ -85,9 +87,10 @@ Included because the requirements need it:
 Deliberately not included yet:
 
 - Separate subdomains or bounded contexts.
-- Domain events, event dispatcher, outbox, process manager, command bus, or integration events.
+- Domain events, event dispatcher, backend event outbox, process manager, command bus, or
+  integration events.
 - Identity/accounts, activity catalogue, reminders, notifications, streaks, scoring, social
-  features, edit/delete flows, or per-sankalpa time zones.
+  features, session editing, sankalpa edit/delete flows, or per-sankalpa time zones.
 - DDD specification objects where a method or named helper is clearer.
 
 ## Requirements Traceability
@@ -102,6 +105,11 @@ Deliberately not included yet:
 | More than the number of times still satisfies | `PeriodOutcomeCalculator` compares performed count with a minimum |
 | Performed session date/time | `Session` |
 | Log only past sessions within commitment coverage and while In progress | `Sankalpa.logSession`, `Commitment`, `LifecycleTimeline` |
+| One logging action records at most one session | Stable `SessionId`, replay handling in `LogSession` |
+| Rapid additional sessions require confirmation but remain distinct | Application interaction policy; no timestamp uniqueness rule |
+| Undo and permanent session deletion | `DeleteSession`, hard deletion, and deletion tombstone |
+| Deleted sessions change open and closed results | `PeriodOutcomeCalculator` derives from remaining sessions |
+| Pending creation/deletion and rejection feedback | iOS pending-operation store and synchronization coordinator |
 | Start date can be up to one year in the past | `Sankalpa.declare` |
 | No duration means tracked until stopped | `Commitment` plus terminal lifecycle state |
 | Lifecycle states and allowed transitions | `LifecycleState` transition table |
@@ -116,6 +124,9 @@ Deliberately not included yet:
 | Backdated Begin | `LifecycleTimeline` separates effective time from recorded time for the first transition |
 | Later lifecycle transitions happen now | Their effective and recorded timestamps are equal |
 | Lifecycle/session consistency | Session logging checks commitment coverage and lifecycle state at occurrence time |
-| Long-running outcome history | `GetPeriodOutcomes` and session reads are date-range bounded |
+| Long-running outcome history | `GetPeriodOutcomes` uses date-bounded reads; complete session history is page-bounded without a lifetime cutoff |
 
 Anything not in this table is either an implementation concern or an open question.
+
+The cross-layer API, iOS delivery, feedback, and correction design is specified in
+[Session reliability and correction](../../design/session-reliability/README.md).

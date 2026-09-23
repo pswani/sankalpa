@@ -1,7 +1,7 @@
 # 04 — Recorded Facts
 
 The requirements ask for lifecycle transitions to be audit logged. They do not ask for domain
-events, event handlers, integration events, an outbox, or asynchronous reactions.
+events, event handlers, integration events, or asynchronous domain reactions.
 
 So the design records facts directly:
 
@@ -52,8 +52,24 @@ public final class Session {
 }
 ```
 
-A session is a recorded past fact. The current requirements do not include editing or deleting
-sessions.
+A session is a recorded past fact, but the requirements now permit correction by permanent
+deletion. Deletion removes the session from history and from every derived count or outcome. It
+does not rewrite the remaining sessions, and it does not add a domain audit event.
+
+The persistence boundary retains only an opaque tombstone for a deleted `SessionId`. Its purpose is
+to prevent a delayed retry of the original logging action from recreating the deleted session. It
+is delivery metadata, not session history: it contains no performed timestamp, is not returned by
+session queries, and never contributes to period outcomes.
+
+## Pending Delivery Is Not A Domain Event Outbox
+
+The phone may retain pending session creations and deletions when the authoritative service cannot
+be reached. That queue belongs to the driving adapter: it preserves user-requested commands across
+transport failure and exposes their pending status. It does not publish domain events or react to
+facts after commit.
+
+This distinction keeps event infrastructure out of the bounded context while still satisfying the
+requirement that accepted pending work survive and finish later.
 
 ## When Events Would Add Value
 

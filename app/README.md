@@ -67,7 +67,13 @@ app/
       ServerRefusal.swift         Problem codes back into the app's own domain errors
       WireFormat.swift            Zone-free dates and times, without going through `Date`
       AppTime.swift               The one place instants become dates
-    Tests/               90 core tests + 64 adapter tests
+    Sources/SankalpaVoice/
+      Conversation/      Deterministic reducer, proposals and title resolution
+      Interpretation/    Foundation Models adapter and versioned prompt
+      Speech/            In-memory SpeechAnalyzer capture and readiness checks
+      Persistence/       One atomic, versioned declaration draft
+      Gateway/           Narrow app command boundary and explicit result dispositions
+    Tests/               90 core tests + 67 adapter tests + 23 voice tests
   Sankalpa/              The iOS app
     UI/                  SwiftUI screens and the design system — the driving side
   SankalpaUITests/       Journeys through the app, and a tour that captures every screen
@@ -140,6 +146,20 @@ system clock.
 | Sessions | Everything logged for one sankalpa, grouped by day |
 | Transition history | The lifecycle audit trail, with effective and recorded times |
 | Journal | Every performed session across every sankalpa, newest first |
+| Speak to Sankalpa | Log one session or prepare, revise and declare one new Sankalpa |
+
+## Conversational voice
+
+The microphone button is app-level, so it remains available from the tabs and from connection
+recovery. Voice requires iOS 27, microphone permission, installed speech assets, a supported
+locale and an available on-device System Language Model. There is no cloud fallback. Existing
+manual screens remain available on every supported OS version.
+
+Audio stays in the live capture pipeline and is discarded after transcription; it is never
+written to a file or log. Raw transcripts are not persisted. Only the structured unfinished
+declaration draft is stored, separately from the practice cache and session outbox. Every action
+is shown as an exact proposal and requires explicit confirmation. Offline sessions are reported
+as waiting to be sent, while declarations remain drafts and are never queued.
 
 ## Testing
 
@@ -157,6 +177,11 @@ requirement's own examples (Vipassana twice a day for six months, gym four times
 duration) plus the boundary rules: January 31 monthly anchoring, February 29 yearly anchoring,
 inclusive end dates, the transition table, backdated Begin, session eligibility, partial versus
 full pauses, the terminal-transition cutoff, and the limits the declare form shows the user.
+
+The same fast run includes the voice reducer and persistence suites. Those tests do not invoke a
+language model: they inject constrained interpreted turns and verify that only the reducer can
+create an executable command. Prompt quality and real microphone capture are checked on a
+supported physical device, as described in the voice design document.
 
 The simulator suites are in two halves. `JourneyTests` drives the app from an empty store the way
 a person would — declare, begin, log, pause, resume, complete, stop, filter, clear — and checks

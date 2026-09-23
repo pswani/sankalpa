@@ -32,8 +32,10 @@ Focus on behavior:
 - A period-outcome date range generates only windows starting in the range and counts every session
   in those complete windows.
 
-Do not test domain events, event handlers, projections, edit/delete behavior, per-sankalpa
-timezones, or prorated session requirements because those concepts are outside the requirements.
+Do not test domain events, event handlers, projections, session editing, per-sankalpa timezones, or
+prorated session requirements because those concepts are outside the requirements. Session
+deletion is in scope and is covered at the application, adapter, and behavioral levels because it
+does not add domain behavior to `Session`.
 
 ## Application Tests
 
@@ -48,6 +50,9 @@ Verify that use cases:
 - save on success,
 - return domain errors unchanged,
 - do not duplicate lifecycle rules.
+- return the existing session for an exact replay of a logging action,
+- reject reuse of a session identity with different content,
+- delete a session idempotently and leave all derived reads to recompute from remaining sessions.
 
 ## Adapter Tests
 
@@ -55,6 +60,12 @@ Keep these narrow:
 
 - Controller request validation and error mapping.
 - Persistence round trips for `Sankalpa`, lifecycle transitions, and sessions.
+- Exact session-create replay produces one row even when requests overlap.
+- A replay after lifecycle state changes still returns the originally accepted session.
+- Two different IDs at the same occurrence time produce two sessions.
+- Reusing an ID with different content is rejected without mutation.
+- Session deletion removes the row and records its tombstone atomically; repeated deletion
+  succeeds, and a delayed create with the deleted ID cannot recreate it.
 - Schema assertion that `endDate` is not stored if the design keeps it derived.
 - Read adapter returns flat rows without constructing aggregates.
 - Persistence concurrency test starts an uncommitted Pause, then attempts to log a session whose
@@ -62,6 +73,13 @@ Keep these narrow:
   the lifecycle write and is not committed against the old In progress snapshot. The test uses at
   least two database connections so pool serialization cannot satisfy the assertion by itself.
 - Period outcome query expands the session read to the selected windows' actual boundaries.
+- The client pending-operation envelope migrates the legacy create-only format, atomically replaces
+  an undone create with a deletion, and survives relaunch and failed delivery.
+- Count overlays remove a pending create exactly once and subtract a known server session exactly
+  once, including when the latter is older than the bounded snapshot.
+- Paginated history can reach and delete a session outside the normal snapshot date range.
+- Interaction tests cover the in-flight guard, one-minute repeat confirmation, accepted and pending
+  result text, Undo, history deletion, and rejection recovery.
 
 ## Architecture Tests
 
@@ -132,6 +150,30 @@ Scenario: Stopping early excludes a partial period
   When it is Stopped partway through a period
   Then periods ending before the Stop are evaluated
   And the interrupted period and later periods are not evaluated
+
+Scenario: Retrying one logging action does not duplicate a session
+  Given a logging action whose first response was lost
+  When the same logging action is delivered again
+  Then exactly one session exists
+
+Scenario: A rapid additional session is explicit
+  Given a session was accepted or retained as pending less than one minute ago
+  When the user tries to log another session for the same sankalpa
+  Then the additional session requires confirmation
+  And confirming records a distinct session
+
+Scenario: Deleting a session corrects a closed period
+  Given a closed period whose outcome includes a logged session
+  When that session is deleted
+  Then it no longer appears in session history or totals
+  And the closed period outcome is recalculated from the sessions that remain
+
+Scenario: Undo survives uncertain delivery
+  Given a logging request may have reached the service before its response was lost
+  And the session is shown as pending
+  When the user undoes it
+  Then the session is excluded immediately
+  And delayed delivery of the original logging action cannot make it reappear
 ```
 
 Do not use Cucumber unless readable business scenarios are worth the added tool. Plain integration

@@ -1,6 +1,12 @@
 import Foundation
 import SankalpaCore
 
+public enum RemoteSessionLogDisposition: Sendable {
+    case acceptedByService
+    case pendingOnDevice
+    case refused(SankalpaCommandError)
+}
+
 /// The sankalpas and sessions the app is currently showing, held in memory so the read side can
 /// stay synchronous.
 ///
@@ -435,18 +441,32 @@ public final class RemoteSankalpaService {
     public func logSession(
         _ id: SankalpaId, occurredAt: CalendarMoment
     ) async -> SankalpaCommandError? {
+        switch await logSessionWithDisposition(id, occurredAt: occurredAt) {
+        case .acceptedByService, .pendingOnDevice: return nil
+        case .refused(let error): return error
+        }
+    }
+
+    /// The same command path with the successful disposition kept visible for clients, such as
+    /// voice, that must distinguish service acceptance from durable offline storage.
+    public func logSessionWithDisposition(
+        _ id: SankalpaId, occurredAt: CalendarMoment
+    ) async -> RemoteSessionLogDisposition {
         do {
             _ = try await client.logSession(id, occurredAt: occurredAt)
         } catch let failure as APIFailure {
             guard case .unreachable = failure else {
-                return refusal(failure, context: Context(id: id, occurredAt: occurredAt))
+                return .refused(refusal(failure, context: Context(id: id, occurredAt: occurredAt)))
             }
-            return logSessionWhileOffline(id, occurredAt: occurredAt, unreachable: failure)
+            if let error = logSessionWhileOffline(id, occurredAt: occurredAt, unreachable: failure) {
+                return .refused(error)
+            }
+            return .pendingOnDevice
         } catch {
-            return refusal(error, context: Context(id: id, occurredAt: occurredAt))
+            return .refused(refusal(error, context: Context(id: id, occurredAt: occurredAt)))
         }
         await sync()
-        return nil
+        return .acceptedByService
     }
 
     private func logSessionWhileOffline(
@@ -467,10 +487,14 @@ public final class RemoteSankalpaService {
         let entry = PendingSession(
             sankalpaId: id, occurredAt: occurredAt, loggedAt: clock.now()
         )
-        guard cache.saveOutbox(pending + [entry]) else {
+        let updated = pending + [entry]
+        guard cache.saveOutbox(updated) else {
             return .storage(.writeFailed)
         }
-        savePending(pending + [entry])
+        // The successful write above is the commit point. Update memory without writing the same
+        // outbox a second time; a later launch will read exactly these bytes.
+        pending = updated
+        store.replacePending(updated)
         return nil
     }
 

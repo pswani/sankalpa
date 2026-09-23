@@ -17,6 +17,9 @@ do not give it a name.
 | Duration | Requirement | Optional count of periods. | `PeriodCount` |
 | End date | Requirement | Inclusive last date covered by a finite commitment; absent without duration. | `Commitment.endDate()` |
 | Session | Requirement | One occasion on which the intended action was performed. | `Session` |
+| Logging action | Requirement | One confirmed attempt to record one session; repeated delivery of the same action is not a new session. | Stable `SessionId` supplied to `LogSession` |
+| Pending session | Requirement | A logging action accepted locally but not yet accepted by the authoritative service. | `PendingSession` |
+| Pending deletion | Requirement | A requested session deletion that is locally effective but not yet finalized by the authoritative service. | `PendingSessionDeletion` |
 | Lifecycle state | Requirement | Not started, In progress, Paused, Completed Successfully, Completed Unsuccessfully, Stopped. | `LifecycleState` |
 | Lifecycle transition | Requirement | A user-performed state change recorded for audit. Begin may be backdated; every other transition takes effect when performed. | `LifecycleTransition` |
 | Begin timing | Design term | Effective and recorded timestamps for the transition from Not started to In progress. | `BeginTiming` |
@@ -37,9 +40,14 @@ do not give it a name.
 | Complete | Move to Completed Successfully or Completed Unsuccessfully now. | `CompleteSankalpa` |
 | Stop | Move to Stopped now. | `StopSankalpa` |
 | Log | Record a performed session. | `LogSession` |
+| Undo | Immediately request deletion of the session produced by the just-completed logging action. | `DeleteSession` with the returned `SessionId` |
+| Delete | Permanently remove a logged session so it no longer appears or contributes to derived results. | `DeleteSession` |
 
 A session is eligible only when its `occurredAt` is covered by the commitment and the lifecycle
 state at that time is In progress.
+
+Two confirmed logging actions remain distinct even when their performed date and time are equal.
+Identity, not temporal proximity, distinguishes delivery retries from additional sessions.
 
 There is no generic `updateStatus` use case because lifecycle changes are user intentions with
 different allowed transitions.

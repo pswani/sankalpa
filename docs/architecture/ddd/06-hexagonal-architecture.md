@@ -48,6 +48,7 @@ src/main/java/com/sankalpa/
     complete/
     stop/
     logsession/
+    deletesession/
     query/
     port/
 
@@ -93,24 +94,36 @@ Sketch:
 | `sankalpa` | id, title, description, action type, start date, period unit, times per period, period count, current state, declared at |
 | `sankalpa_lifecycle_transition` | sankalpa id, sequence, from state, to state, effective at, recorded at |
 | `session` | id, sankalpa id, occurred at, logged at |
+| `session_deletion_tombstone` | deleted session id, sankalpa id |
 
-Do not add event tables, outbox tables, projection tables, ownership columns, activity tables, or
-timezone columns until the requirements call for them. Single-user scope is represented by the
-absence of account and owner data, not by a synthetic singleton user row.
+The deletion tombstone is minimal delivery-safety metadata. It is not soft-deleted session history
+and stores no occurrence or logging time. Do not add event tables, backend event outbox tables,
+projection tables, ownership columns, activity tables, or timezone columns until the requirements
+call for them. Single-user scope is represented by the absence of account and owner data, not by a
+synthetic singleton user row.
 
 ## Read Side
 
 Simple list/detail/session/history queries can use flat read rows through `SankalpaReadPort`.
 
+Session history is paginated and may be read without a date filter so every session can be reached
+for correction. Other consumers keep their bounded date ranges. Pagination bounds each request
+without imposing a lifetime cutoff.
+
 `GetPeriodOutcomes` should select windows from the requested `from`/`until` range, query sessions
 from the first selected window's start through the last selected window's end, and use the domain
-calculator instead of reimplementing period arithmetic in SQL. Range-bounded queries are sufficient
-for current scale; no projection table is needed.
+calculator instead of reimplementing period arithmetic in SQL. Date-bounded outcome queries and
+page-bounded history are sufficient for current scale; no projection table is needed.
 
 ## Adapter Notes
 
 - Controllers map request data to commands and domain errors to HTTP responses.
 - Persistence adapters map rows to domain objects and back.
+- The session-create adapter accepts a stable action ID. It checks exact replay, deletion
+  tombstone, and identity conflict before invoking new-session validation. There is no uniqueness
+  constraint on occurrence time.
+- Session deletion and tombstone insertion commit atomically. A repeated deletion succeeds, and a
+  delayed create carrying a tombstoned ID cannot recreate the session.
 - Persistence uses ordinary optimistic concurrency on `Sankalpa` lifecycle changes. While logging
   a session, the adapter locks the parent sankalpa row before loading and validating its lifecycle
   snapshot, or performs an equivalent atomic version check. This only orders overlapping commands;
@@ -121,3 +134,8 @@ for current scale; no projection table is needed.
 - The configured application timezone converts lifecycle/session timestamps to the dates used by
   commitment windows; no per-user or per-sankalpa timezone is modeled.
 - There is no event adapter in the current design.
+
+The iOS adapter's versioned pending-operation store may contain session creations and deletions.
+It is a transport recovery mechanism, not a backend event outbox or a domain repository. It writes
+the whole envelope atomically so undoing a pending create can replace it with a deletion intent
+without a crash window between two files.

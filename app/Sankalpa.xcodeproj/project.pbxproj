@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		AA0000000000000000000001 /* SankalpaCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000012 /* SankalpaCore */; };
 		AA0000000000000000000031 /* SankalpaStorage in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000032 /* SankalpaStorage */; };
+		AA0000000000000000000041 /* SankalpaVoice in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000042 /* SankalpaVoice */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,6 +47,7 @@
 			files = (
 				AA0000000000000000000001 /* SankalpaCore in Frameworks */,
 				AA0000000000000000000031 /* SankalpaStorage in Frameworks */,
+				AA0000000000000000000041 /* SankalpaVoice in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -99,6 +101,7 @@
 			packageProductDependencies = (
 				AA0000000000000000000012 /* SankalpaCore */,
 				AA0000000000000000000032 /* SankalpaStorage */,
+				AA0000000000000000000042 /* SankalpaVoice */,
 			);
 			productName = Sankalpa;
 			productReference = AA0000000000000000000002 /* Sankalpa.app */;
@@ -280,6 +283,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Sankalpa;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Sankalpa uses the microphone only while you are speaking to log a session or prepare a Sankalpa.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
@@ -306,6 +310,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Sankalpa;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Sankalpa uses the microphone only while you are speaking to log a session or prepare a Sankalpa.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
@@ -398,6 +403,10 @@
 		AA0000000000000000000032 /* SankalpaStorage */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SankalpaStorage;
+		};
+		AA0000000000000000000042 /* SankalpaVoice */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SankalpaVoice;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

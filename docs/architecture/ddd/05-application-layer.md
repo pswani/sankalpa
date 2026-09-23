@@ -17,14 +17,15 @@ Commands in current scope:
 | `ResumeSankalpa` | Move a sankalpa back to In progress now. |
 | `CompleteSankalpa` | Move a sankalpa to one of the completed states now. |
 | `StopSankalpa` | Move a sankalpa to Stopped now. |
-| `LogSession` | Record a past performed session. |
+| `LogSession` | Record a past performed session once for a stable logging-action identity. |
+| `DeleteSession` | Permanently remove a session; repeated deletion of an absent session succeeds. |
 
 Not in current scope:
 
 - `AmendSankalpa`
 - `ReviseSankalpa`
 - `DeleteSankalpa`
-- session edit/delete use cases
+- session editing
 
 Those should be added only when the requirements add them.
 
@@ -46,6 +47,10 @@ the first selected window's start through the last selected window's end and run
 `PeriodOutcomeCalculator`. This bounds work for long-running commitments without undercounting a
 window that crosses a query boundary or introducing stored projections.
 
+`GetSessions` is paginated. It accepts an optional date range for bounded consumers, while the
+session-history correction surface pages without a date range so every logged session remains
+reachable.
+
 ## Ports
 
 ```java
@@ -56,7 +61,11 @@ public interface SankalpaRepository {
 }
 
 public interface SessionRepository {
+    Optional<Session> findById(SessionId sessionId);
     void save(Session session);
+    void delete(SessionId sessionId);
+    Optional<SankalpaId> findDeletionOwner(SessionId sessionId);
+    void recordDeletion(SessionId sessionId, SankalpaId sankalpaId);
     List<Session> findForSankalpa(
         SankalpaId sankalpaId, LocalDate from, LocalDate until);
 }
@@ -64,7 +73,8 @@ public interface SessionRepository {
 public interface SankalpaReadPort {
     List<SankalpaSummaryRow> list(SankalpaFilter filter);
     Optional<SankalpaDetailRow> detail(SankalpaId id);
-    List<SessionRow> sessions(SankalpaId id, LocalDate from, LocalDate until);
+    Page<SessionRow> sessions(
+        SankalpaId id, Optional<DateRange> range, PageRequest page);
     List<LifecycleTransitionRow> lifecycleHistory(SankalpaId id);
 }
 
@@ -107,8 +117,20 @@ public Result<Void, SankalpaCommandError> handle(BeginSankalpaCommand command) {
 The use case does not inspect current state; the aggregate handles lifecycle and timing rules.
 Only `BeginSankalpa` accepts an optional `effectiveAt`; omitting it means now. `recordedAt` is never
 client supplied. Every other lifecycle command supplies `clock.now()` directly to the aggregate.
-A session command accepts a past `occurredAt` and checks both commitment coverage and the timeline's
-state at that time.
+A session command accepts a stable `SessionId` and a past `occurredAt`. Inside the same transaction
+that orders it with lifecycle changes, it first resolves an exact replay or deletion tombstone by
+ID. Only a new logging action checks commitment coverage and the timeline's state at that time.
+
+`DeleteSession` locks the requested parent, loads the session by ID, verifies that it belongs to the
+requested sankalpa, removes it, and records its ID as deleted in one transaction. An already absent
+session with a matching deletion tombstone succeeds, making pending deletion retries safe. If
+neither record exists, deletion creates the tombstone so it is ordered ahead of a delayed create.
+Reusing an ID for a different sankalpa is a conflict rather than an idempotent replay.
+
+The one-minute repeat confirmation and the in-flight submission guard are interaction policies,
+not aggregate rules. They belong at the application/presentation boundary and are applied before a
+new `SessionId` is issued. Once the user confirms an additional session, the ordinary `LogSession`
+use case records it independently even if its performed timestamp matches another session.
 
 ## HTTP Shape
 
@@ -124,12 +146,14 @@ Use intention-revealing endpoints:
 | `POST` | `/sankalpas/{id}/resume` | `ResumeSankalpa` |
 | `POST` | `/sankalpas/{id}/complete` | `CompleteSankalpa` |
 | `POST` | `/sankalpas/{id}/stop` | `StopSankalpa` |
-| `POST` | `/sankalpas/{id}/sessions` | `LogSession` |
+| `POST` | `/sankalpas/{id}/sessions` | `LogSession`; a stable idempotency key identifies the logging action |
+| `DELETE` | `/sankalpas/{id}/sessions/{sessionId}` | `DeleteSession` |
 | `GET` | `/sankalpas/{id}/sessions` | `GetSessions` |
 | `GET` | `/sankalpas/{id}/period-outcomes?from=...&until=...` | `GetPeriodOutcomes` |
 | `GET` | `/sankalpas/{id}/lifecycle-history` | `GetLifecycleHistory` |
 
-Do not add `PATCH`, `PUT`, or `DELETE` until changing/deleting sankalpas is in scope.
+Do not add generic session update or sankalpa mutation endpoints. Session deletion is the narrow
+correction capability required here; changing or deleting a sankalpa remains outside scope.
 
 Only the Begin request body may contain `effectiveAt`. The response/read models expose both
 `effectiveAt` and `recordedAt` for each audit entry; they are equal for all other transitions.

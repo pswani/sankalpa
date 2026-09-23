@@ -16,9 +16,3 @@ The requirements do not include editing or deleting a sankalpa.
 
 Do not add `AmendSankalpa`, `ReviseSankalpa`, or `DeleteSankalpa` until those use cases are
 requirements.
-
-## Q3 — Can A Logged Session Be Changed Or Deleted?
-
-The requirements do not include editing or deleting logged sessions.
-
-Current design assumption: a session records a past fact and has no update/delete use case.

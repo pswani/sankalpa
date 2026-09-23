@@ -20,7 +20,8 @@ These are not subdomains. They are just the parts of the model that deserve atte
 |---|---|---|
 | Commitment | Turns "x times per y period for z duration" into concrete period windows. | Model as a value object with derived windows and end date. |
 | Lifecycle | Controls when a sankalpa can be acted on and supplies audit history. | Model as explicit states and a transition timeline. |
-| Session logging | Records performed sessions and must respect commitment coverage and lifecycle. | Let `Sankalpa` decide whether a session may be logged. |
+| Session logging | Records performed sessions reliably and must respect commitment coverage and lifecycle. | Let `Sankalpa` decide eligibility; let the application preserve one identity across delivery retries. |
+| Session correction | Removes an incorrectly logged session and changes every result derived from it. | Delete the session through an explicit use case and continue deriving outcomes from the sessions that remain. |
 | Period outcomes | Determines whether closed periods were satisfied. | Derive on read from commitment and sessions. |
 
 Calling these subdomains would imply more independence than they have. They change together and use

@@ -87,6 +87,24 @@ struct OfflinePracticeTests {
         #expect(service.queries.summaries().first?.totalSessions == 2)
     }
 
+    @Test("Voice can distinguish a session saved in the outbox")
+    func pendingSessionDisposition() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+        transport.failEverything(with: URLError(.notConnectedToInternet))
+
+        let disposition = await service.logSessionWithDisposition(
+            SankalpaId(UUID(uuidString: Fixture.sankalpaId)!),
+            occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 7)
+        )
+
+        guard case .pendingOnDevice = disposition else {
+            Issue.record("Expected an outbox disposition")
+            return
+        }
+    }
+
     /// Going offline must not become a way to record something the rules forbid. The phone has
     /// the commitment and the lifecycle, so it can apply the same rules the service would.
     @Test("A session the rules forbid is refused offline too, and is not queued")

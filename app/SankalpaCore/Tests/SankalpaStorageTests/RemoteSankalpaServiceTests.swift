@@ -165,6 +165,27 @@ struct RemoteSankalpaServiceTests {
         #expect(transport.requests.filter { $0 == "GET /api/v1/sankalpas" }.count == 2)
     }
 
+    @Test("Voice can distinguish a session accepted by the service")
+    func acceptedSessionDisposition() async {
+        let transport = Fixture.readyTransport()
+        transport.on("POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions", status: 201, body: """
+            {"id":"\(Fixture.sessionId)","sankalpaId":"\(Fixture.sankalpaId)",
+             "occurredAt":"2026-09-10T07:00:00","loggedAt":"2026-09-10T12:00:00"}
+            """)
+        let service = Fixture.service(transport: transport)
+        await service.refresh()
+
+        let disposition = await service.logSessionWithDisposition(
+            SankalpaId(UUID(uuidString: Fixture.sankalpaId)!),
+            occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 7)
+        )
+
+        guard case .acceptedByService = disposition else {
+            Issue.record("Expected service acceptance")
+            return
+        }
+    }
+
     @Test("A refused session comes back as the app's own error, in the app's own words")
     func refusedSessionIsMappedBack() async {
         let transport = Fixture.readyTransport()

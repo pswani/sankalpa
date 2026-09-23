@@ -1,5 +1,6 @@
 import SwiftUI
 import SankalpaCore
+import SankalpaVoice
 
 /// Named `AppTab` because SwiftUI's own `Tab` is the view used below.
 enum AppTab: Hashable {
@@ -10,6 +11,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var selectedTab: AppTab = .today
     @State private var declaringSankalpa = false
+    @State private var showingVoiceAssistant = false
+    @State private var voiceDraftWaiting = false
     @State private var listFilter: SankalpaListView.Filter = .active
 
     var body: some View {
@@ -27,6 +30,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $declaringSankalpa) {
             DeclareSankalpaView()
+        }
+        .sheet(isPresented: $showingVoiceAssistant, onDismiss: refreshVoiceDraftIndicator) {
+            VoiceAssistantView(gateway: model)
         }
         .alert(
             model.alertTitle,
@@ -65,6 +71,35 @@ struct RootView: View {
         }
         .animation(.snappy, value: model.confirmation)
         .sensoryFeedback(.success, trigger: model.successCount)
+        .overlay(alignment: .bottomTrailing) {
+            Button {
+                showingVoiceAssistant = true
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "mic.fill")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(Palette.onAccentFill)
+                        .frame(width: 56, height: 56)
+                        .background(Palette.accentFill, in: .circle)
+                        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+                    if voiceDraftWaiting {
+                        Circle()
+                            .fill(Palette.pausedTint)
+                            .frame(width: 14, height: 14)
+                            .overlay(Circle().stroke(Palette.card, lineWidth: 2))
+                    }
+                }
+            }
+            .accessibilityLabel("Speak to Sankalpa")
+            .accessibilityHint("Log a session or prepare a new Sankalpa by voice")
+            .padding(.trailing, 18)
+            .padding(.bottom, 76)
+        }
+        .task { refreshVoiceDraftIndicator() }
+    }
+
+    private func refreshVoiceDraftIndicator() {
+        voiceDraftWaiting = VoiceDraftStore().hasDraft()
     }
 
     private var tabs: some View {

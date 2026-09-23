@@ -21,7 +21,7 @@ import SankalpaStorage
 @MainActor
 @Observable
 final class AppModel {
-    private let remote: RemoteSankalpaService
+    let remote: RemoteSankalpaService
 
     /// Everything the list and Today screens render, refreshed after each command.
     private(set) var summaries: [SankalpaSummary] = []

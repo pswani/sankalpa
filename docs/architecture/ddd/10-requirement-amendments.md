@@ -34,13 +34,3 @@ Add only if the product needs these operations:
 While a sankalpa is Not started, the user can change any of its Key Information and can delete the sankalpa.
 In every other state, the user can change only the title and description.
 ```
-
-## A4 — Changing A Session
-
-Add only if this should be explicit:
-
-```markdown
-A logged session records a past event and cannot be changed.
-```
-
-Or define the edit/delete rules if sessions should be correctable.

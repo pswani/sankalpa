@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "SankalpaCore", targets: ["SankalpaCore"]),
-        .library(name: "SankalpaStorage", targets: ["SankalpaStorage"])
+        .library(name: "SankalpaStorage", targets: ["SankalpaStorage"]),
+        .library(name: "SankalpaVoice", targets: ["SankalpaVoice"])
     ],
     targets: [
         .target(
@@ -29,6 +30,17 @@ let package = Package(
         .testTarget(
             name: "SankalpaStorageTests",
             dependencies: ["SankalpaStorage", "SankalpaCore"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .target(
+            name: "SankalpaVoice",
+            dependencies: ["SankalpaCore"],
+            resources: [.process("Interpretation/voice-interpreter-v1.txt")],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "SankalpaVoiceTests",
+            dependencies: ["SankalpaVoice", "SankalpaCore"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         )
     ]

@@ -14,6 +14,30 @@ import XCTest
 /// has no delete and nothing here could put it back.
 final class JourneyTests: UITestCase {
 
+    // MARK: - Voice
+
+    func testVoiceAssistantIsAvailableWithoutAnExistingSankalpa() throws {
+        launch()
+
+        tap(
+            app.buttons["Speak to Sankalpa"],
+            "the app-level voice entry point was not available from an empty practice"
+        )
+        expect(
+            app.navigationBars["Speak to Sankalpa"],
+            "the voice assistant did not open"
+        )
+        expect(
+            app.staticTexts["Log a session or prepare a new Sankalpa in your own words."],
+            "the voice assistant did not explain its supported starting actions"
+        )
+        expect(
+            app.buttons["Start listening"],
+            "the voice assistant did not offer an explicit listening control"
+        )
+        tap(app.buttons["Close"], "the voice assistant could not be dismissed")
+    }
+
     // MARK: - Declaring
 
     /// The primary path through the app: declare an intent, begin it, act, and see the period

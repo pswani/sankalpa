@@ -98,8 +98,9 @@ public final class Sankalpa {
 }
 ```
 
-There are no edit or delete methods yet because the requirements do not include edit/delete use
-cases.
+Session deletion is not a method on `Sankalpa`. Removing a session does not change commitment or
+lifecycle state and introduces no aggregate invariant; the `DeleteSession` application use case
+removes the identified session through `SessionRepository`.
 
 ## Aggregate/Record: Session
 
@@ -112,10 +113,42 @@ public final class Session {
 }
 ```
 
-A session records a past fact. It has no behavior beyond construction-time validity.
+A session records a past fact while it is part of the practice. It has no behavior beyond
+construction-time validity. The correction requirement permits that fact to be permanently
+removed; it does not make the remaining session mutable.
 
 `Sankalpa.logSession(...)` creates sessions so the lifecycle and commitment rules stay with the
 object that knows them.
+
+## Session Identity, Retry, and Correction
+
+`SessionId` also identifies the logging action that first requested the session. The application
+must preserve that identity across delivery retries. Before asking the aggregate to create a
+session, `LogSession` checks for an existing record with that ID:
+
+- An active session with the same ID, sankalpa, and `occurredAt` is a successful replay and returns
+  the existing session.
+- An active session with the same ID and different content is rejected as
+  `SessionIdentityConflict`.
+- A tombstoned ID is already consumed: the same sankalpa receives `SessionDeleted`, while a
+  different sankalpa receives `SessionIdentityConflict`.
+- A new ID is validated by `Sankalpa.logSession(...)` and persisted once.
+
+The replay check happens before current lifecycle validation. A response may be lost after a valid
+session commits, and retrying that action after the sankalpa changes state must return the original
+session rather than reinterpret the old action under new state.
+
+There is deliberately no uniqueness rule on `(sankalpaId, occurredAt)`. Separate confirmed
+logging actions may represent separate performed sessions at the same timestamp.
+
+`DeleteSession` permanently removes the identified session. It is idempotent for an already absent
+session. A small persistence tombstone for the deleted `SessionId` prevents an earlier or delayed
+delivery of that logging action from recreating the session. The tombstone is delivery metadata,
+not a retained session or lifecycle audit fact; it carries no performed-session details and never
+participates in queries or outcomes.
+
+Because period outcomes are derived, deleting a session automatically changes the performed and
+missed counts of any affected open or closed period the next time it is evaluated.
 
 ## Value Object: Commitment
 
@@ -266,6 +299,9 @@ every query.
 | S14 | Only Begin may be backdated; all other transitions take effect when recorded. | `LifecycleTimeline` |
 | S15 | Reaching the end date does not automatically change lifecycle state. | `Sankalpa` / application behavior |
 | S16 | A terminal transition excludes the interrupted and later windows from evaluation. | `PeriodOutcomeCalculator` |
+| S17 | Replaying one logging action cannot create another session. | `LogSession` and stable `SessionId` |
+| S18 | Separate confirmed logging actions remain distinct even at the same performed time. | Session identity; no timestamp uniqueness rule |
+| S19 | A deleted session is absent from history, totals, and period outcomes and cannot be recreated by delayed delivery of its old logging action. | `DeleteSession`, `SessionRepository`, deletion tombstone |
 
 ## Domain Errors
 
@@ -287,3 +323,6 @@ Use domain errors for business refusals:
 - `InvalidCompletionOutcome`
 
 These errors do not know HTTP status codes. Controllers map them to transport responses.
+
+`SessionIdentityConflict` and `SessionDeleted` are application command outcomes, not domain errors.
+They arise while resolving stable delivery identity before a new session reaches domain validation.
