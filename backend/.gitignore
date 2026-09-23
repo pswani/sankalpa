@@ -5,3 +5,4 @@
 /logs/*.log
 /logs/*-summary.md
 /logs/latest-summary.md
+/run/

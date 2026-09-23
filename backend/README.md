@@ -37,6 +37,19 @@ must be an IANA zone id shared with the client (for example, `America/Chicago`).
 it is absent or invalid, avoiding silent interpretation of offset-free timestamps in the wrong zone.
 Authentication and TLS termination are intentionally not configured.
 
+## Deploy locally
+
+To verify, rebuild, replace the locally running backend, and wait for its API to become healthy:
+
+```bash
+./scripts/deploy.sh
+```
+
+The script preserves `data/sankalpa.db`, writes the running PID under `run/`, and writes service
+output to `logs/server.log`. It uses the Mac's configured IANA time zone by default; set
+`SANKALPA_TIMEZONE`, `SANKALPA_DB_URL`, or `PORT` to override the corresponding value. After a
+successful standalone verification, `./scripts/deploy.sh --skip-verify` avoids running it twice.
+
 ## Published API contract
 
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
