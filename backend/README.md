@@ -8,6 +8,7 @@ validation, or SQL dependencies; adapters provide REST, SQLite persistence, tran
 
 - Java 21 or later
 - Maven 3.6.3 or later
+- zsh (the default shell on current macOS releases)
 
 ## Build and verify
 

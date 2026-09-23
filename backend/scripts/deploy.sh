@@ -1,8 +1,9 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/zsh
+emulate -LR zsh
+setopt err_exit no_unset pipe_fail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
 RUN_DIR="$PROJECT_DIR/run"
 LOG_DIR="$PROJECT_DIR/logs"
 PID_FILE="$RUN_DIR/server.pid"
@@ -94,7 +95,7 @@ if [[ -f "$PID_FILE" ]]; then
             echo "Remove $PID_FILE only after checking that process." >&2
             exit 1
         fi
-        echo "Stopping backend process $OLD_PID…"
+        echo "Stopping backend process ${OLD_PID}…"
         stop_process "$OLD_PID"
     fi
     rm -f "$PID_FILE"
@@ -102,28 +103,28 @@ fi
 
 # Adopt a backend that was started manually before this script existed. Never stop an unrelated
 # process merely because it uses the configured port.
-PORT_PIDS="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
-for pid in $PORT_PIDS; do
+while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
     if ! is_sankalpa_process "$pid"; then
         echo "Port $PORT is already used by a process that is not the Sankalpa backend (PID $pid)." >&2
         exit 1
     fi
-    echo "Stopping existing backend process $pid on port $PORT…"
+    echo "Stopping existing backend process ${pid} on port ${PORT}…"
     stop_process "$pid"
-done
+done < <(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)
 
-echo "Starting backend on port $PORT…"
+echo "Starting backend on port ${PORT}…"
 : > "$SERVER_LOG"
 cd "$PROJECT_DIR"
 SANKALPA_TIMEZONE="$TIMEZONE" \
 SANKALPA_DB_URL="$DATABASE_URL" \
 PORT="$PORT" \
-nohup java -jar "$JAR" >> "$SERVER_LOG" 2>&1 &
+java -jar "$JAR" >> "$SERVER_LOG" 2>&1 &!
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
 
 HEALTH_URL="http://localhost:$PORT/api/v1/sankalpas"
-for attempt in $(seq 1 60); do
+repeat 60; do
     if curl -sf --max-time 2 "$HEALTH_URL" -o /dev/null; then
         echo "Backend deployed successfully."
         echo "PID: $NEW_PID"
