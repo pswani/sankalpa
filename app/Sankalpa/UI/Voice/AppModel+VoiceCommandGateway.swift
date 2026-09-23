@@ -1,3 +1,4 @@
+import Foundation
 import SankalpaCore
 import SankalpaVoice
 
@@ -29,8 +30,11 @@ extension AppModel: VoiceCommandGateway {
         }
     }
 
-    func declareForVoice(_ declaration: Declaration) async -> VoiceDeclarationExecution {
-        if let error = await remote.declare(declaration) {
+    func declareForVoice(
+        _ declaration: Declaration,
+        commandID: UUID
+    ) async -> VoiceDeclarationExecution {
+        if let error = await remote.declare(declaration, id: SankalpaId(commandID)) {
             if case .storage = error { return .serviceUnavailable(error.message) }
             return .refused(error.message)
         }

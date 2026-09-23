@@ -63,10 +63,10 @@ public struct SankalpaAPIClient: Sendable {
 
     // MARK: - Commands
 
-    func declare(_ declaration: Declaration) async throws -> API.SankalpaResponse {
+    func declare(_ declaration: Declaration, id: SankalpaId) async throws -> API.SankalpaResponse {
         try await send(
             "POST", "/api/v1/sankalpas",
-            body: APIMapping.declareRequest(declaration),
+            body: APIMapping.declareRequest(declaration, id: id),
             as: API.SankalpaResponse.self
         )
     }
@@ -105,11 +105,14 @@ public struct SankalpaAPIClient: Sendable {
     }
 
     func logSession(
-        _ id: SankalpaId, occurredAt: CalendarMoment
+        _ id: SankalpaId, sessionID: SessionId, occurredAt: CalendarMoment
     ) async throws -> API.SessionResponse {
         try await send(
             "POST", "/api/v1/sankalpas/\(id.value.uuidString)/sessions",
-            body: API.LogSessionRequest(occurredAt: WireFormat.text(occurredAt)),
+            body: API.LogSessionRequest(
+                id: sessionID.value,
+                occurredAt: WireFormat.text(occurredAt)
+            ),
             as: API.SessionResponse.self
         )
     }

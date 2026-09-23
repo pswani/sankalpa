@@ -1,3 +1,4 @@
+import Foundation
 import SankalpaCore
 
 @MainActor
@@ -10,7 +11,10 @@ public protocol VoiceCommandGateway: AnyObject {
         occurredAt: CalendarMoment
     ) async -> VoiceSessionExecution
 
-    func declareForVoice(_ declaration: Declaration) async -> VoiceDeclarationExecution
+    func declareForVoice(
+        _ declaration: Declaration,
+        commandID: UUID
+    ) async -> VoiceDeclarationExecution
 }
 
 public enum VoiceSessionExecution: Equatable, Sendable {

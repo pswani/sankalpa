@@ -34,6 +34,7 @@ public struct FoundationModelVoiceInterpreter: VoiceInterpreting {
     ) -> String {
         var lines = [
             "Current local date and time: \(context.nowDescription)",
+            "Conversation phase: \(context.phase.rawValue)",
             "User utterance: \(utterance)"
         ]
         if let draft = context.draft {
@@ -44,6 +45,10 @@ public struct FoundationModelVoiceInterpreter: VoiceInterpreting {
         }
         if !context.candidateTitles.isEmpty {
             lines.append("Allowed title candidates: \(context.candidateTitles.joined(separator: " | "))")
+        }
+        if let title = context.sessionProposalTitle,
+           let moment = context.sessionProposalMoment {
+            lines.append("Current session proposal: title=\(title), occurredAt=\(moment)")
         }
         return lines.joined(separator: "\n")
     }

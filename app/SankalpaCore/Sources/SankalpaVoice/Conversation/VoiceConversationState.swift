@@ -68,6 +68,7 @@ public enum VoiceConversationState: Equatable, Sendable {
         case .idle(let draft), .result(_, let draft): return draft
         case .choosingSavedDraft(let draft), .editingDeclaration(let draft, _): return draft
         case .reviewingDeclaration(let proposal): return proposal.draft
+        case .reviewingSession(let proposal): return proposal.savedDraft
         case .listening(let context), .interpreting(let context, _), .clarifying(let context, _):
             return context.draft
         default: return nil

@@ -6,6 +6,7 @@ import com.sankalpa.domain.ActionType;
 import com.sankalpa.domain.Sankalpa;
 import com.sankalpa.domain.SankalpaId;
 import com.sankalpa.domain.Session;
+import com.sankalpa.domain.SessionId;
 import com.sankalpa.domain.commitment.PeriodOutcome;
 import com.sankalpa.domain.commitment.PeriodUnit;
 import com.sankalpa.domain.lifecycle.CompletionOutcome;
@@ -36,9 +37,10 @@ public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
     private <T> T reading(Supplier<T> action) { return read.execute(status -> action.get()); }
 
     @Override
-    public Sankalpa declare(String title, String description, ActionType actionType, LocalDate startDate,
-                            PeriodUnit periodUnit, int timesPerPeriod, Integer periodCount) {
-        return writing(() -> delegate.declare(title, description, actionType, startDate,
+    public Sankalpa declare(SankalpaId id, String title, String description, ActionType actionType,
+                            LocalDate startDate, PeriodUnit periodUnit, int timesPerPeriod,
+                            Integer periodCount) {
+        return writing(() -> delegate.declare(id, title, description, actionType, startDate,
                 periodUnit, timesPerPeriod, periodCount));
     }
 
@@ -53,8 +55,9 @@ public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
         return writing(() -> delegate.complete(id, outcome));
     }
     @Override public Sankalpa stop(SankalpaId id) { return writing(() -> delegate.stop(id)); }
-    @Override public Session logSession(SankalpaId id, LocalDateTime occurredAt) {
-        return writing(() -> delegate.logSession(id, occurredAt));
+    @Override public Session logSession(
+            SankalpaId id, SessionId sessionId, LocalDateTime occurredAt) {
+        return writing(() -> delegate.logSession(id, sessionId, occurredAt));
     }
     @Override public PageResult<Session> sessions(SankalpaId id, LocalDate from, LocalDate until,
                                                    int page, int size) {

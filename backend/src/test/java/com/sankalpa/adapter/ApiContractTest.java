@@ -75,6 +75,7 @@ class ApiContractTest {
         JsonNode declareResponses = paths.path("/api/v1/sankalpas").path("post").path("responses");
         assertThat(declareResponses.has("201")).isTrue();
         assertThat(declareResponses.has("400")).isTrue();
+        assertThat(declareResponses.has("409")).isTrue();
         assertThat(declareResponses.has("422")).isTrue();
         JsonNode schemas = document.path("components").path("schemas");
         assertThat(schemas.path("ApiProblem")
@@ -203,6 +204,21 @@ class ApiContractTest {
                         .queryParam("from", "2026-06-01").queryParam("until", "2036-06-01"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("PERIOD_RANGE_TOO_LARGE"));
+
+        String commandId = "33333333-3333-3333-3333-333333333333";
+        mvc.perform(post("/api/v1/sankalpas").contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"id":"%s","title":"First","description":"","actionType":"MEDITATION",
+                                 "startDate":"2026-06-01","periodUnit":"DAY","timesPerPeriod":1}
+                                """.formatted(commandId)))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/sankalpas").contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"id":"%s","title":"Changed","description":"","actionType":"MEDITATION",
+                                 "startDate":"2026-06-01","periodUnit":"DAY","timesPerPeriod":1}
+                                """.formatted(commandId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"));
     }
 
     private String declare() throws Exception {

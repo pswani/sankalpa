@@ -147,6 +147,14 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
     }
 
     @Override
+    public Optional<Session> findById(SessionId id) {
+        List<Session> results = jdbc.query(
+                "SELECT * FROM practice_session WHERE id = ?",
+                (rs, rowNum) -> mapSession(rs), id.toString());
+        return results.stream().findFirst();
+    }
+
+    @Override
     public void save(Session session) {
         jdbc.update("""
                 INSERT INTO practice_session (id, sankalpa_id, occurred_at, logged_at)

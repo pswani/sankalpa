@@ -2,6 +2,7 @@ package com.sankalpa.adapter.in.web;
 
 import com.sankalpa.application.SankalpaUseCases;
 import com.sankalpa.domain.SankalpaId;
+import com.sankalpa.domain.SessionId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -41,12 +42,16 @@ public class SankalpaController {
             @ApiResponse(responseCode = "400", description = "Malformed or invalid request",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class))),
+            @ApiResponse(responseCode = "409", description = "Client id was already used for different values",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class))),
             @ApiResponse(responseCode = "422", description = "Declaration violates a domain rule",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class)))
     })
     public ResponseEntity<SankalpaResponse> declare(@Valid @RequestBody DeclareRequest request) {
         SankalpaResponse response = SankalpaResponse.from(service.declare(
+                request.id() == null ? SankalpaId.newId() : new SankalpaId(request.id()),
                 request.title(), request.description(), request.actionType(), request.startDate(),
                 request.periodUnit(), request.timesPerPeriod(), request.periodCount()));
         URI location = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}")
@@ -140,7 +145,7 @@ public class SankalpaController {
             @ApiResponse(responseCode = "404", description = "Sankalpa not found",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class))),
-            @ApiResponse(responseCode = "409", description = "Concurrent modification",
+            @ApiResponse(responseCode = "409", description = "Concurrent modification or client-id conflict",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class))),
             @ApiResponse(responseCode = "422", description = "Session is not loggable",
@@ -150,7 +155,10 @@ public class SankalpaController {
     public ResponseEntity<SessionResponse> logSession(@PathVariable String id,
                                                        @Valid @RequestBody LogSessionRequest request) {
         SessionResponse response = SessionResponse.from(
-                service.logSession(SankalpaId.parse(id), request.occurredAt()));
+                service.logSession(
+                        SankalpaId.parse(id),
+                        request.id() == null ? SessionId.newId() : new SessionId(request.id()),
+                        request.occurredAt()));
         return ResponseEntity.status(201).body(response);
     }
 

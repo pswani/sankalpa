@@ -247,20 +247,80 @@ struct OfflinePracticeTests {
             occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 7)
         )
         #expect(service.pending.count == 1)
+        let pendingID = service.pending[0].id.value.uuidString
 
         // The POST had in fact arrived, so the refresh returns it.
         let back = Fixture.readyTransport()
         back.on("POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions", status: 201, body: """
-            {"id":"\(Fixture.sessionId)","sankalpaId":"\(Fixture.sankalpaId)",
+            {"id":"\(pendingID)","sankalpaId":"\(Fixture.sankalpaId)",
              "occurredAt":"2026-09-10T07:00:00","loggedAt":"2026-09-10T12:00:00"}
             """)
         back.on("GET", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions",
-                body: Fixture.sessionPageJSON(occurrences: ["2026-09-10T07:00:00"]))
+                body: Fixture.sessionPageJSON(
+                    occurrences: ["2026-09-10T07:00:00"], ids: [pendingID]
+                ))
         let reconnected = Fixture.service(transport: back, today: today, cache: cache)
         await reconnected.sync()
 
         #expect(reconnected.pending.isEmpty)
         #expect(reconnected.queries.summaries().first?.currentPeriod?.performed == 1)
+        let path = "POST /api/v1/sankalpas/\(Fixture.sankalpaId)/sessions"
+        guard let body = back.bodies(for: path).first else {
+            Issue.record("Expected the waiting session to be retried")
+            return
+        }
+        let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        #expect(json?["id"] as? String == pendingID)
+    }
+
+    @Test("A different server session at the same time does not consume a current outbox entry")
+    func sameMomentDoesNotConsumeDifferentCurrentCommand() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+
+        transport.failEverything(with: URLError(.notConnectedToInternet))
+        _ = await service.logSession(
+            SankalpaId(UUID(uuidString: Fixture.sankalpaId)!),
+            occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 7)
+        )
+        #expect(service.pending.count == 1)
+
+        let back = Fixture.readyTransport()
+        back.on("GET", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions",
+                body: Fixture.sessionPageJSON(
+                    occurrences: ["2026-09-10T07:00:00"], ids: [Fixture.sessionId]
+                ))
+        let reconnected = Fixture.service(transport: back, today: today, cache: cache)
+        await reconnected.refresh()
+
+        #expect(reconnected.pending.count == 1)
+    }
+
+    @Test("A legacy response-lost outbox entry is reconciled before it is replayed")
+    func legacyResponseLossIsReconciledBeforeReplay() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let moment = CalendarMoment(day: day(2026, 9, 10), hour: 7)
+        let legacy = PendingSession(
+            sankalpaId: SankalpaId(UUID(uuidString: Fixture.sankalpaId)!),
+            occurredAt: moment,
+            loggedAt: CalendarMoment(day: day(2026, 9, 10), hour: 12),
+            hasAuthoritativeID: nil
+        )
+        #expect(cache.saveOutbox([legacy]))
+
+        let back = Fixture.readyTransport()
+        back.on("GET", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions",
+                body: Fixture.sessionPageJSON(
+                    occurrences: ["2026-09-10T07:00:00"], ids: [Fixture.sessionId]
+                ))
+        let reconnected = Fixture.service(transport: back, today: today, cache: cache)
+        await reconnected.sync()
+
+        #expect(reconnected.pending.isEmpty)
+        #expect(!back.requests.contains {
+            $0 == "POST /api/v1/sankalpas/\(Fixture.sankalpaId)/sessions"
+        })
     }
 
     /// One unreachable service should not empty the outbox in the attempt.

@@ -204,6 +204,17 @@ struct ServerRefusalTests {
         #expect(error.message.contains("refresh"))
     }
 
+    @Test("Reusing a command ID for different values is explained as a conflict")
+    func idempotencyConflict() {
+        let error = map(
+            "IDEMPOTENCY_CONFLICT",
+            detail: "The command ID has already been used.",
+            context: .init(today: today)
+        )
+
+        #expect(error == .conflict("The command ID has already been used."))
+    }
+
     /// A code this version has never heard of must not become a blank or a lie. The service's own
     /// sentence is the only thing that can explain a rule the app does not model.
     @Test("An unknown code falls back to the service's own explanation")

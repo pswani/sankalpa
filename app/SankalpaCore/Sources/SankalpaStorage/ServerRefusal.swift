@@ -90,6 +90,8 @@ enum ServerRefusal {
             return .storage(.unavailable(
                 "This sankalpa was changed somewhere else. Pull to refresh, then try again."
             ))
+        case "IDEMPOTENCY_CONFLICT":
+            return .conflict(detail)
         default:
             // A code this version does not know about. The service's own sentence is better than
             // a generic one, and it is the only thing that can explain an unfamiliar rule.

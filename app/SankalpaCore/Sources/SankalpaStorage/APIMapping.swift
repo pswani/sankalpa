@@ -121,8 +121,9 @@ enum APIMapping {
 
     // MARK: - Domain → DTO
 
-    static func declareRequest(_ declaration: Declaration) -> API.DeclareRequest {
+    static func declareRequest(_ declaration: Declaration, id: SankalpaId) -> API.DeclareRequest {
         API.DeclareRequest(
+            id: id.value,
             title: declaration.title,
             description: declaration.description,
             actionType: APIEnum.wire(declaration.actionType),

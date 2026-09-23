@@ -137,9 +137,11 @@ struct APIMappingTests {
                 periodUnit: .week,
                 timesPerPeriod: 4,
                 periodCount: nil
-            )
+            ),
+            id: SankalpaId(UUID(uuidString: Fixture.sankalpaId)!)
         )
 
+        #expect(request.id.uuidString.lowercased() == Fixture.sankalpaId)
         #expect(request.actionType == "PHYSICAL_ACTIVITY")
         #expect(request.periodUnit == "WEEK")
         #expect(request.startDate == "2026-09-01")

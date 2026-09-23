@@ -40,10 +40,11 @@ struct VoiceAssistantView: View {
                             dismiss()
                         }
                     }
+                    .disabled(assistant.isExecuting)
                 }
             }
         }
-        .interactiveDismissDisabled(assistant.isListening || assistant.isWorking)
+        .interactiveDismissDisabled(assistant.isListening || assistant.isWorking || assistant.isExecuting)
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { Task { await assistant.cancel() } }
         }
@@ -72,6 +73,8 @@ struct VoiceAssistantView: View {
             VoiceDeclarationProposalView(proposal: proposal)
         case .editingDeclaration(let draft, _), .choosingSavedDraft(let draft):
             VoiceDraftView(draft: draft)
+        case .idle(let draft):
+            if let draft { VoiceDraftView(draft: draft) }
         default:
             EmptyView()
         }
@@ -108,6 +111,14 @@ struct VoiceAssistantView: View {
                 Button("Discard draft", role: .destructive) {
                     Task { await assistant.discardDraft() }
                 }
+                listenButton(label: "Speak your choice")
+            case .idle(let draft) where draft != nil:
+                Button("Resume draft") { Task { await assistant.resumeDraft() } }
+                    .buttonStyle(PrimaryButtonStyle())
+                Button("Discard draft", role: .destructive) {
+                    Task { await assistant.discardDraft() }
+                }
+                listenButton(label: "Log a session or speak your choice")
             case .reviewingSession, .reviewingDeclaration:
                 Button("Confirm") { Task { await assistant.confirm() } }
                     .buttonStyle(PrimaryButtonStyle())

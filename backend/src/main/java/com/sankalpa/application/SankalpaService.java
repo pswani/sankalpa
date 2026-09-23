@@ -25,11 +25,26 @@ public class SankalpaService implements SankalpaUseCases {
     }
 
     @Override
-    public Sankalpa declare(String title, String description, ActionType actionType,
+    public Sankalpa declare(SankalpaId id, String title, String description, ActionType actionType,
                             LocalDate startDate, PeriodUnit periodUnit,
                             int timesPerPeriod, Integer periodCount) {
+        var existing = sankalpas.findById(id);
+        if (existing.isPresent()) {
+            Sankalpa accepted = existing.get();
+            Commitment requested = new Commitment(
+                    startDate, periodUnit, timesPerPeriod, periodCount);
+            if (!accepted.title().equals(new Title(title))
+                    || !accepted.description().equals(new Description(description))
+                    || accepted.actionType() != actionType
+                    || !accepted.commitment().equals(requested)) {
+                throw new DomainException(
+                        "IDEMPOTENCY_CONFLICT",
+                        "This declaration was already accepted with different values. Refresh to see it, then discard this draft.");
+            }
+            return accepted;
+        }
         Sankalpa result = Sankalpa.declare(
-                SankalpaId.newId(), new Title(title), new Description(description), actionType,
+                id, new Title(title), new Description(description), actionType,
                 new Commitment(startDate, periodUnit, timesPerPeriod, periodCount),
                 clock.now(), clock.today());
         sankalpas.save(result);
@@ -79,10 +94,20 @@ public class SankalpaService implements SankalpaUseCases {
     }
 
     @Override
-    public Session logSession(SankalpaId id, LocalDateTime occurredAt) {
+    public Session logSession(SankalpaId id, SessionId sessionId, LocalDateTime occurredAt) {
         Sankalpa sankalpa = sankalpas.findByIdForUpdate(id)
                 .orElseThrow(() -> new NotFoundException("Sankalpa " + id + " was not found"));
-        Session session = sankalpa.logSession(SessionId.newId(), occurredAt, clock.now());
+        var existing = sessions.findById(sessionId);
+        if (existing.isPresent()) {
+            Session accepted = existing.get();
+            if (!accepted.sankalpaId().equals(id) || !accepted.occurredAt().equals(occurredAt)) {
+                throw new DomainException(
+                        "IDEMPOTENCY_CONFLICT",
+                        "This session request was already accepted with different values");
+            }
+            return accepted;
+        }
+        Session session = sankalpa.logSession(sessionId, occurredAt, clock.now());
         sessions.save(session);
         return session;
     }

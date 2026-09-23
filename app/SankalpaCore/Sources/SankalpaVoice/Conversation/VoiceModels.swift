@@ -197,17 +197,20 @@ public struct VoiceSessionProposal: Equatable, Sendable {
     public let sankalpaID: SankalpaId
     public let title: String
     public let occurredAt: CalendarMoment
+    public let savedDraft: VoiceDeclarationDraft?
 
     public init(
         id: ProposalID = ProposalID(),
         sankalpaID: SankalpaId,
         title: String,
-        occurredAt: CalendarMoment
+        occurredAt: CalendarMoment,
+        savedDraft: VoiceDeclarationDraft? = nil
     ) {
         self.id = id
         self.sankalpaID = sankalpaID
         self.title = title
         self.occurredAt = occurredAt
+        self.savedDraft = savedDraft
     }
 }
 
@@ -278,6 +281,7 @@ public enum VoiceResult: Equatable, Sendable {
     case sessionAccepted
     case sessionPending
     case declarationAccepted
+    case declarationAcceptedWithDraftCleanupWarning
     case draftOnly(String)
     case notSaved(String)
     case refused(String)
@@ -287,6 +291,8 @@ public enum VoiceResult: Equatable, Sendable {
         case .sessionAccepted: return "Session logged."
         case .sessionPending: return "Session saved on this iPhone and waiting to be sent."
         case .declarationAccepted: return "Sankalpa declared."
+        case .declarationAcceptedWithDraftCleanupWarning:
+            return "Sankalpa declared, but its saved draft could not be removed. You can discard the draft safely."
         case .draftOnly(let message), .notSaved(let message), .refused(let message): return message
         }
     }

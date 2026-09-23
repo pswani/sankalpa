@@ -1,8 +1,7 @@
 # Conversational Voice — Architecture and Design
 
-**Status:** Implemented; session-reliability integration proposed  
+**Status:** Voice feature implemented; shared session-correction dependency remains proposed
 **Requirements:** [Conversational voice](../../requirements/conversational-voice.md)  
-**Related design:** [Session reliability and correction](../session-reliability/README.md)  
 **Applies to:** The server-backed iOS app in `app/`
 
 ## 1. Purpose
@@ -30,7 +29,7 @@ Sankalpa domain, duplicate its rules, or give a language model authority to perf
 - A visible, editable transcript for each utterance.
 - A visible proposal before every command.
 - One persisted declaration draft.
-- Shared reliable online/offline session logging, repeat confirmation, and touch Undo behavior.
+- Reliable online/offline session logging through the existing app command path.
 - Deterministic result messages that distinguish accepted, pending, draft-only, and not-saved.
 
 ### Excluded
@@ -40,11 +39,18 @@ Sankalpa domain, duplicate its rules, or give a language model authority to perf
 - MCP, an autonomous agent, or language-model tool calling.
 - A cloud language model or server-side transcription.
 - Voice-specific backend endpoints. Voice uses the shared session APIs.
-- Voice lifecycle commands, spoken session editing/deletion beyond the required touch Undo, or
-  multiple commands from one confirmation.
+- Spoken lifecycle commands, spoken session editing/deletion, or multiple commands from one
+  confirmation.
 - Generated advice about whether a commitment is wise or achievable.
 - Spoken responses in the first release. All app responses are visible as text; speech output can
   be added later without changing the conversation model.
+
+The shared [Session Reliability and Correction](../session-reliability/README.md) design owns the
+one-minute additional-session warning, immediate touch Undo, and later session deletion required by
+`sankalpa.md`. Those behaviors apply to every logging surface, including a session started by
+voice, but are not implemented by this feature. Stable create identities are implemented here as
+the common prerequisite. Overall session logging is not requirements-complete until that separate
+design is implemented.
 
 ## 3. Platform decision
 
@@ -80,7 +86,7 @@ flowchart TD
     G --> A["AppModel"]
     A --> RS["RemoteSankalpaService"]
     RS --> API["Existing Sankalpa API"]
-    RS --> O["Shared pending session operations"]
+    RS --> O["Existing session outbox"]
     R --> C["SankalpaCore validation"]
 ```
 
@@ -91,8 +97,7 @@ Dependencies point inward:
 - `VoiceConversationReducer` owns conversation rules and has no Apple-framework dependency.
 - `SankalpaCore` remains the source of commitment, lifecycle, declaration, and session rules.
 - `AppModel` remains the app's command boundary.
-- `RemoteSankalpaService` remains the only path to the service and the shared pending-operation
-  store.
+- `RemoteSankalpaService` remains the only path to the service and the existing session outbox.
 
 The model never receives a network client, repository, `AppModel`, or executable tool.
 
@@ -222,9 +227,11 @@ The interpreter receives:
 
 - The final or corrected utterance.
 - The current local date and time.
+- The current conversation phase.
 - The current draft, if any.
 - The current clarification question, if any.
 - Candidate titles only when the preceding turn needs title disambiguation.
+- The currently displayed session proposal when a session is under review.
 
 It does not receive session history or the entire practice. A new `LanguageModelSession` is used
 for each turn. The coordinator, not the model transcript, owns conversational memory. This keeps
@@ -239,6 +246,7 @@ The bundled, versioned prompt instructs the model to:
 - Mark only explicitly changed draft fields.
 - Never convert a duration into a different period unit.
 - Never claim that a command was performed.
+- Treat confirmation as valid only while a complete proposal is being reviewed.
 
 The prompt is a versioned app resource, not downloaded configuration, so interpretation works
 without server connectivity. Prompt changes require the evaluation suite described below.
@@ -269,6 +277,9 @@ Each complete proposal receives a new `proposalID`. Any revision replaces the pr
 A confirmation can execute only the currently displayed ID. While execution is in progress,
 additional confirmations are ignored. This prevents partial transcripts, repeated "yes" results,
 and double taps from executing a command twice.
+
+An editing state never executes a confirmation. A complete draft first becomes a reviewing state;
+only confirmation of that displayed proposal can produce a command effect.
 
 ### 5.5 `SankalpaReferenceResolver`
 
@@ -353,8 +364,10 @@ unavailable after declaration confirmation, it reports “Draft saved” only wh
 revision is persisted. Otherwise it reports that the action was not saved. A failed discard keeps
 the draft visible and reports the failure rather than pretending it is gone.
 
-Starting a new declaration while a draft exists first presents Resume and Discard. Discard is an
-explicit reducer transition. Cancelling or dismissing the assistant preserves the draft.
+An existing draft is shown without blocking session logging. The user can resume or discard it by
+touch or speech. Only an attempt to start another declaration requires choosing Resume or Discard.
+Discard is an explicit reducer transition. Cancelling or dismissing the assistant preserves the
+draft.
 
 The raw transcript and model transcript are not persisted. Only the structured draft survives an
 app relaunch.
@@ -369,33 +382,16 @@ public protocol VoiceCommandGateway: AnyObject {
     var voicePracticeSnapshot: VoicePracticeSnapshot { get }
     func logSessionForVoice(
         _ id: SankalpaId,
-        occurredAt: CalendarMoment,
-        rapidRepeatConfirmed: Bool
+        occurredAt: CalendarMoment
     ) async -> VoiceSessionExecution
-    func undoSessionForVoice(
-        _ receipt: VoiceSessionReceipt
-    ) async -> VoiceSessionCorrectionExecution
     func declareForVoice(
-        _ declaration: Declaration
+        _ declaration: Declaration,
+        commandID: UUID
     ) async -> VoiceDeclarationExecution
 }
 
 public enum VoiceSessionExecution: Sendable {
-    case acceptedByService(VoiceSessionReceipt)
-    case pendingOnDevice(VoiceSessionReceipt)
-    case rapidRepeatConfirmationRequired
-    case refused(String)
-    case notSaved(String)
-}
-
-public struct VoiceSessionReceipt: Sendable, Equatable {
-    public let sessionId: SessionId
-    public let sankalpaId: SankalpaId
-    public let occurredAt: CalendarMoment
-}
-
-public enum VoiceSessionCorrectionExecution: Sendable {
-    case removed
+    case acceptedByService
     case pendingOnDevice
     case refused(String)
     case notSaved(String)
@@ -414,23 +410,32 @@ has ever been loaded, and whether the latest refresh reached the service. Those 
 the coordinator distinguish “no title matched” from “there is no cached practice to verify while
 offline.” It does not expose repositories or mutation methods.
 
-The shared `AppModel.logSession` path exposes whether its successful result was accepted by the
-service or retained as pending and returns the exact session receipt. It also owns the in-flight
-guard and one-minute repeat policy. Voice does not duplicate those rules.
-
-The first confirmed proposal calls with `rapidRepeatConfirmed == false`. If the gateway reports a
-rapid repeat, the coordinator returns to the same proposal with an explicit additional-session
-warning. Only a second confirmation calls with `true`. The coordinator retains the active proposal
-and proposal ID across this check so a late outcome cannot execute a revised proposal.
-
-Accepted and pending results expose a touch Undo action backed by the receipt. Spoken session
-editing and deletion remain outside this release.
+The shared `RemoteSankalpaService.logSession` path exposes whether its successful result was
+accepted by the service or retained as pending. Voice does not duplicate its online, cached-domain,
+or outbox rules.
 
 Declaration has no offline outbox. If the service is unavailable, the persisted draft remains and
 the confirmation is consumed. The next attempt must show the proposal and obtain confirmation
 again. On success, the draft is deleted only after the service accepts the declaration.
 
-### 5.9 `VoiceAssistantModel` and view
+### 5.9 Command idempotency
+
+Both existing mutation requests carry a client-generated identifier:
+
+- A session identifier is created before the first delivery attempt, stored in `PendingSession`
+  when offline, and reused for every retry.
+- The voice draft identifier is the declaration command identifier and survives relaunches and
+  revisions.
+
+The service returns the existing entity when it receives the same identifier and values again. It
+refuses reuse of an identifier with different values instead of silently claiming that the revised
+values were accepted. This covers a lost response or an app termination after server acceptance
+without adding endpoints, an agent, or a declaration outbox. Only outbox entries decoded from an
+older app version use Sankalpa and occurrence time as a migration fallback; current entries are
+reconciled strictly by identifier so two separately confirmed sessions at the same moment remain
+distinct.
+
+### 5.10 `VoiceAssistantModel` and view
 
 `VoiceAssistantModel` is a `@MainActor`, observable coordinator used by `VoiceAssistantView`. It:
 
@@ -445,7 +450,7 @@ again. On success, the draft is deleted only after the service accepts the decla
 conversation does not belong to a particular tab. The control is outside `RootView`'s
 tabs-versus-recovery conditional and therefore remains available when the service has never loaded
 and the recovery screen is visible. If a saved draft exists, the control indicates that a draft is
-waiting; opening it presents Resume and Discard before a new declaration can begin.
+waiting. The assistant offers Resume and Discard while keeping session logging available.
 
 The sheet contains only state-driven elements:
 
@@ -453,7 +458,7 @@ The sheet contains only state-driven elements:
 - App question or result.
 - Live transcript and correction control.
 - Session or declaration proposal.
-- Start/stop listening, Apply correction, Confirm, Undo, and Cancel controls as applicable.
+- Start/stop listening, Apply correction, Confirm, and Cancel controls as applicable.
 
 All controls have text accessibility labels. Voice is additive; every operation also has a touch
 control, and the existing manual screens remain available.
@@ -489,9 +494,10 @@ Key transitions:
 | Reviewing | Spoken or tapped revision | Interpreting |
 | Reviewing | Spoken or tapped confirmation | Executing current proposal ID |
 | Any non-executing state | Cancel interaction | Idle; retain a declaration draft |
-| Choosing saved draft | Resume | Editing declaration |
-| Choosing saved draft | Discard | Idle after persistent deletion succeeds |
-| Executing session | Rapid-repeat outcome | Reviewing the same session with an additional-session warning |
+| Idle with saved draft | Log request | Reviewing session while retaining the draft |
+| Idle with saved draft | New declaration request | Choosing saved draft |
+| Choosing saved draft | Spoken or tapped Resume | Editing declaration |
+| Choosing saved draft | Spoken or tapped Discard | Idle after persistent deletion succeeds |
 | Executing | Accepted, pending, refused, or not-saved outcome | Result |
 
 There is no transition from a model response directly to Executing. The reviewing state is always
@@ -507,11 +513,9 @@ entered first.
 4. Missing or ambiguous title/time produces one clarification.
 5. A complete proposal shows the resolved title and exact local date/time.
 6. User confirms by voice or touch.
-7. Gateway checks the shared in-flight and one-minute repeat policy.
-8. A rapid repeat returns to review with “A session was just logged. Log another?”; confirmation
-   then executes one new logging action.
-9. Result says either accepted by the service, saved on the phone and waiting, refused, or not
-   saved, and accepted or pending results offer touch Undo.
+7. Gateway calls the existing session command once.
+8. Result says either accepted by the service, saved on the phone and waiting, refused, or not
+   saved.
 
 The voice feature never begins or resumes a Sankalpa to make the session eligible.
 
@@ -535,7 +539,7 @@ Speech, interpretation, draft updates, and review continue because they do not u
 service.
 
 For session logging, the shared command attempts the service and then performs cached domain
-validation and durable pending-operation storage when unreachable. A successful offline result is
+validation and durable outbox storage when unreachable. A successful offline result is
 reported as pending, not accepted by the service. The stable session identity is reused when it is
 sent later.
 
@@ -550,10 +554,13 @@ while the service is unavailable. It does not invent or queue an unresolved sess
 
 - Only one listen or interpret task can be active.
 - Starting a new listen cancels any superseded transcription or interpretation task.
+- Capture or analysis failure stops the capture session and releases the transcription pipeline.
 - Moving the app out of the foreground stops microphone capture immediately.
 - A finalized transcript remains editable after capture stops.
 - Dismissing the assistant cancels transient work, discards a session proposal, and retains a
   declaration draft.
+- Once a confirmed command is executing, Close and interactive dismissal are disabled; background
+  handling does not invalidate that command or hide its authoritative result.
 - A late result from a cancelled task carries an operation token and is ignored.
 - App activation continues to call `AppModel.refresh()`, which flushes pending session creations
   and deletions and reports authoritative rejections through the global mechanism.
@@ -564,11 +571,10 @@ The model does not generate user-facing success or refusal text. The coordinator
 
 | Condition | Required result |
 |---|---|
-| Service accepted session | “Session logged.” and touch Undo |
-| Session retained as pending | “Session saved on this iPhone and waiting to sync.” and touch Undo |
-| Rapid repeat | Return to the proposal with “A session was just logged. Log another?” |
-| Undo retained as pending | “Removed on this iPhone — waiting to sync.” |
+| Service accepted session | “Session logged.” |
+| Session retained as pending | “Session saved on this iPhone and waiting to be sent.” |
 | Service accepted declaration | “Sankalpa declared.” |
+| Declaration accepted but local draft cleanup failed | State that it was declared and that the draft can be safely discarded |
 | Declaration service unavailable | “Draft saved. This Sankalpa has not been declared.” |
 | Draft persistence failed | “This draft could not be saved.” |
 | Domain or server refusal | Existing `SankalpaCommandError.message` |
@@ -586,8 +592,8 @@ These are state descriptions, not conversational model output.
 - Speech and interpretation stay on device.
 - Raw and model transcripts are not persisted or logged.
 - The structured declaration draft is the only new persisted voice data.
-- Shared pending session creations, deletions, and recent-log guard data follow the session
-  reliability design; voice adds no separate persisted command state.
+- Existing pending sessions retain their stable client-generated identifiers; voice adds no
+  separate session outbox.
 
 ## 11. Source layout
 
@@ -617,7 +623,6 @@ app/SankalpaCore/Tests/SankalpaVoiceTests/
   ConversationReducerTests.swift
   ReferenceResolverTests.swift
   DraftStoreTests.swift
-  InterpreterFixtureTests.swift
 
 app/Sankalpa/UI/Voice/
   VoiceAssistantModel.swift
@@ -630,9 +635,9 @@ app/Sankalpa/UI/Voice/
 does not depend on SwiftUI or `SankalpaStorage`. The iOS app target supplies `AppModel` as the
 gateway and presents the SwiftUI view.
 
-`Package.swift` declares `voice-interpreter-v1.txt` as a processed resource of the
-`SankalpaVoice` target and adds a `SankalpaVoiceTests` test target. No prompt text is hard-coded in
-the coordinator.
+`Package.swift` exports the `SankalpaVoice` library product, declares
+`voice-interpreter-v1.txt` as a processed target resource, and adds a `SankalpaVoiceTests` test
+target. The iOS app target links the product. No prompt text is hard-coded in the coordinator.
 
 Apple-framework adapters are availability-gated to iOS 27. Reducer, resolver, persistence, and
 gateway types remain ordinary Swift and are testable without speech capture or a language model.
@@ -641,14 +646,16 @@ gateway types remain ordinary Swift and are testable without speech capture or a
 
 ### Deterministic tests
 
-Use fake transcriber, interpreter, clock, draft store, and gateway implementations to cover:
+Reducer tests inject validated interpreted turns and a fixed clock. Storage and backend tests use
+stub transports and repositories. Together they cover:
 
 - No execution from partial speech.
 - Spoken and touched confirmation use the same transition.
 - Revision invalidates prior confirmation.
 - Repeated confirmation executes once.
-- Rapid-repeat outcome returns to review and requires a second explicit confirmation.
-- Accepted and pending receipts target the exact session for touch Undo.
+- A complete editing draft enters review before confirmation can execute.
+- A saved declaration draft does not block session logging.
+- Session and declaration retries reuse their client-generated identifiers.
 - Zero, one, and multiple title matches.
 - Terminal Sankalpa backfill remains resolvable.
 - Today without time resolves to now.
@@ -688,13 +695,13 @@ and [prompt evaluation](https://developer.apple.com/documentation/foundationmode
 - Manual transcript correction.
 - Audio interruption and backgrounding.
 - Online and offline session result wording.
-- Rapid-repeat warning and second confirmation.
-- Touch Undo for accepted and pending voice logs.
+- Spoken and touched Resume/Discard while a draft exists.
 - Offline draft, relaunch, resume, reconnect, review, and declare.
 - Dynamic Type, VoiceOver labels, Dark Mode, and portrait layouts.
 
-Real audio is limited to device checks. Most regression coverage injects final transcript strings,
-which keeps tests fast and stable.
+Real audio, the app-level coordinator, and model-generated interpretation are device checks. Most
+conversation regression coverage injects validated `InterpretedTurn` values at the reducer
+boundary, which keeps the deterministic suite fast and stable.
 
 ## 13. Requirement traceability
 
@@ -708,43 +715,43 @@ which keeps tests fast and stable.
 | Clarification and no silent ambiguity | Reducer, title resolver, temporal validation |
 | Explicit confirmation | Proposal ID and mandatory reviewing state |
 | One session | Single session proposal and one gateway effect |
-| Retry does not duplicate | Shared stable session identity and idempotent delivery path |
-| Rapid additional session | Gateway outcome returns to warned review before a new action |
-| Immediate Undo | Receipt-backed touch action from the result state |
+| Retry does not duplicate | Stable client-generated declaration and session identities |
+| Rapid additional session and touch Undo | Shared session-reliability design; not yet implemented |
 | New Sankalpa draft and revision | Persisted `VoiceDeclarationDraft` and patch reducer |
 | One unfinished draft | Store cardinality and Resume/Discard state |
 | Whole-period duration | Unit comparison before proposal |
 | Declaration does not begin | Gateway exposes declaration only |
 | Offline draft | Local draft store; no declaration queue |
-| Offline session | Existing cache validation and shared pending-operation store with explicit pending outcome |
+| Offline session | Existing cache validation and session outbox with explicit pending outcome |
 | Four result statuses | Deterministic execution outcome mapping |
 | Unsupported actions | Interpreter schema, reducer rejection, and fixed explanation |
 
 ## 14. Implementation sequence
 
 1. Add `SankalpaVoice` types, reducer, draft store, gateway protocol, and deterministic tests.
-2. Integrate the shared receipt, accepted-versus-pending disposition, in-flight guard, rapid-repeat
-   outcome, and Undo gateway from the session-reliability design.
+2. Expose accepted-versus-pending session disposition and stable mutation identifiers through the
+   existing app and service gateways.
 3. Add Foundation Models interpreter and prompt fixtures.
 4. Add SpeechAnalyzer adapter and readiness checks.
 5. Add `VoiceAssistantModel`, view, and app-level entry point.
 6. Add UI/device journeys and run the prompt evaluation suite on the iPhone 17 Pro.
 
-Voice adds no backend endpoint of its own. It depends on the shared idempotent logging and session
-deletion API changes described by the session-reliability design.
+Voice adds no backend endpoint of its own. The existing declaration and session request bodies have
+an additive client-generated `id` field so retries are idempotent; requests without it remain
+accepted for compatibility.
 
 ## 15. Implementation status
 
-The original implementation lives in the source layout above. The package test suite covers the reducer,
-title resolution, draft durability, confirmation idempotence, temporal clarification, duration
-compatibility, offline verification, and accepted-versus-pending command disposition. The app
-build verifies both simulator architectures while preserving the iOS 18 deployment target.
+The voice implementation lives in the source layout above. The package and backend suites cover the
+reducer, title resolution, draft durability, proposal confirmation, temporal clarification,
+duration compatibility, offline verification, accepted-versus-pending disposition, and idempotent
+mutation retries. The app build preserves the iOS 18 deployment target.
+
+The prompt fixture set and the shared rapid-repeat/Undo/delete behavior remain open work. They are
+not represented as completed by this document.
 
 Speech recognition and interpretation require iOS 27, installed on-device speech assets, a
 supported locale, microphone permission, and an available System Language Model. Real speech and
 prompt-quality evaluation remain physical-device checks because the simulator does not provide a
 usable on-device language model. The deterministic suites inject interpreted turns and therefore
 remain fast, repeatable, and independent of model availability.
-
-Receipt-backed Undo and rapid-repeat integration remain pending until the shared
-session-reliability design is implemented.

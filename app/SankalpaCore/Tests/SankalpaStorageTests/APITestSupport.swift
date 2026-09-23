@@ -15,11 +15,16 @@ final class StubTransport: APITransport, @unchecked Sendable {
     private let lock = NSLock()
     private var routes: [String: (status: Int, body: String)] = [:]
     private var recorded: [String] = []
+    private var recordedBodies: [String: [Data]] = [:]
     private var failure: URLError?
 
     var requests: [String] {
         lock.lock(); defer { lock.unlock() }
         return recorded
+    }
+
+    func bodies(for request: String) -> [Data] {
+        lock.withLock { recordedBodies[request] ?? [] }
     }
 
     func on(_ method: String, _ path: String, status: Int = 200, body: String) {
@@ -40,6 +45,9 @@ final class StubTransport: APITransport, @unchecked Sendable {
 
         let (failure, match) = lock.withLock {
             recorded.append(key)
+            if let body = request.httpBody {
+                recordedBodies[key, default: []].append(body)
+            }
             // A query string is part of the identity of a session page, but a test that does not
             // care about paging should not have to spell one out.
             let fallback = "\(request.httpMethod ?? "GET") \(request.url?.path ?? "")"
@@ -108,11 +116,12 @@ enum Fixture {
 
     static func sessionPageJSON(
         occurrences: [String] = ["2026-09-01T07:00:00"],
+        ids: [String]? = nil,
         total: Int? = nil
     ) -> String {
         let rows = occurrences.enumerated().map { index, at in
             """
-            {"id":"\(UUID().uuidString)","sankalpaId":"\(sankalpaId)",
+            {"id":"\(ids?[safe: index] ?? UUID().uuidString)","sankalpaId":"\(sankalpaId)",
              "occurredAt":"\(at)","loggedAt":"\(at)"}
             """
         }
@@ -163,6 +172,12 @@ enum Fixture {
         let url = URL.temporaryDirectory.appendingPathComponent("sankalpa-tests-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+}
+
+private extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

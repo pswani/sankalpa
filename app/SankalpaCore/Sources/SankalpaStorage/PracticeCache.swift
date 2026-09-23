@@ -3,25 +3,28 @@ import SankalpaCore
 
 /// A session logged on the phone that the service has not accepted yet.
 ///
-/// It carries a provisional id so the screens have something to key on immediately. The service
-/// assigns the real one when it takes the session, and the next refresh replaces this with the
-/// service's own record.
+/// Its id is also the command identity sent to current services, so a retry cannot create another
+/// session. `hasAuthoritativeID` is optional only so outboxes written by older app versions still
+/// decode; those entries used a provisional id that the service did not preserve.
 public struct PendingSession: Codable, Hashable, Sendable, Identifiable {
     public let id: SessionId
     public let sankalpaId: SankalpaId
     public let occurredAt: CalendarMoment
     public let loggedAt: CalendarMoment
+    public let hasAuthoritativeID: Bool?
 
     public init(
         id: SessionId = SessionId(),
         sankalpaId: SankalpaId,
         occurredAt: CalendarMoment,
-        loggedAt: CalendarMoment
+        loggedAt: CalendarMoment,
+        hasAuthoritativeID: Bool? = true
     ) {
         self.id = id
         self.sankalpaId = sankalpaId
         self.occurredAt = occurredAt
         self.loggedAt = loggedAt
+        self.hasAuthoritativeID = hasAuthoritativeID
     }
 
     /// What the screens render it as while it waits. It is a real session as far as the period

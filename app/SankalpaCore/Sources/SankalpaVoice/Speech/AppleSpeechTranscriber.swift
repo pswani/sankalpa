@@ -84,11 +84,12 @@ public actor AppleSpeechTranscriber: VoiceTranscribing {
     }
 
     private func received(text: String, isFinal: Bool) {
-        if isFinal || finalText.isEmpty { finalText = text }
+        if isFinal { finalText = text }
         continuation?.yield(VoiceTranscriptUpdate(text: text, isFinal: isFinal))
     }
 
     private func failed(_ error: Error) {
+        provider?.captureSession.stopRunning()
         continuation?.finish(throwing: error)
     }
 

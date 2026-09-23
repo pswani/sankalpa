@@ -29,6 +29,7 @@ public final class ApiModels {
     private ApiModels() {}
 
     public record DeclareRequest(
+            @Schema(description = "Client-generated id used to make retries idempotent") UUID id,
             @NotBlank @Size(max = 200)
             @Schema(example = "Vipassana", description = "Non-blank declaration title") String title,
             @Schema(example = "Sit for 45 minutes") String description,
@@ -51,6 +52,7 @@ public final class ApiModels {
     public record CompleteRequest(
             @NotNull @Schema(example = "SUCCESSFUL") CompletionOutcome outcome) {}
     public record LogSessionRequest(
+            @Schema(description = "Client-generated id used to make retries idempotent") UUID id,
             @NotNull @Schema(example = "2026-06-01T08:00:00",
                     description = "Past occurrence time, interpreted in the configured application timezone")
             LocalDateTime occurredAt) {}

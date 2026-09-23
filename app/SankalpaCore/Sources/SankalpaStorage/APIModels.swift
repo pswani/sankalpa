@@ -11,6 +11,7 @@ enum API {
     // MARK: - Requests
 
     struct DeclareRequest: Encodable, Sendable {
+        let id: UUID
         let title: String
         let description: String
         let actionType: String
@@ -29,6 +30,7 @@ enum API {
     }
 
     struct LogSessionRequest: Encodable, Sendable {
+        let id: UUID
         let occurredAt: String
     }
 

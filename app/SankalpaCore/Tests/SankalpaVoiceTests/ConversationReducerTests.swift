@@ -141,6 +141,79 @@ struct ConversationReducerTests {
         #expect(result.state == .executing(proposal.id))
     }
 
+    @Test("Cancellation cannot hide a command after confirmation")
+    func executingCommandCannotBeCancelled() {
+        let id = ProposalID()
+        let result = reducer.reduce(
+            .executing(id),
+            turn: InterpretedTurn(intent: .cancel),
+            practice: practice,
+            now: now
+        )
+
+        #expect(result.effect == nil)
+        #expect(result.state == .executing(id))
+    }
+
+    @Test("A complete draft must enter review before confirmation can execute")
+    func editingConfirmationOnlyEntersReview() {
+        let draft = VoiceDeclarationDraft(
+            title: "Walk", actionType: .physicalActivity, startDate: now.day,
+            periodUnit: .day, timesPerPeriod: 1
+        )
+
+        let result = reducer.reduce(
+            .editingDeclaration(draft, nextQuestion: nil),
+            turn: InterpretedTurn(intent: .confirm),
+            practice: practice,
+            now: now
+        )
+
+        #expect(result.effect == nil)
+        guard case .reviewingDeclaration = result.state else {
+            Issue.record("Expected review before execution")
+            return
+        }
+    }
+
+    @Test("A saved declaration draft does not block session logging")
+    func savedDraftDoesNotBlockSessionLogging() {
+        let draft = VoiceDeclarationDraft(title: "Later")
+        let turn = InterpretedTurn(
+            intent: .logSession,
+            sankalpaReference: "Vipassana",
+            datePhrase: "today"
+        )
+
+        let result = reducer.reduce(
+            .idle(savedDraft: draft), turn: turn, practice: practice, now: now
+        )
+
+        guard case .reviewingSession(let proposal) = result.state else {
+            Issue.record("Expected a session proposal")
+            return
+        }
+        #expect(proposal.savedDraft == draft)
+        #expect(result.state.savedDraft == draft)
+    }
+
+    @Test("Starting another declaration offers the existing draft choice")
+    func newDeclarationOffersSavedDraftChoice() {
+        let draft = VoiceDeclarationDraft(title: "Existing")
+        let turn = InterpretedTurn(
+            intent: .updateDeclaration,
+            changedDraftFields: [.title],
+            title: "Replacement"
+        )
+
+        let result = reducer.reduce(
+            .idle(savedDraft: draft), turn: turn, practice: practice, now: now
+        )
+
+        #expect(result.state == .choosingSavedDraft(draft))
+        #expect(result.effect == nil)
+    }
+
     @Test("Only explicitly changed draft fields are patched")
     func patchChangesNamedFieldsOnly() {
         let original = VoiceDeclarationDraft(

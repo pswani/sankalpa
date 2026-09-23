@@ -15,6 +15,7 @@ public struct VoiceConversationReducer: Sendable {
         now: CalendarMoment
     ) -> VoiceReduction {
         if turn.intent == .cancel {
+            if case .executing = state { return VoiceReduction(state: state) }
             return VoiceReduction(state: .idle(savedDraft: state.savedDraft))
         }
 
@@ -24,6 +25,9 @@ public struct VoiceConversationReducer: Sendable {
         case .reviewingSession(let proposal):
             return reduceSessionReview(proposal, turn: turn, practice: practice, now: now)
         case .reviewingDeclaration(let proposal):
+            if turn.intent == .confirm {
+                return VoiceReduction(state: .executing(proposal.id), effect: .declare(proposal))
+            }
             return reduceDeclaration(draft: proposal.draft, turn: turn, now: now)
         case .editingDeclaration(let draft, _):
             return reduceDeclaration(draft: draft, turn: turn, now: now)
@@ -38,8 +42,7 @@ public struct VoiceConversationReducer: Sendable {
     }
 
     public func start(from state: VoiceConversationState) -> VoiceConversationState {
-        if let draft = state.savedDraft { return .choosingSavedDraft(draft) }
-        return .listening(VoiceConversationContext())
+        .listening(VoiceConversationContext(draft: state.savedDraft))
     }
 
     private func chooseSavedDraft(
@@ -72,11 +75,28 @@ public struct VoiceConversationReducer: Sendable {
         case .logSession:
             return reduceSession(context: context, turn: turn, practice: practice, now: now)
         case .updateDeclaration:
+            if let draft = context.draft, context.mode != .declaration {
+                return VoiceReduction(state: .choosingSavedDraft(draft))
+            }
             return reduceDeclaration(
                 draft: context.draft ?? VoiceDeclarationDraft(),
                 turn: turn,
                 now: now
             )
+        case .resumeDraft:
+            guard let draft = context.draft else {
+                return VoiceReduction(state: .listening(context))
+            }
+            return chooseSavedDraft(
+                draft,
+                turn: InterpretedTurn(intent: .resumeDraft),
+                now: now
+            )
+        case .discardDraft:
+            guard let draft = context.draft else {
+                return VoiceReduction(state: .listening(context))
+            }
+            return VoiceReduction(state: .idle(savedDraft: draft), effect: .discardDraft(draft))
         case .unsupported:
             return VoiceReduction(
                 state: .result(
@@ -101,6 +121,7 @@ public struct VoiceConversationReducer: Sendable {
         if turn.intent == .logSession {
             let context = VoiceConversationContext(
                 mode: .session,
+                draft: proposal.savedDraft,
                 sankalpaReference: proposal.title,
                 sessionMoment: proposal.occurredAt
             )
@@ -161,7 +182,8 @@ public struct VoiceConversationReducer: Sendable {
                     VoiceSessionProposal(
                         sankalpaID: match.id,
                         title: match.title,
-                        occurredAt: moment
+                        occurredAt: moment,
+                        savedDraft: context.draft
                     )
                 )
             )
@@ -215,9 +237,6 @@ public struct VoiceConversationReducer: Sendable {
         turn: InterpretedTurn,
         now: CalendarMoment
     ) -> VoiceReduction {
-        if turn.intent == .confirm, let proposal = proposal(from: draft, now: now) {
-            return VoiceReduction(state: .executing(proposal.id), effect: .declare(proposal))
-        }
         guard turn.intent == .updateDeclaration else {
             return VoiceReduction(
                 state: proposal(from: draft, now: now).map(VoiceConversationState.reviewingDeclaration)

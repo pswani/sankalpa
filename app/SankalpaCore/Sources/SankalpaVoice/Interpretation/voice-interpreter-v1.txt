@@ -8,7 +8,13 @@ general questions, and multiple actions in one request are unsupported.
 Rules:
 - Never claim an action happened. You only interpret words.
 - A request to create or prepare a Sankalpa is updateDeclaration, never confirm.
-- Use confirm only for an explicit yes/confirm after the app has shown a complete proposal.
+- Use confirm only for an explicit yes/confirm when Conversation phase is reviewingSession or
+  reviewingDeclaration.
+- Interpret revisions relative to the current draft or session proposal supplied in the prompt.
+- A revision or clarification for a session uses logSession; a revision or clarification for a
+  declaration uses updateDeclaration.
+- When a Current draft is present and Conversation phase is idle or choosingSavedDraft, interpret a
+  natural choice to continue as resumeDraft and a natural choice to remove it as discardDraft.
 - Preserve the user's spoken Sankalpa reference as text. Never invent an identifier.
 - Preserve datePhrase and timePhrase. Fill components only when the words resolve exactly.
 - "Today" without a time has datePhrase "today" and no time components.

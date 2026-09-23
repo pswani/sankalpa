@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import SankalpaCore
 import SankalpaStorage
+import SankalpaVoice
 
 /// The driving adapter between SwiftUI and the Sankalpa service.
 ///
@@ -91,6 +92,7 @@ final class AppModel {
         // files are built to survive, so only a test ever asks for this.
         if ProcessInfo.processInfo.arguments.contains("-resetCache") {
             PracticeCache.removeEverything()
+            VoiceDraftStore.removeEverything()
         }
         #endif
         let locations = ServiceLocationStore()

@@ -5,6 +5,7 @@ import Foundation
 public enum SankalpaCommandError: Error, Equatable, Sendable {
     case sankalpaNotFound(SankalpaId)
     case sessionNotFound(SessionId)
+    case conflict(String)
     case declaration(DeclarationError)
     case lifecycle(LifecycleTransitionError)
     case session(SessionNotLoggable)
@@ -16,6 +17,8 @@ public enum SankalpaCommandError: Error, Equatable, Sendable {
             return "That sankalpa is no longer available."
         case .sessionNotFound:
             return "That session is no longer there, so there was nothing to take back."
+        case .conflict(let message):
+            return message
         case .declaration(let error):
             return error.message
         case .lifecycle(let error):

@@ -62,6 +62,17 @@ struct DraftStoreTests {
         #expect(store.load().warning != nil)
     }
 
+    @Test("The test reset removes the active draft")
+    func resetRemovesDraft() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try VoiceDraftStore(directory: directory).save(VoiceDeclarationDraft(title: "Walk"))
+
+        VoiceDraftStore.removeEverything(in: directory)
+
+        #expect(VoiceDraftStore(directory: directory).load().draft == nil)
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("voice-draft-tests-\(UUID().uuidString)")

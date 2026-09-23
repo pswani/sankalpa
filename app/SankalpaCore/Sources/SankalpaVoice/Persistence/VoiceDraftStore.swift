@@ -50,6 +50,14 @@ public final class VoiceDraftStore: VoiceDraftStoring, @unchecked Sendable {
 
     private var draftURL: URL { directory.appendingPathComponent("sankalpa-voice-draft.json") }
 
+    public static func removeEverything(
+        in directory: URL = VoiceDraftStore.defaultDirectory()
+    ) {
+        try? FileManager.default.removeItem(
+            at: directory.appendingPathComponent("sankalpa-voice-draft.json")
+        )
+    }
+
     /// A non-mutating presence check for UI indicators. Recovery remains `load()`'s responsibility
     /// so an unreadable draft warning cannot be consumed before the assistant is presented.
     public func hasDraft() -> Bool {

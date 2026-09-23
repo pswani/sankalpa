@@ -34,18 +34,25 @@ final class VoiceAssistantModel {
         if let warning = loaded.warning {
             self.state = .result(.notSaved(warning), savedDraft: nil)
         } else if let draft = loaded.draft {
-            self.state = .choosingSavedDraft(draft)
+            self.state = .idle(savedDraft: draft)
         } else {
             self.state = .idle(savedDraft: nil)
         }
     }
 
     var hasSavedDraft: Bool { state.savedDraft != nil }
+    var isExecuting: Bool {
+        if case .executing = state { return true }
+        return false
+    }
 
     var prompt: String {
         switch state {
         case .unavailable(let reason): return reason.message
-        case .idle: return "Log a session or prepare a new Sankalpa in your own words."
+        case .idle(let draft):
+            return draft == nil
+                ? "Log a session or prepare a new Sankalpa in your own words."
+                : "You have an unfinished Sankalpa draft. Resume it, discard it, or log a session."
         case .choosingSavedDraft: return "You have an unfinished Sankalpa draft."
         case .listening: return "Listening…"
         case .interpreting: return "Understanding what you said…"
@@ -108,11 +115,17 @@ final class VoiceAssistantModel {
                     guard let self,
                           !Task.isCancelled,
                           self.interpretationID == activeID else { return }
+                    await transcriber.cancel()
+                    guard self.interpretationID == activeID else { return }
                     self.isListening = false
+                    self.transcriber = nil
+                    self.state = source
                     self.statusMessage = "Speech could not be transcribed. You can retry or type a correction."
                 }
             }
         } catch {
+            guard activeID == interpretationID else { return }
+            await transcriber.cancel()
             guard activeID == interpretationID else { return }
             isListening = false
             self.transcriber = nil
@@ -153,6 +166,8 @@ final class VoiceAssistantModel {
             await interpret(final, operationID: activeID)
         } catch {
             guard activeID == interpretationID else { return }
+            await transcriber.cancel()
+            guard activeID == interpretationID else { return }
             isListening = false
             self.transcriber = nil
             statusMessage = "No final words were recognized. You can retry or type what you said."
@@ -169,7 +184,12 @@ final class VoiceAssistantModel {
     }
 
     func confirm() async {
+        guard !isListening, !isWorking else { return }
         let activeID = beginOperation()
+        isWorking = true
+        defer {
+            if activeID == interpretationID { isWorking = false }
+        }
         await apply(
             InterpretedTurn(intent: .confirm),
             to: state,
@@ -188,6 +208,9 @@ final class VoiceAssistantModel {
     }
 
     func cancel() async {
+        // Confirmation is the commit point. Once its command is in flight, let the authoritative
+        // outcome finish instead of hiding a server acceptance behind a local cancellation.
+        guard !isExecuting else { return }
         interpretationID = UUID()
         listeningTask?.cancel()
         await transcriber?.cancel()
@@ -218,9 +241,14 @@ final class VoiceAssistantModel {
                 text,
                 context: VoiceInterpretationContext(
                     nowDescription: Self.describe(gateway.voiceNow),
+                    phase: interpretationPhase(from: source),
                     draft: context.draft,
                     clarification: clarification(from: source),
-                    candidateTitles: context.candidates.map(\.title)
+                    candidateTitles: context.candidates.map(\.title),
+                    sessionProposalTitle: context.mode == .session
+                        ? context.sankalpaReference : nil,
+                    sessionProposalMoment: context.mode == .session
+                        ? context.sessionMoment.map(Self.describe) : nil
                 )
             )
             guard activeInterpretationID == interpretationID else { return }
@@ -278,22 +306,32 @@ final class VoiceAssistantModel {
             guard activeID == interpretationID else { return }
             switch result {
             case .acceptedByService:
-                state = .result(.sessionAccepted, savedDraft: state.savedDraft)
+                state = .result(.sessionAccepted, savedDraft: proposal.savedDraft)
             case .pendingOnDevice:
-                state = .result(.sessionPending, savedDraft: state.savedDraft)
+                state = .result(.sessionPending, savedDraft: proposal.savedDraft)
             case .refused(let message):
-                state = .result(.refused(message), savedDraft: state.savedDraft)
+                state = .result(.refused(message), savedDraft: proposal.savedDraft)
             case .notSaved(let message):
-                state = .result(.notSaved(message), savedDraft: state.savedDraft)
+                state = .result(.notSaved(message), savedDraft: proposal.savedDraft)
             }
         case .declare(let proposal):
-            let result = await gateway.declareForVoice(proposal.declaration)
+            let result = await gateway.declareForVoice(
+                proposal.declaration,
+                commandID: proposal.draft.id
+            )
             guard activeID == interpretationID else { return }
             switch result {
             case .acceptedByService:
-                try? draftStore.discard()
-                persistedRevision = nil
-                state = .result(.declarationAccepted, savedDraft: nil)
+                do {
+                    try draftStore.discard()
+                    persistedRevision = nil
+                    state = .result(.declarationAccepted, savedDraft: nil)
+                } catch {
+                    state = .result(
+                        .declarationAcceptedWithDraftCleanupWarning,
+                        savedDraft: proposal.draft
+                    )
+                }
             case .serviceUnavailable:
                 let message = persistedRevision == proposal.draft.revision
                     ? "Draft saved. This Sankalpa has not been declared."
@@ -324,6 +362,7 @@ final class VoiceAssistantModel {
         case .reviewingSession(let proposal):
             return VoiceConversationContext(
                 mode: .session,
+                draft: proposal.savedDraft,
                 sankalpaReference: proposal.title,
                 sessionDay: proposal.occurredAt.day,
                 sessionMoment: proposal.occurredAt
@@ -338,6 +377,20 @@ final class VoiceAssistantModel {
         case .clarifying(_, let question): return question
         case .editingDeclaration(_, let question): return question
         default: return nil
+        }
+    }
+
+    private func interpretationPhase(
+        from state: VoiceConversationState
+    ) -> VoiceInterpretationPhase {
+        switch state {
+        case .choosingSavedDraft: return .choosingSavedDraft
+        case .clarifying: return .clarifying
+        case .reviewingSession: return .reviewingSession
+        case .editingDeclaration: return .editingDeclaration
+        case .reviewingDeclaration: return .reviewingDeclaration
+        case .result: return .result
+        default: return .idle
         }
     }
 

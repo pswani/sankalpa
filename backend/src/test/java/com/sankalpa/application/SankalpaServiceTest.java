@@ -41,6 +41,32 @@ class SankalpaServiceTest {
     }
 
     @Test
+    void retryingADeclarationIdReturnsTheOriginalWithoutSavingTwice() {
+        SankalpaId id = SankalpaId.newId();
+        Sankalpa first = service.declare(id, "Practice", "Daily", ActionType.MEDITATION,
+                LocalDate.of(2026, 6, 1), PeriodUnit.DAY, 1, null);
+
+        Sankalpa retried = service.declare(id, "Practice", "Daily", ActionType.MEDITATION,
+                LocalDate.of(2026, 6, 1), PeriodUnit.DAY, 1, null);
+
+        assertThat(retried).isSameAs(first);
+        assertThat(sankalpas.saveCount).isEqualTo(1);
+    }
+
+    @Test
+    void reusingADeclarationIdForDifferentValuesIsRefused() {
+        SankalpaId id = SankalpaId.newId();
+        service.declare(id, "Practice", "Daily", ActionType.MEDITATION,
+                LocalDate.of(2026, 6, 1), PeriodUnit.DAY, 1, null);
+
+        assertThatThrownBy(() -> service.declare(id, "Changed", "Daily", ActionType.MEDITATION,
+                LocalDate.of(2026, 6, 1), PeriodUnit.DAY, 1, null))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("IDEMPOTENCY_CONFLICT");
+        assertThat(sankalpas.saveCount).isEqualTo(1);
+    }
+
+    @Test
     void failedDomainCommandDoesNotSave() {
         Sankalpa result = declare(PeriodUnit.DAY);
         int savesBeforeFailure = sankalpas.saveCount;
@@ -127,6 +153,35 @@ class SankalpaServiceTest {
         assertThat(sankalpas.forUpdateReads).isEqualTo(1);
     }
 
+    @Test
+    void retryingASessionIdReturnsTheOriginalWithoutSavingTwice() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        SessionId sessionId = SessionId.newId();
+        LocalDateTime occurredAt = LocalDateTime.of(2026, 6, 10, 8, 0);
+
+        Session first = service.logSession(result.id(), sessionId, occurredAt);
+        Session retried = service.logSession(result.id(), sessionId, occurredAt);
+
+        assertThat(retried).isSameAs(first);
+        assertThat(sessions.saved).containsExactly(first);
+    }
+
+    @Test
+    void reusingASessionIdForADifferentMomentIsRefused() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        SessionId sessionId = SessionId.newId();
+        LocalDateTime occurredAt = LocalDateTime.of(2026, 6, 10, 8, 0);
+        service.logSession(result.id(), sessionId, occurredAt);
+
+        assertThatThrownBy(() -> service.logSession(
+                result.id(), sessionId, occurredAt.plusMinutes(1)))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("IDEMPOTENCY_CONFLICT");
+        assertThat(sessions.saved).hasSize(1);
+    }
+
     private Sankalpa declare(PeriodUnit unit) {
         return service.declare("Practice", "Daily", ActionType.MEDITATION,
                 LocalDate.of(2026, 6, 1), unit, 1, null);
@@ -158,6 +213,9 @@ class SankalpaServiceTest {
         private long total;
 
         @Override public void save(Session session) { saved.add(session); }
+        @Override public Optional<Session> findById(SessionId id) {
+            return saved.stream().filter(session -> session.id().equals(id)).findFirst();
+        }
         @Override public List<Session> findForSankalpa(SankalpaId id, LocalDate from, LocalDate until) {
             lastFrom = from;
             lastUntil = until;

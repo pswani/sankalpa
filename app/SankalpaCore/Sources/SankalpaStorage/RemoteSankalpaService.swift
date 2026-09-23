@@ -275,6 +275,11 @@ public final class RemoteSankalpaService {
     /// The outbox is flushed first so the refresh that follows already contains those sessions,
     /// which is what makes them stop being pending rather than briefly appearing twice.
     public func sync() async {
+        // A legacy entry's id was never sent to the service. Refresh once before replaying it so
+        // a request whose response was lost can be reconciled by its old value-based identity.
+        if pending.contains(where: { $0.hasAuthoritativeID != true }) {
+            await refresh()
+        }
         await flushOutbox()
         await refresh()
     }
@@ -298,7 +303,11 @@ public final class RemoteSankalpaService {
                 continue
             }
             do {
-                _ = try await client.logSession(entry.sankalpaId, occurredAt: entry.occurredAt)
+                _ = try await client.logSession(
+                    entry.sankalpaId,
+                    sessionID: entry.id,
+                    occurredAt: entry.occurredAt
+                )
             } catch let failure as APIFailure {
                 switch failure {
                 case .refused:
@@ -335,14 +344,21 @@ public final class RemoteSankalpaService {
 
     private func dropPendingAlreadyOnTheServer(_ serverSessions: [Session]) {
         guard !pending.isEmpty else { return }
-        let onServer = Set(serverSessions.map { SessionKey($0.sankalpaId, $0.occurredAt) })
-        let remaining = pending.filter { !onServer.contains(SessionKey($0.sankalpaId, $0.occurredAt)) }
+        let serverIDs = Set(serverSessions.map(\.id))
+        let legacyKeys = Set(serverSessions.map { SessionKey($0.sankalpaId, $0.occurredAt) })
+        let remaining = pending.filter { entry in
+            if serverIDs.contains(entry.id) { return false }
+            // Before the app sent its session id to the service, an outbox entry could only be
+            // reconciled by its values. Current ids are authoritative: applying this fallback to
+            // them would incorrectly collapse two explicitly confirmed sessions at the same time.
+            guard entry.hasAuthoritativeID != true else { return true }
+            return !legacyKeys.contains(SessionKey(entry.sankalpaId, entry.occurredAt))
+        }
         if remaining.count != pending.count { savePending(remaining) }
     }
 
-    /// A session's identity as far as delivery is concerned. The service assigns its own id, so
-    /// the phone cannot match on that — what it can match on is the sankalpa and the moment, which
-    /// is what the user actually chose.
+    /// Older app versions did not send their provisional session ids, so retain the
+    /// sankalpa-and-moment fallback only for their migrated outbox entries.
     private struct SessionKey: Hashable {
         let sankalpaId: SankalpaId
         let occurredAt: CalendarMoment
@@ -392,9 +408,12 @@ public final class RemoteSankalpaService {
 
     // MARK: - Commands
 
-    public func declare(_ declaration: Declaration) async -> SankalpaCommandError? {
+    public func declare(
+        _ declaration: Declaration,
+        id: SankalpaId = SankalpaId()
+    ) async -> SankalpaCommandError? {
         do {
-            _ = try await client.declare(declaration)
+            _ = try await client.declare(declaration, id: id)
         } catch {
             return refusal(error, context: Context(declaration: declaration))
         }
@@ -452,13 +471,19 @@ public final class RemoteSankalpaService {
     public func logSessionWithDisposition(
         _ id: SankalpaId, occurredAt: CalendarMoment
     ) async -> RemoteSessionLogDisposition {
+        let sessionID = SessionId()
         do {
-            _ = try await client.logSession(id, occurredAt: occurredAt)
+            _ = try await client.logSession(id, sessionID: sessionID, occurredAt: occurredAt)
         } catch let failure as APIFailure {
             guard case .unreachable = failure else {
                 return .refused(refusal(failure, context: Context(id: id, occurredAt: occurredAt)))
             }
-            if let error = logSessionWhileOffline(id, occurredAt: occurredAt, unreachable: failure) {
+            if let error = logSessionWhileOffline(
+                id,
+                sessionID: sessionID,
+                occurredAt: occurredAt,
+                unreachable: failure
+            ) {
                 return .refused(error)
             }
             return .pendingOnDevice
@@ -471,6 +496,7 @@ public final class RemoteSankalpaService {
 
     private func logSessionWhileOffline(
         _ id: SankalpaId,
+        sessionID: SessionId,
         occurredAt: CalendarMoment,
         unreachable: APIFailure
     ) -> SankalpaCommandError? {
@@ -485,7 +511,7 @@ public final class RemoteSankalpaService {
         }
 
         let entry = PendingSession(
-            sankalpaId: id, occurredAt: occurredAt, loggedAt: clock.now()
+            id: sessionID, sankalpaId: id, occurredAt: occurredAt, loggedAt: clock.now()
         )
         let updated = pending + [entry]
         guard cache.saveOutbox(updated) else {
