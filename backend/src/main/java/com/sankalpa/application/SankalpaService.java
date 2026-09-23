@@ -94,22 +94,46 @@ public class SankalpaService implements SankalpaUseCases {
     }
 
     @Override
-    public Session logSession(SankalpaId id, SessionId sessionId, LocalDateTime occurredAt) {
+    public SessionLogResult logSessionResult(
+            SankalpaId id, SessionId sessionId, LocalDateTime occurredAt) {
         Sankalpa sankalpa = sankalpas.findByIdForUpdate(id)
                 .orElseThrow(() -> new NotFoundException("Sankalpa " + id + " was not found"));
         var existing = sessions.findById(sessionId);
         if (existing.isPresent()) {
             Session accepted = existing.get();
             if (!accepted.sankalpaId().equals(id) || !accepted.occurredAt().equals(occurredAt)) {
-                throw new DomainException(
-                        "IDEMPOTENCY_CONFLICT",
-                        "This session request was already accepted with different values");
+                throw sessionIdentityConflict();
             }
-            return accepted;
+            return new SessionLogResult(accepted, false);
+        }
+        var deletionOwner = sessions.findDeletionOwner(sessionId);
+        if (deletionOwner.isPresent()) {
+            if (!deletionOwner.get().equals(id)) throw sessionIdentityConflict();
+            throw new DomainException(
+                    "SESSION_DELETED", "This session was permanently deleted and cannot be recreated");
         }
         Session session = sankalpa.logSession(sessionId, occurredAt, clock.now());
         sessions.save(session);
-        return session;
+        return new SessionLogResult(session, true);
+    }
+
+    @Override
+    public void deleteSession(SankalpaId id, SessionId sessionId) {
+        sankalpas.findByIdForUpdate(id)
+                .orElseThrow(() -> new NotFoundException("Sankalpa " + id + " was not found"));
+        var existing = sessions.findById(sessionId);
+        if (existing.isPresent()) {
+            if (!existing.get().sankalpaId().equals(id)) throw sessionIdentityConflict();
+            sessions.delete(sessionId);
+            sessions.recordDeletion(sessionId, id);
+            return;
+        }
+        var deletionOwner = sessions.findDeletionOwner(sessionId);
+        if (deletionOwner.isPresent()) {
+            if (!deletionOwner.get().equals(id)) throw sessionIdentityConflict();
+            return;
+        }
+        sessions.recordDeletion(sessionId, id);
     }
 
     @Override
@@ -150,6 +174,12 @@ public class SankalpaService implements SankalpaUseCases {
     private Sankalpa require(SankalpaId id) {
         return sankalpas.findById(id)
                 .orElseThrow(() -> new NotFoundException("Sankalpa " + id + " was not found"));
+    }
+
+    private DomainException sessionIdentityConflict() {
+        return new DomainException(
+                "SESSION_IDENTITY_CONFLICT",
+                "This session identity is already associated with different values");
     }
 
     private enum Transition { PAUSE, RESUME, COMPLETE, STOP }

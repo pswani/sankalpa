@@ -2,6 +2,7 @@ package com.sankalpa.adapter.config;
 
 import com.sankalpa.application.SankalpaUseCases;
 import com.sankalpa.application.PageResult;
+import com.sankalpa.application.SessionLogResult;
 import com.sankalpa.domain.ActionType;
 import com.sankalpa.domain.Sankalpa;
 import com.sankalpa.domain.SankalpaId;
@@ -13,6 +14,7 @@ import com.sankalpa.domain.lifecycle.CompletionOutcome;
 import com.sankalpa.domain.lifecycle.LifecycleTransition;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -55,9 +57,23 @@ public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
         return writing(() -> delegate.complete(id, outcome));
     }
     @Override public Sankalpa stop(SankalpaId id) { return writing(() -> delegate.stop(id)); }
-    @Override public Session logSession(
+    @Override public SessionLogResult logSessionResult(
             SankalpaId id, SessionId sessionId, LocalDateTime occurredAt) {
-        return writing(() -> delegate.logSession(id, sessionId, occurredAt));
+        try {
+            return writing(() -> delegate.logSessionResult(id, sessionId, occurredAt));
+        } catch (DataIntegrityViolationException collision) {
+            // A different parent lock can race for the same globally unique session identity.
+            // Once the losing transaction rolls back, run the decision table again against the
+            // winning active row or tombstone so callers receive replay/conflict semantics.
+            return writing(() -> delegate.logSessionResult(id, sessionId, occurredAt));
+        }
+    }
+    @Override public void deleteSession(SankalpaId id, SessionId sessionId) {
+        try {
+            writing(() -> { delegate.deleteSession(id, sessionId); return null; });
+        } catch (DataIntegrityViolationException collision) {
+            writing(() -> { delegate.deleteSession(id, sessionId); return null; });
+        }
     }
     @Override public PageResult<Session> sessions(SankalpaId id, LocalDate from, LocalDate until,
                                                    int page, int size) {

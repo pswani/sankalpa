@@ -1,11 +1,13 @@
 package com.sankalpa.adapter;
 
 import com.sankalpa.adapter.out.persistence.JdbcSankalpaPersistenceAdapter;
+import com.sankalpa.application.SessionLogResult;
 import com.sankalpa.application.SankalpaUseCases;
 import com.sankalpa.application.port.SankalpaClock;
 import com.sankalpa.domain.ActionType;
 import com.sankalpa.domain.DomainException;
 import com.sankalpa.domain.Sankalpa;
+import com.sankalpa.domain.SessionId;
 import com.sankalpa.domain.commitment.PeriodUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +39,7 @@ class ConcurrentCommandIntegrationTest {
     @BeforeEach
     void clean() {
         jdbc.update("DELETE FROM practice_session");
+        jdbc.update("DELETE FROM session_deletion_tombstone");
         jdbc.update("DELETE FROM sankalpa_lifecycle_transition");
         jdbc.update("DELETE FROM sankalpa");
     }
@@ -83,6 +86,33 @@ class ConcurrentCommandIntegrationTest {
                 .satisfies(error -> assertThat(((DomainException) error.getCause()).code())
                         .isEqualTo("SANKALPA_NOT_IN_PROGRESS"));
         assertThat(adapter.countForSankalpa(declared.id(), null, null)).isZero();
+    }
+
+    @Test
+    void simultaneousRetriesWithOneSessionIdentityCreateOneSession() throws Exception {
+        Sankalpa declared = useCases.declare("Walk", "", ActionType.PHYSICAL_ACTIVITY,
+                clock.today(), PeriodUnit.DAY, 1, null);
+        useCases.begin(declared.id(), clock.today().atStartOfDay());
+        SessionId sessionId = SessionId.parse("88888888-8888-8888-8888-888888888888");
+        LocalDateTime occurredAt = clock.now().minusHours(1);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        Callable<SessionLogResult> retry = () -> {
+            ready.countDown();
+            await(start);
+            return useCases.logSessionResult(declared.id(), sessionId, occurredAt);
+        };
+        Future<SessionLogResult> first = executor.submit(retry);
+        Future<SessionLogResult> second = executor.submit(retry);
+        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+
+        assertThat(java.util.List.of(first.get(5, TimeUnit.SECONDS).created(),
+                        second.get(5, TimeUnit.SECONDS).created()))
+                .containsExactlyInAnyOrder(true, false);
+        assertThat(adapter.countForSankalpa(declared.id(), null, null)).isEqualTo(1);
+        assertThat(adapter.findById(sessionId)).isPresent();
     }
 
     private static void await(CountDownLatch latch) {

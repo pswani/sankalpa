@@ -163,6 +163,214 @@ struct OfflinePracticeTests {
         #expect(relaunched.queries.summaries().first?.currentPeriod?.performed == 1)
     }
 
+    @Test("Undoing an offline create is one durable replacement and deletion wins on reconnect")
+    func undoPendingCreateSurvivesRelaunch() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+        transport.failEverything(with: URLError(.notConnectedToInternet))
+
+        let disposition = await service.logSessionWithDisposition(
+            SankalpaId(UUID(uuidString: Fixture.sankalpaId)!),
+            occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 7)
+        )
+        guard case .pendingOnDevice(let receipt) = disposition else {
+            Issue.record("Expected a pending receipt")
+            return
+        }
+        _ = await service.deleteSession(
+            receipt.sankalpaId, sessionId: receipt.sessionId, knownToBeOnServer: false
+        )
+
+        let relaunched = Fixture.service(transport: transport, today: today, cache: cache)
+        #expect(relaunched.pending.isEmpty)
+        #expect(relaunched.pendingDeletions.map(\.id) == [receipt.sessionId])
+        #expect(!relaunched.hasRecentLog(for: receipt.sankalpaId))
+
+        let back = Fixture.readyTransport()
+        back.on(
+            "DELETE",
+            "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions/\(receipt.sessionId.value.uuidString)",
+            status: 204,
+            body: ""
+        )
+        let reconnected = Fixture.service(transport: back, today: today, cache: cache)
+        await reconnected.sync()
+
+        #expect(reconnected.pendingDeletions.isEmpty)
+        #expect(!back.requests.contains { $0.hasPrefix("POST ") })
+        #expect(back.requests.first?.hasPrefix("DELETE ") == true)
+    }
+
+    @Test("A pending deletion immediately removes a server session from counts and history")
+    func pendingDeletionIsAppliedLocally() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+        let id = SankalpaId(UUID(uuidString: Fixture.sankalpaId)!)
+        let session = service.visibleSessions(for: id).first!
+        #expect(service.queries.summaries().first?.totalSessions == 1)
+        transport.failEverything(with: URLError(.notConnectedToInternet))
+
+        let result = await service.deleteSession(
+            id, sessionId: session.id, knownToBeOnServer: true
+        )
+
+        guard case .pendingOnDevice = result else {
+            Issue.record("Expected deletion to remain pending")
+            return
+        }
+        #expect(service.visibleSessions(for: id).isEmpty)
+        #expect(service.queries.summaries().first?.totalSessions == 0)
+    }
+
+    @Test("Undoing the newest log does not hide an earlier log in the repeat window")
+    func repeatGuardRetainsEarlierRecentLog() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+        let id = SankalpaId(UUID(uuidString: Fixture.sankalpaId)!)
+        transport.failEverything(with: URLError(.notConnectedToInternet))
+
+        let first = await service.logSessionWithDisposition(
+            id, occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 7)
+        )
+        let second = await service.logSessionWithDisposition(
+            id, occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 8)
+        )
+        guard case .pendingOnDevice = first,
+              case .pendingOnDevice(let latest) = second else {
+            Issue.record("Expected two pending logs")
+            return
+        }
+
+        _ = await service.deleteSession(
+            id, sessionId: latest.sessionId, knownToBeOnServer: false
+        )
+
+        #expect(service.hasRecentLog(for: id))
+        let relaunched = Fixture.service(transport: transport, today: today, cache: cache)
+        #expect(relaunched.hasRecentLog(for: id))
+    }
+
+    @Test("An accepted create remains visible when its follow-up refresh fails")
+    func acceptedCreateSurvivesFailedRefreshAndRelaunch() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+        let sankalpaId = SankalpaId(UUID(uuidString: Fixture.sankalpaId)!)
+        let sessionId = SessionId(UUID(uuidString: "33333333-3333-3333-3333-333333333333")!)
+        transport.on(
+            "POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions", status: 201,
+            body: """
+            {"id":"\(sessionId.value.uuidString)","sankalpaId":"\(Fixture.sankalpaId)",
+             "occurredAt":"2026-09-10T07:00:00","loggedAt":"2026-09-10T12:00:00"}
+            """
+        )
+        transport.fail(
+            "GET", "/api/v1/sankalpas", with: URLError(.notConnectedToInternet)
+        )
+
+        let disposition = await service.logSessionWithDisposition(
+            sankalpaId,
+            sessionID: sessionId,
+            occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 7)
+        )
+
+        guard case .acceptedByService = disposition else {
+            Issue.record("Expected the service to accept the session")
+            return
+        }
+        #expect(service.visibleSessions(for: sankalpaId).contains { $0.id == sessionId })
+        #expect(service.queries.summaries().first?.totalSessions == 2)
+
+        let offline = StubTransport()
+        offline.failEverything(with: URLError(.notConnectedToInternet))
+        let relaunched = Fixture.service(transport: offline, today: today, cache: cache)
+        #expect(relaunched.visibleSessions(for: sankalpaId).contains { $0.id == sessionId })
+        #expect(relaunched.queries.summaries().first?.totalSessions == 2)
+    }
+
+    @Test("An accepted deletion stays hidden when its follow-up refresh fails")
+    func acceptedDeletionSurvivesFailedRefreshAndRelaunch() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+        let sankalpaId = SankalpaId(UUID(uuidString: Fixture.sankalpaId)!)
+        let session = service.visibleSessions(for: sankalpaId).first!
+        transport.on(
+            "DELETE",
+            "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions/\(session.id.value.uuidString)",
+            status: 204,
+            body: ""
+        )
+        transport.fail(
+            "GET", "/api/v1/sankalpas", with: URLError(.notConnectedToInternet)
+        )
+
+        let disposition = await service.deleteSession(
+            sankalpaId, sessionId: session.id, knownToBeOnServer: true
+        )
+
+        guard case .removed = disposition else {
+            Issue.record("Expected the service to accept the deletion")
+            return
+        }
+        #expect(service.visibleSessions(for: sankalpaId).isEmpty)
+        #expect(service.queries.summaries().first?.totalSessions == 0)
+
+        let offline = StubTransport()
+        offline.failEverything(with: URLError(.notConnectedToInternet))
+        let relaunched = Fixture.service(transport: offline, today: today, cache: cache)
+        #expect(relaunched.visibleSessions(for: sankalpaId).isEmpty)
+        #expect(relaunched.queries.summaries().first?.totalSessions == 0)
+    }
+
+    @Test("A rejected pending deletion restores the session, repeat guard, and one notice")
+    func rejectedPendingDeletionRestoresDisplayedState() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+        let sankalpaId = SankalpaId(UUID(uuidString: Fixture.sankalpaId)!)
+        let session = service.visibleSessions(for: sankalpaId).first!
+        _ = cache.saveOperations(PendingSessionOperations(recentLogs: [
+            RecentSessionLog(
+                sessionId: session.id, sankalpaId: sankalpaId, completedAt: Date()
+            )
+        ]))
+
+        let withRecentGuard = Fixture.service(
+            transport: transport, today: today, cache: cache
+        )
+        transport.failEverything(with: URLError(.notConnectedToInternet))
+        _ = await withRecentGuard.deleteSession(
+            sankalpaId, sessionId: session.id, knownToBeOnServer: true
+        )
+        #expect(withRecentGuard.visibleSessions(for: sankalpaId).isEmpty)
+        #expect(!withRecentGuard.hasRecentLog(for: sankalpaId))
+
+        let back = Fixture.readyTransport()
+        back.on(
+            "DELETE",
+            "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions/\(session.id.value.uuidString)",
+            status: 409,
+            body: Fixture.problemJSON(
+                code: "SESSION_IDENTITY_CONFLICT",
+                detail: "The session identity belongs to another Sankalpa.",
+                status: 409
+            )
+        )
+        let reconnected = Fixture.service(transport: back, today: today, cache: cache)
+        await reconnected.sync()
+
+        #expect(reconnected.pendingDeletions.isEmpty)
+        #expect(reconnected.visibleSessions(for: sankalpaId).count == 1)
+        #expect(reconnected.queries.summaries().first?.totalSessions == 1)
+        #expect(reconnected.hasRecentLog(for: sankalpaId))
+        #expect(reconnected.takeSyncRejections().count == 1)
+        #expect(reconnected.takeSyncRejections().isEmpty)
+    }
+
     // MARK: - Sending what was waiting
 
     /// Requirement 2.3: what exists only on the phone is replicated to the service as soon as
@@ -233,6 +441,40 @@ struct OfflinePracticeTests {
         #expect(reconnected.takeSyncRejections().isEmpty)
     }
 
+    @Test("An already-deleted response removes a waiting create without resurrecting it")
+    func deletedWaitingSessionConvergesWithoutARejection() async {
+        let cache = PracticeCache(directory: Fixture.temporaryDirectory())
+        let transport = Fixture.readyTransport()
+        let service = await loaded(transport, cache: cache)
+        let sankalpaId = SankalpaId(UUID(uuidString: Fixture.sankalpaId)!)
+
+        transport.failEverything(with: URLError(.notConnectedToInternet))
+        _ = await service.logSessionWithDisposition(
+            sankalpaId,
+            occurredAt: CalendarMoment(day: day(2026, 9, 10), hour: 7)
+        )
+        #expect(service.pending.count == 1)
+        #expect(service.hasRecentLog(for: sankalpaId))
+
+        let back = Fixture.readyTransport()
+        back.on(
+            "POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions", status: 410,
+            body: Fixture.problemJSON(
+                code: "SESSION_DELETED",
+                detail: "This session was permanently deleted and cannot be recreated.",
+                status: 410
+            )
+        )
+        let reconnected = Fixture.service(transport: back, today: today, cache: cache)
+        await reconnected.sync()
+
+        #expect(reconnected.pending.isEmpty)
+        #expect(!reconnected.hasRecentLog(for: sankalpaId))
+        #expect(reconnected.visibleSessions(for: sankalpaId).count == 1)
+        #expect(reconnected.queries.summaries().first?.totalSessions == 1)
+        #expect(reconnected.takeSyncRejections().isEmpty)
+    }
+
     /// A session that reached the service while the answer was lost comes back in the refresh.
     /// Without this it would be offered again and the practice would grow a duplicate.
     @Test("A waiting session the service already has is dropped rather than sent twice")
@@ -265,12 +507,11 @@ struct OfflinePracticeTests {
         #expect(reconnected.pending.isEmpty)
         #expect(reconnected.queries.summaries().first?.currentPeriod?.performed == 1)
         let path = "POST /api/v1/sankalpas/\(Fixture.sankalpaId)/sessions"
-        guard let body = back.bodies(for: path).first else {
+        guard let headers = back.headers(for: path).first else {
             Issue.record("Expected the waiting session to be retried")
             return
         }
-        let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
-        #expect(json?["id"] as? String == pendingID)
+        #expect(headers["Idempotency-Key"] == pendingID)
     }
 
     @Test("A different server session at the same time does not consume a current outbox entry")

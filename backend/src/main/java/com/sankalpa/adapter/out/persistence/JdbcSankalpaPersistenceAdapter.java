@@ -155,12 +155,33 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
     }
 
     @Override
+    public Optional<SankalpaId> findDeletionOwner(SessionId id) {
+        List<SankalpaId> results = jdbc.query(
+                "SELECT sankalpa_id FROM session_deletion_tombstone WHERE session_id = ?",
+                (rs, rowNum) -> SankalpaId.parse(rs.getString("sankalpa_id")), id.toString());
+        return results.stream().findFirst();
+    }
+
+    @Override
     public void save(Session session) {
         jdbc.update("""
                 INSERT INTO practice_session (id, sankalpa_id, occurred_at, logged_at)
                 VALUES (?, ?, ?, ?)
                 """, session.id().toString(), session.sankalpaId().toString(),
                 format(session.occurredAt()), format(session.loggedAt()));
+    }
+
+    @Override
+    public void delete(SessionId id) {
+        jdbc.update("DELETE FROM practice_session WHERE id = ?", id.toString());
+    }
+
+    @Override
+    public void recordDeletion(SessionId id, SankalpaId sankalpaId) {
+        jdbc.update("""
+                INSERT INTO session_deletion_tombstone (session_id, sankalpa_id)
+                VALUES (?, ?)
+                """, id.toString(), sankalpaId.toString());
     }
 
     @Override

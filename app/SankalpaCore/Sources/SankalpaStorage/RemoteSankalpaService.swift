@@ -1,8 +1,26 @@
 import Foundation
 import SankalpaCore
 
+public enum SessionDelivery: Sendable, Hashable {
+    case accepted
+    case waitingToSync
+}
+
+public struct SessionLogReceipt: Sendable, Hashable {
+    public let sessionId: SessionId
+    public let sankalpaId: SankalpaId
+    public let occurredAt: CalendarMoment
+    public let delivery: SessionDelivery
+}
+
 public enum RemoteSessionLogDisposition: Sendable {
-    case acceptedByService
+    case acceptedByService(SessionLogReceipt)
+    case pendingOnDevice(SessionLogReceipt)
+    case refused(SankalpaCommandError)
+}
+
+public enum RemoteSessionDeletionDisposition: Sendable {
+    case removed
     case pendingOnDevice
     case refused(SankalpaCommandError)
 }
@@ -22,7 +40,11 @@ final class SnapshotStore: SankalpaRepository, SessionRepository {
     private var sankalpas: [Sankalpa] = []
     private var serverSessions: [Session] = []
     private var pendingSessions: [Session] = []
+    private var pendingDeletionIDs: Set<SessionId> = []
+    private var pendingDeletionCountAdjustments: [SankalpaId: Int] = [:]
     private var counts: [SankalpaId: Int] = [:]
+
+    private var serverSessionIDs: Set<SessionId> { Set(serverSessions.map(\.id)) }
 
     func replace(sankalpas: [Sankalpa], sessions: [Session], counts: [SankalpaId: Int]) {
         self.sankalpas = sankalpas
@@ -30,12 +52,52 @@ final class SnapshotStore: SankalpaRepository, SessionRepository {
         self.counts = counts
     }
 
-    /// The counts the service reported, plus whatever is still waiting to reach it.
-    func replacePending(_ pending: [PendingSession]) {
-        pendingSessions = pending.map(\.session)
+    /// Applies a mutation the service has already accepted so a failed follow-up refresh cannot
+    /// make that accepted result disappear from the local snapshot.
+    func accept(_ session: Session) {
+        if let index = serverSessions.firstIndex(where: { $0.id == session.id }) {
+            serverSessions[index] = session
+        } else {
+            serverSessions.append(session)
+            counts[session.sankalpaId, default: 0] += 1
+        }
     }
 
-    private var sessions: [Session] { serverSessions + pendingSessions }
+    /// Applies an accepted deletion before its local overlay is removed. The complete-history
+    /// snapshot means a counted session is present here whenever it can be selected for deletion.
+    func acceptDeletion(_ id: SessionId, sankalpaId: SankalpaId) {
+        let removed = serverSessions.contains { $0.id == id }
+        serverSessions.removeAll { $0.id == id }
+        if removed { counts[sankalpaId] = max(0, (counts[sankalpaId] ?? 0) - 1) }
+    }
+
+    func cachedPractice(serviceLocation: String) -> CachedPractice {
+        CachedPractice(
+            serviceLocation: serviceLocation,
+            sankalpas: sankalpas,
+            sessions: serverSessions,
+            counts: Dictionary(
+                uniqueKeysWithValues: counts.map { ($0.key.value.uuidString, $0.value) }
+            )
+        )
+    }
+
+    /// The counts the service reported, plus whatever is still waiting to reach it.
+    func replacePending(
+        _ pending: [PendingSession], deletions: [PendingSessionDeletion] = []
+    ) {
+        pendingSessions = pending.map(\.session)
+        pendingDeletionIDs = Set(deletions.map(\.id))
+        pendingDeletionCountAdjustments = Dictionary(grouping:
+            deletions.filter(\.subtractsServerCount), by: \.sankalpaId
+        ).mapValues(\.count)
+    }
+
+    private var sessions: [Session] {
+        let acceptedIDs = serverSessionIDs
+        return (serverSessions + pendingSessions.filter { !acceptedIDs.contains($0.id) })
+            .filter { !pendingDeletionIDs.contains($0.id) }
+    }
 
     var isEmpty: Bool { sankalpas.isEmpty && sessions.isEmpty }
 
@@ -73,7 +135,21 @@ final class SnapshotStore: SankalpaRepository, SessionRepository {
     }
 
     func totalCount(for sankalpaId: SankalpaId) -> Int {
-        (counts[sankalpaId] ?? 0) + pendingSessions.count { $0.sankalpaId == sankalpaId }
+        let acceptedIDs = serverSessionIDs
+        return max(0,
+            (counts[sankalpaId] ?? 0)
+            + pendingSessions.count {
+                $0.sankalpaId == sankalpaId
+                    && !acceptedIDs.contains($0.id)
+                    && !pendingDeletionIDs.contains($0.id)
+            }
+            - (pendingDeletionCountAdjustments[sankalpaId] ?? 0)
+        )
+    }
+
+    func allSessions(for sankalpaId: SankalpaId) -> [Session] {
+        sessions.filter { $0.sankalpaId == sankalpaId }
+            .sorted { ($0.occurredAt, $0.id.value.uuidString) > ($1.occurredAt, $1.id.value.uuidString) }
     }
 
     private static let writesGoToTheService =
@@ -124,13 +200,15 @@ public final class RemoteSankalpaService {
     public private(set) var isShowingCachedPractice = false
     /// Sessions logged on this phone that the service has not accepted yet.
     public private(set) var pending: [PendingSession] = []
+    public private(set) var pendingDeletions: [PendingSessionDeletion] = []
+    public private(set) var recentLogs: [RecentSessionLog] = []
     /// Sessions the service refused when they were finally sent, in its own words. Read once and
     /// cleared, because this is news rather than state.
     public private(set) var rejectedWhileSyncing: [String] = []
+    private var syncTask: Task<Void, Never>?
 
-    /// How many sessions one refresh will read per sankalpa. The service pages at 200; ten pages
-    /// is far more practice than a single user accumulates, and it keeps a refresh bounded.
-    static let maximumSessionPages = 10
+    /// Session history is paged, but every page is followed so deletion remains available for the
+    /// complete history rather than only for a recent local window.
     static let sessionPageSize = 200
 
     public init(
@@ -170,12 +248,23 @@ public final class RemoteSankalpaService {
     public func now() -> CalendarMoment { clock.now() }
     public func today() -> CalendarDay { clock.today() }
 
+    public func hasRecentLog(for id: SankalpaId, now: Date = Date()) -> Bool {
+        prune(recentLogs, now: now).contains { $0.sankalpaId == id }
+    }
+
+    public func visibleSessions(for id: SankalpaId) -> [Session] {
+        store.allSessions(for: id)
+    }
+
     /// Reads whatever the phone already holds, so the first frame has something in it whether or
     /// not the service answers. The cache is discarded silently when it cannot be used; the outbox
     /// reports for itself, because it is the copy of record until the service takes it.
     private func loadFromCache() {
-        pending = cache.loadOutbox()
-        store.replacePending(pending)
+        let operations = cache.loadOperations()
+        pending = operations.creates
+        pendingDeletions = operations.deletions
+        recentLogs = prune(operations.recentLogs)
+        store.replacePending(pending, deletions: pendingDeletions)
         if let cached = cache.loadCache(for: location) {
             store.replace(
                 sankalpas: cached.sankalpas,
@@ -188,7 +277,7 @@ public final class RemoteSankalpaService {
             )
             hasLoaded = true
             isShowingCachedPractice = true
-        } else if !pending.isEmpty {
+        } else if !pending.isEmpty || !pendingDeletions.isEmpty {
             // Sessions are waiting but there is no practice to show them against. There is still
             // nothing to render, so this is not "loaded" — but they must not be lost either.
             hasLoaded = false
@@ -275,13 +364,62 @@ public final class RemoteSankalpaService {
     /// The outbox is flushed first so the refresh that follows already contains those sessions,
     /// which is what makes them stop being pending rather than briefly appearing twice.
     public func sync() async {
+        if let syncTask {
+            await syncTask.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performSync()
+        }
+        syncTask = task
+        await task.value
+        syncTask = nil
+    }
+
+    private func performSync() async {
         // A legacy entry's id was never sent to the service. Refresh once before replaying it so
         // a request whose response was lost can be reconciled by its old value-based identity.
         if pending.contains(where: { $0.hasAuthoritativeID != true }) {
             await refresh()
         }
+        guard await flushDeletions() else {
+            await refresh()
+            return
+        }
         await flushOutbox()
         await refresh()
+    }
+
+    private func flushDeletions() async -> Bool {
+        guard !pendingDeletions.isEmpty else { return true }
+        var remaining: [PendingSessionDeletion] = []
+        var stopped = false
+        for entry in pendingDeletions {
+            if stopped { remaining.append(entry); continue }
+            do {
+                try await client.deleteSession(entry.sankalpaId, sessionID: entry.id)
+                guard acceptDeletion(entry.id, sankalpaId: entry.sankalpaId) else {
+                    remaining.append(entry)
+                    stopped = true
+                    continue
+                }
+            } catch let failure as APIFailure {
+                switch failure {
+                case .unreachable:
+                    remaining.append(entry)
+                    stopped = true
+                case .refused:
+                    rejectedWhileSyncing.append(describeDeletion(entry, refusedBy: failure))
+                    restoreRecentLog(from: entry)
+                }
+            } catch {
+                remaining.append(entry)
+                stopped = true
+            }
+        }
+        saveOperations(creates: pending, deletions: remaining, recentLogs: recentLogs)
+        return !stopped
     }
 
     /// Offers each waiting session to the service, oldest first.
@@ -303,15 +441,23 @@ public final class RemoteSankalpaService {
                 continue
             }
             do {
-                _ = try await client.logSession(
+                let response = try await client.logSession(
                     entry.sankalpaId,
                     sessionID: entry.id,
                     occurredAt: entry.occurredAt
                 )
+                guard try accept(response) else {
+                    remaining.append(entry)
+                    stopped = true
+                    continue
+                }
             } catch let failure as APIFailure {
                 switch failure {
+                case .refused(let code, _, _) where code == "SESSION_DELETED":
+                    recentLogs.removeAll { $0.sessionId == entry.id }
                 case .refused:
                     rejected.append(describe(entry, refusedBy: failure))
+                    recentLogs.removeAll { $0.sessionId == entry.id }
                 case .unreachable:
                     remaining.append(entry)
                     stopped = true
@@ -342,6 +488,15 @@ public final class RemoteSankalpaService {
         return "The session for \(title) on \(when) could not be kept. \(reason)"
     }
 
+    private func describeDeletion(
+        _ entry: PendingSessionDeletion, refusedBy failure: APIFailure
+    ) -> String {
+        let title = store.find(entry.sankalpaId)?.title.value ?? "a sankalpa"
+        var reason = failure.fallbackMessage
+        if !reason.hasSuffix(".") { reason += "." }
+        return "The deletion for a session in \(title) could not be completed. \(reason)"
+    }
+
     private func dropPendingAlreadyOnTheServer(_ serverSessions: [Session]) {
         guard !pending.isEmpty else { return }
         let serverIDs = Set(serverSessions.map(\.id))
@@ -369,9 +524,54 @@ public final class RemoteSankalpaService {
     }
 
     private func savePending(_ entries: [PendingSession]) {
-        pending = entries
-        store.replacePending(entries)
-        cache.saveOutbox(entries)
+        saveOperations(creates: entries, deletions: pendingDeletions, recentLogs: recentLogs)
+    }
+
+    @discardableResult
+    private func saveOperations(
+        creates: [PendingSession],
+        deletions: [PendingSessionDeletion],
+        recentLogs: [RecentSessionLog]
+    ) -> Bool {
+        let pruned = prune(recentLogs)
+        let operations = PendingSessionOperations(
+            creates: creates, deletions: deletions, recentLogs: pruned
+        )
+        guard cache.saveOperations(operations) else { return false }
+        pending = creates
+        pendingDeletions = deletions
+        self.recentLogs = pruned
+        store.replacePending(creates, deletions: deletions)
+        return true
+    }
+
+    private func prune(_ logs: [RecentSessionLog], now: Date = Date()) -> [RecentSessionLog] {
+        logs.filter { now.timeIntervalSince($0.completedAt) < 60 }
+    }
+
+    private func restoreRecentLog(from deletion: PendingSessionDeletion) {
+        guard let log = deletion.suppressedRecentLog,
+              Date().timeIntervalSince(log.completedAt) < 60,
+              !recentLogs.contains(where: { $0.sessionId == log.sessionId })
+        else { return }
+        recentLogs.append(log)
+    }
+
+    @discardableResult
+    private func accept(_ response: API.SessionResponse) throws -> Bool {
+        store.accept(try APIMapping.session(response))
+        return saveCurrentCache()
+    }
+
+    @discardableResult
+    private func acceptDeletion(_ id: SessionId, sankalpaId: SankalpaId) -> Bool {
+        store.acceptDeletion(id, sankalpaId: sankalpaId)
+        return saveCurrentCache()
+    }
+
+    @discardableResult
+    private func saveCurrentCache() -> Bool {
+        cache.saveCache(store.cachedPractice(serviceLocation: location.displayText))
     }
 
     /// Reads the refusals collected during a sync and forgets them, so the same news is not shown
@@ -389,19 +589,20 @@ public final class RemoteSankalpaService {
         let totalSessions: Int
     }
 
-    /// Reads session history a page at a time. `totalElements` from the first page is kept as the
-    /// lifetime count even when the pages are capped, so a summary never reports fewer sessions
-    /// than the service holds.
+    /// Reads complete session history a page at a time. `totalElements` from the first page is the
+    /// lifetime count shown in summaries.
     private static func allSessions(
         for id: SankalpaId, using client: SankalpaAPIClient
     ) async throws -> (items: [API.SessionResponse], total: Int) {
         var items: [API.SessionResponse] = []
         var total = 0
-        for page in 0..<maximumSessionPages {
+        var page = 0
+        while true {
             let response = try await client.sessionPage(id, page: page, size: sessionPageSize)
             if page == 0 { total = response.totalElements }
             items.append(contentsOf: response.content)
             if items.count >= response.totalElements || response.content.isEmpty { break }
+            page += 1
         }
         return (items, total)
     }
@@ -469,11 +670,15 @@ public final class RemoteSankalpaService {
     /// The same command path with the successful disposition kept visible for clients, such as
     /// voice, that must distinguish service acceptance from durable offline storage.
     public func logSessionWithDisposition(
-        _ id: SankalpaId, occurredAt: CalendarMoment
+        _ id: SankalpaId,
+        sessionID: SessionId = SessionId(),
+        occurredAt: CalendarMoment
     ) async -> RemoteSessionLogDisposition {
-        let sessionID = SessionId()
         do {
-            _ = try await client.logSession(id, sessionID: sessionID, occurredAt: occurredAt)
+            let response = try await client.logSession(
+                id, sessionID: sessionID, occurredAt: occurredAt
+            )
+            _ = try accept(response)
         } catch let failure as APIFailure {
             guard case .unreachable = failure else {
                 return .refused(refusal(failure, context: Context(id: id, occurredAt: occurredAt)))
@@ -486,12 +691,32 @@ public final class RemoteSankalpaService {
             ) {
                 return .refused(error)
             }
-            return .pendingOnDevice
+            let receipt = SessionLogReceipt(
+                sessionId: sessionID, sankalpaId: id, occurredAt: occurredAt,
+                delivery: .waitingToSync
+            )
+            return .pendingOnDevice(receipt)
         } catch {
             return .refused(refusal(error, context: Context(id: id, occurredAt: occurredAt)))
         }
+        let recent = RecentSessionLog(
+            sessionId: sessionID, sankalpaId: id, completedAt: Date()
+        )
+        _ = saveOperations(
+            creates: pending, deletions: pendingDeletions, recentLogs: recentLogs + [recent]
+        )
         await sync()
-        return .acceptedByService
+        let completed = RecentSessionLog(
+            sessionId: sessionID, sankalpaId: id, completedAt: Date()
+        )
+        _ = saveOperations(
+            creates: pending,
+            deletions: pendingDeletions,
+            recentLogs: recentLogs.filter { $0.sessionId != sessionID } + [completed]
+        )
+        return .acceptedByService(SessionLogReceipt(
+            sessionId: sessionID, sankalpaId: id, occurredAt: occurredAt, delivery: .accepted
+        ))
     }
 
     private func logSessionWhileOffline(
@@ -514,14 +739,68 @@ public final class RemoteSankalpaService {
             id: sessionID, sankalpaId: id, occurredAt: occurredAt, loggedAt: clock.now()
         )
         let updated = pending + [entry]
-        guard cache.saveOutbox(updated) else {
+        let recent = RecentSessionLog(
+            sessionId: sessionID, sankalpaId: id, completedAt: Date()
+        )
+        guard saveOperations(
+            creates: updated,
+            deletions: pendingDeletions,
+            recentLogs: recentLogs + [recent]
+        ) else {
             return .storage(.writeFailed)
         }
-        // The successful write above is the commit point. Update memory without writing the same
-        // outbox a second time; a later launch will read exactly these bytes.
-        pending = updated
-        store.replacePending(updated)
         return nil
+    }
+
+    public func deleteSession(
+        _ sankalpaId: SankalpaId,
+        sessionId: SessionId,
+        knownToBeOnServer: Bool
+    ) async -> RemoteSessionDeletionDisposition {
+        let matchingCreate = pending.first { $0.id == sessionId }
+        let suppressed = recentLogs.first { $0.sessionId == sessionId }
+        let deletion = PendingSessionDeletion(
+            id: sessionId,
+            sankalpaId: sankalpaId,
+            requestedAt: Date(),
+            subtractsServerCount: matchingCreate == nil && knownToBeOnServer,
+            suppressedRecentLog: suppressed
+        )
+        let creates = pending.filter { $0.id != sessionId }
+        let logs = recentLogs.filter { $0.sessionId != sessionId }
+        let deletions = pendingDeletions.filter { $0.id != sessionId } + [deletion]
+        guard saveOperations(creates: creates, deletions: deletions, recentLogs: logs) else {
+            return .refused(.storage(.writeFailed))
+        }
+        do {
+            try await client.deleteSession(sankalpaId, sessionID: sessionId)
+            let cached = acceptDeletion(sessionId, sankalpaId: sankalpaId)
+            guard cached else { return .pendingOnDevice }
+            _ = saveOperations(
+                creates: pending,
+                deletions: pendingDeletions.filter { $0.id != sessionId },
+                recentLogs: recentLogs
+            )
+            await sync()
+            return .removed
+        } catch let failure as APIFailure {
+            switch failure {
+            case .unreachable:
+                return .pendingOnDevice
+            case .refused:
+                let pendingWithoutDeletion = pendingDeletions.filter { $0.id != sessionId }
+                restoreRecentLog(from: deletion)
+                _ = saveOperations(
+                    creates: pending,
+                    deletions: pendingWithoutDeletion,
+                    recentLogs: recentLogs
+                )
+                await refresh()
+                return .refused(refusal(failure, context: Context(id: sankalpaId)))
+            }
+        } catch {
+            return .pendingOnDevice
+        }
     }
 
     private func lifecycle(

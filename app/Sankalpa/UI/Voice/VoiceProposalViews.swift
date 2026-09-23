@@ -9,6 +9,14 @@ struct VoiceSessionProposalView: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
+                if proposal.isRapidRepeat {
+                    Label(
+                        "A session was just logged. Confirm that this is another session.",
+                        systemImage: "exclamationmark.circle"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Palette.pausedTint)
+                }
                 Label(proposal.title, systemImage: "checkmark.circle")
                     .font(.headline)
                 LabeledContent("Date", value: proposal.occurredAt.day.longDisplayText)

@@ -22,6 +22,7 @@ final class VoiceAssistantModel {
     private(set) var isWorking = false
     var transcript = ""
     var statusMessage: String?
+    private(set) var undoReceipt: VoiceSessionReceipt?
 
     init(
         gateway: any VoiceCommandGateway,
@@ -54,10 +55,16 @@ final class VoiceAssistantModel {
                 ? "Log a session or prepare a new Sankalpa in your own words."
                 : "You have an unfinished Sankalpa draft. Resume it, discard it, or log a session."
         case .choosingSavedDraft: return "You have an unfinished Sankalpa draft."
-        case .listening: return "Listening…"
+        case .listening:
+            return isWorking
+                ? "Finishing what you said…"
+                : "Listening… Tap Stop when you’re finished."
         case .interpreting: return "Understanding what you said…"
         case .clarifying(_, let question): return question.question
-        case .reviewingSession: return "Review this session before logging it."
+        case .reviewingSession(let proposal):
+            return proposal.isRapidRepeat
+                ? "A session was just logged. Confirm this additional session."
+                : "Review this session before logging it."
         case .editingDeclaration(_, let question):
             return question?.question ?? "Continue describing your Sankalpa."
         case .reviewingDeclaration: return "Review this Sankalpa before declaring it."
@@ -157,18 +164,17 @@ final class VoiceAssistantModel {
         guard isListening, let transcriber else { return }
         let activeID = interpretationID
         isWorking = true
+        isListening = false
         do {
             let final = try await transcriber.finish()
             guard activeID == interpretationID else { return }
             self.transcript = final
-            isListening = false
             self.transcriber = nil
             await interpret(final, operationID: activeID)
         } catch {
             guard activeID == interpretationID else { return }
             await transcriber.cancel()
             guard activeID == interpretationID else { return }
-            isListening = false
             self.transcriber = nil
             statusMessage = "No final words were recognized. You can retry or type what you said."
         }
@@ -224,6 +230,22 @@ final class VoiceAssistantModel {
             now: gateway.voiceNow
         )
         state = reduction.state
+    }
+
+    func undoSession() async {
+        guard let receipt = undoReceipt, !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        switch await gateway.undoSessionForVoice(receipt) {
+        case .removed:
+            statusMessage = "Session undone."
+            undoReceipt = nil
+        case .pendingOnDevice:
+            statusMessage = "Undo saved on this iPhone and waiting to be sent."
+            undoReceipt = nil
+        case .refused(let message):
+            statusMessage = message
+        }
     }
 
     private func interpret(_ text: String, operationID activeInterpretationID: UUID) async {
@@ -301,14 +323,25 @@ final class VoiceAssistantModel {
         case .logSession(let proposal):
             let result = await gateway.logSessionForVoice(
                 proposal.sankalpaID,
-                occurredAt: proposal.occurredAt
+                occurredAt: proposal.occurredAt,
+                confirmingRapidRepeat: proposal.isRapidRepeat
             )
             guard activeID == interpretationID else { return }
             switch result {
-            case .acceptedByService:
+            case .acceptedByService(let receipt):
+                undoReceipt = receipt
                 state = .result(.sessionAccepted, savedDraft: proposal.savedDraft)
-            case .pendingOnDevice:
+            case .pendingOnDevice(let receipt):
+                undoReceipt = receipt
                 state = .result(.sessionPending, savedDraft: proposal.savedDraft)
+            case .rapidRepeatConfirmationRequired:
+                state = .reviewingSession(VoiceSessionProposal(
+                    sankalpaID: proposal.sankalpaID,
+                    title: proposal.title,
+                    occurredAt: proposal.occurredAt,
+                    savedDraft: proposal.savedDraft,
+                    isRapidRepeat: true
+                ))
             case .refused(let message):
                 state = .result(.refused(message), savedDraft: proposal.savedDraft)
             case .notSaved(let message):

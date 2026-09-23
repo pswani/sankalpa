@@ -1,6 +1,6 @@
 # Conversational Voice — Architecture and Design
 
-**Status:** Voice feature implemented; shared session-correction dependency remains proposed
+**Status:** Implemented
 **Requirements:** [Conversational voice](../../requirements/conversational-voice.md)  
 **Applies to:** The server-backed iOS app in `app/`
 
@@ -48,9 +48,8 @@ Sankalpa domain, duplicate its rules, or give a language model authority to perf
 The shared [Session Reliability and Correction](../session-reliability/README.md) design owns the
 one-minute additional-session warning, immediate touch Undo, and later session deletion required by
 `sankalpa.md`. Those behaviors apply to every logging surface, including a session started by
-voice, but are not implemented by this feature. Stable create identities are implemented here as
-the common prerequisite. Overall session logging is not requirements-complete until that separate
-design is implemented.
+voice. The shared coordinator now provides the repeat warning and exact-receipt Undo while the
+voice result is visible.
 
 ## 3. Platform decision
 
@@ -151,7 +150,9 @@ The adapter:
 
 - Starts capture only from an explicit user action.
 - Keeps audio in the capture pipeline rather than writing an audio file.
-- Stops and finalizes when the user explicitly stops listening.
+- Stops capture when the user explicitly stops listening, finalizes all audio already consumed by
+  the analyzer, and explicitly finishes the analyzer session. It does not wait for the capture
+  provider's open-ended input sequence to terminate.
 - Cancels immediately when the user cancels, dismisses the assistant, or the app leaves the
   foreground.
 - Releases the capture provider and analyzer after finalization or cancellation.
@@ -650,6 +651,7 @@ Reducer tests inject validated interpreted turns and a fixed clock. Storage and 
 stub transports and repositories. Together they cover:
 
 - No execution from partial speech.
+- Speech shutdown finalizes consumed audio before finishing the analyzer, including the error path.
 - Spoken and touched confirmation use the same transition.
 - Revision invalidates prior confirmation.
 - Repeated confirmation executes once.
@@ -692,6 +694,7 @@ and [prompt evaluation](https://developer.apple.com/documentation/foundationmode
 - First microphone permission request, denial, and later Settings recovery.
 - Speech asset and language-model unavailable states.
 - Live partial transcript followed by one final interpretation.
+- Stop listening leaves capture promptly, shows the finishing state, and advances to interpretation.
 - Manual transcript correction.
 - Audio interruption and backgrounding.
 - Online and offline session result wording.
@@ -716,7 +719,7 @@ boundary, which keeps the deterministic suite fast and stable.
 | Explicit confirmation | Proposal ID and mandatory reviewing state |
 | One session | Single session proposal and one gateway effect |
 | Retry does not duplicate | Stable client-generated declaration and session identities |
-| Rapid additional session and touch Undo | Shared session-reliability design; not yet implemented |
+| Rapid additional session and touch Undo | Shared coordinator, warned second review, and result-state Undo |
 | New Sankalpa draft and revision | Persisted `VoiceDeclarationDraft` and patch reducer |
 | One unfinished draft | Store cardinality and Resume/Discard state |
 | Whole-period duration | Unit comparison before proposal |
@@ -736,9 +739,9 @@ boundary, which keeps the deterministic suite fast and stable.
 5. Add `VoiceAssistantModel`, view, and app-level entry point.
 6. Add UI/device journeys and run the prompt evaluation suite on the iPhone 17 Pro.
 
-Voice adds no backend endpoint of its own. The existing declaration and session request bodies have
-an additive client-generated `id` field so retries are idempotent; requests without it remain
-accepted for compatibility.
+Voice adds no backend endpoint of its own. Declarations retain their client-generated request ID;
+session commands use the shared `Idempotency-Key` header, with headerless requests still accepted
+for compatibility.
 
 ## 15. Implementation status
 
@@ -747,8 +750,8 @@ reducer, title resolution, draft durability, proposal confirmation, temporal cla
 duration compatibility, offline verification, accepted-versus-pending disposition, and idempotent
 mutation retries. The app build preserves the iOS 18 deployment target.
 
-The prompt fixture set and the shared rapid-repeat/Undo/delete behavior remain open work. They are
-not represented as completed by this document.
+The shared rapid-repeat, Undo, and delete behavior is implemented. The prompt fixture set remains
+open work and is not represented as completed by this document.
 
 Speech recognition and interpretation require iOS 27, installed on-device speech assets, a
 supported locale, microphone permission, and an available System Language Model. Real speech and

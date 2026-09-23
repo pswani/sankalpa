@@ -30,7 +30,6 @@ enum API {
     }
 
     struct LogSessionRequest: Encodable, Sendable {
-        let id: UUID
         let occurredAt: String
     }
 

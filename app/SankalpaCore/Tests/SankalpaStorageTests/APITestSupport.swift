@@ -16,7 +16,9 @@ final class StubTransport: APITransport, @unchecked Sendable {
     private var routes: [String: (status: Int, body: String)] = [:]
     private var recorded: [String] = []
     private var recordedBodies: [String: [Data]] = [:]
+    private var recordedHeaders: [String: [[String: String]]] = [:]
     private var failure: URLError?
+    private var routeFailures: [String: URLError] = [:]
 
     var requests: [String] {
         lock.lock(); defer { lock.unlock() }
@@ -25,6 +27,10 @@ final class StubTransport: APITransport, @unchecked Sendable {
 
     func bodies(for request: String) -> [Data] {
         lock.withLock { recordedBodies[request] ?? [] }
+    }
+
+    func headers(for request: String) -> [[String: String]] {
+        lock.withLock { recordedHeaders[request] ?? [] }
     }
 
     func on(_ method: String, _ path: String, status: Int = 200, body: String) {
@@ -38,6 +44,11 @@ final class StubTransport: APITransport, @unchecked Sendable {
         failure = error
     }
 
+    func fail(_ method: String, _ path: String, with error: URLError) {
+        lock.lock(); defer { lock.unlock() }
+        routeFailures["\(method) \(path)"] = error
+    }
+
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let path = (request.url?.path ?? "")
             + (request.url?.query.map { "?\($0)" } ?? "")
@@ -48,10 +59,14 @@ final class StubTransport: APITransport, @unchecked Sendable {
             if let body = request.httpBody {
                 recordedBodies[key, default: []].append(body)
             }
+            recordedHeaders[key, default: []].append(request.allHTTPHeaderFields ?? [:])
             // A query string is part of the identity of a session page, but a test that does not
             // care about paging should not have to spell one out.
             let fallback = "\(request.httpMethod ?? "GET") \(request.url?.path ?? "")"
-            return (self.failure, routes[key] ?? routes[fallback])
+            return (
+                self.failure ?? routeFailures[key] ?? routeFailures[fallback],
+                routes[key] ?? routes[fallback]
+            )
         }
 
         if let failure { throw failure }

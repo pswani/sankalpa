@@ -94,9 +94,9 @@ struct LogSessionView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Log", action: log)
+                    Button(isLogging ? "Logging…" : "Log", action: log)
                         .fontWeight(.semibold)
-                        .disabled(isLogging)
+                        .disabled(isLogging || model.isLogging(summary.id))
                 }
             }
             // Opens at the newest eligible moment rather than now, so a paused or finished
@@ -109,12 +109,18 @@ struct LogSessionView: View {
     private func log() {
         isLogging = true
         Task {
-            let refusal = await model.logSession(
+            let result = await model.logSession(
                 summary.id, occurredAt: AppTime.moment(from: occurredAt)
             )
             isLogging = false
-            withAnimation(.snappy) { error = refusal }
-            if refusal == nil { dismiss() }
+            switch result {
+            case .logged, .rapidRepeatConfirmationRequired:
+                dismiss()
+            case .alreadyInProgress:
+                break
+            case .refused(let refusal):
+                withAnimation(.snappy) { error = refusal }
+            }
         }
     }
 }

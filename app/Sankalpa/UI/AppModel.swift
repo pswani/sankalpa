@@ -22,6 +22,18 @@ import SankalpaVoice
 @MainActor
 @Observable
 final class AppModel {
+    enum SessionLogAttempt {
+        case logged(SessionLogReceipt)
+        case rapidRepeatConfirmationRequired
+        case alreadyInProgress
+        case refused(SankalpaCommandError)
+    }
+
+    struct RepeatLogRequest: Identifiable {
+        let id = UUID()
+        let sankalpaId: SankalpaId
+        let occurredAt: CalendarMoment
+    }
     let remote: RemoteSankalpaService
 
     /// Everything the list and Today screens render, refreshed after each command.
@@ -41,6 +53,7 @@ final class AppModel {
     private(set) var revision: Int = 0
     /// How many sessions are logged on this phone but not yet accepted by the service.
     private(set) var pendingSessionCount = 0
+    private(set) var pendingDeletionCount = 0
     /// True when what is on screen came from the phone's copy rather than from the service just
     /// now, so a screen can say the practice may be behind.
     private(set) var isShowingCachedPractice = false
@@ -61,6 +74,9 @@ final class AppModel {
     private(set) var confirmationToken: Int = 0
     /// Bumped on every successful log so views can trigger haptics without owning the state.
     private(set) var successCount: Int = 0
+    private(set) var undoReceipt: SessionLogReceipt?
+    var repeatLogRequest: RepeatLogRequest?
+    private var loggingSankalpas: Set<SankalpaId> = []
 
     /// Non-nil when the service has never been reached, so there is nothing at all to show. The
     /// whole app drops into recovery rather than showing an empty practice, which would look
@@ -182,6 +198,7 @@ final class AppModel {
         revision += 1
         today = remote.today()
         pendingSessionCount = remote.pending.count
+        pendingDeletionCount = remote.pendingDeletions.count
         isShowingCachedPractice = remote.isShowingCachedPractice
         summaries = remote.queries.summaries()
         // Built once per refresh rather than per card per render. The work is small, but calling
@@ -243,6 +260,12 @@ final class AppModel {
         remote.queries.sessions(id, from: today.addingDays(-days), until: today)
     }
 
+    func sessionHistory(_ id: SankalpaId) -> [Session] {
+        remote.visibleSessions(for: id)
+    }
+
+    func isLogging(_ id: SankalpaId) -> Bool { loggingSankalpas.contains(id) }
+
     func performedCount(_ id: SankalpaId, in window: PeriodWindow) -> Int {
         remote.queries.performedCount(id, in: window)
     }
@@ -268,10 +291,85 @@ final class AppModel {
         return nil
     }
 
-    func logSession(_ id: SankalpaId, occurredAt: CalendarMoment) async -> SankalpaCommandError? {
-        if let error = await remote.logSession(id, occurredAt: occurredAt) { return error }
-        succeed("Session logged")
-        return nil
+    func logSession(
+        _ id: SankalpaId,
+        occurredAt: CalendarMoment,
+        confirmingRapidRepeat: Bool = false,
+        reportsRefusal: Bool = false
+    ) async -> SessionLogAttempt {
+        guard !loggingSankalpas.contains(id) else { return .alreadyInProgress }
+        if !confirmingRapidRepeat && remote.hasRecentLog(for: id) {
+            repeatLogRequest = RepeatLogRequest(sankalpaId: id, occurredAt: occurredAt)
+            return .rapidRepeatConfirmationRequired
+        }
+        loggingSankalpas.insert(id)
+        defer { loggingSankalpas.remove(id) }
+        let sessionID = SessionId()
+        let disposition = await remote.logSessionWithDisposition(
+            id, sessionID: sessionID, occurredAt: occurredAt
+        )
+        switch disposition {
+        case .acceptedByService(let receipt):
+            succeed("Session logged", undo: receipt)
+            return .logged(receipt)
+        case .pendingOnDevice(let receipt):
+            succeed("Session saved — waiting to sync", undo: receipt)
+            return .logged(receipt)
+        case .refused(let error):
+            if reportsRefusal { report(error) }
+            return .refused(error)
+        }
+    }
+
+    func confirmRapidRepeat() {
+        guard let request = repeatLogRequest else { return }
+        repeatLogRequest = nil
+        Task {
+            let result = await logSession(
+                request.sankalpaId,
+                occurredAt: request.occurredAt,
+                confirmingRapidRepeat: true
+            )
+            if case .refused(let error) = result { report(error) }
+        }
+    }
+
+    func cancelRapidRepeat() { repeatLogRequest = nil }
+
+    func undoLastSession() {
+        guard let receipt = undoReceipt else { return }
+        undoReceipt = nil
+        Task {
+            let result = await remote.deleteSession(
+                receipt.sankalpaId,
+                sessionId: receipt.sessionId,
+                knownToBeOnServer: receipt.delivery == .accepted
+            )
+            handleDeletion(result, successText: "Session undone")
+        }
+    }
+
+    func deleteSession(_ session: Session) {
+        Task {
+            let result = await remote.deleteSession(
+                session.sankalpaId, sessionId: session.id, knownToBeOnServer: true
+            )
+            handleDeletion(result, successText: "Session deleted")
+        }
+    }
+
+    private func handleDeletion(
+        _ result: RemoteSessionDeletionDisposition, successText: String
+    ) {
+        switch result {
+        case .removed:
+            succeed(successText)
+        case .pendingOnDevice:
+            succeed("Deletion saved — waiting to sync")
+        case .refused(let error):
+            report(error)
+            rebuild()
+        }
     }
 
     // MARK: - Commands with alert error reporting
@@ -326,9 +424,10 @@ final class AppModel {
     }
 
     /// The command already refreshed the snapshot, so this only re-derives and announces.
-    private func succeed(_ text: String) {
+    private func succeed(_ text: String, undo: SessionLogReceipt? = nil) {
         rebuild()
         confirmation = text
+        undoReceipt = undo
         confirmationToken += 1
         successCount += 1
     }
@@ -346,7 +445,10 @@ final class AppModel {
     /// Called when the confirmation banner is dismissed.
     func clearConfirmation() {
         confirmation = nil
+        undoReceipt = nil
     }
+
+    func clearUndoReceipt() { undoReceipt = nil }
 }
 
 #if DEBUG

@@ -17,16 +17,48 @@ extension AppModel: VoiceCommandGateway {
 
     func logSessionForVoice(
         _ id: SankalpaId,
-        occurredAt: CalendarMoment
+        occurredAt: CalendarMoment,
+        confirmingRapidRepeat: Bool
     ) async -> VoiceSessionExecution {
-        let result = await remote.logSessionWithDisposition(id, occurredAt: occurredAt)
-        rebuild()
+        let result = await logSession(
+            id, occurredAt: occurredAt, confirmingRapidRepeat: confirmingRapidRepeat
+        )
         switch result {
-        case .acceptedByService: return .acceptedByService
-        case .pendingOnDevice: return .pendingOnDevice
+        case .logged(let receipt):
+            let voiceReceipt = VoiceSessionReceipt(
+                sessionId: receipt.sessionId,
+                sankalpaId: receipt.sankalpaId,
+                acceptedByService: receipt.delivery == .accepted
+            )
+            return receipt.delivery == .accepted
+                ? .acceptedByService(voiceReceipt)
+                : .pendingOnDevice(voiceReceipt)
+        case .rapidRepeatConfirmationRequired:
+            // Voice owns its review surface, so do not also open the global touch dialog.
+            cancelRapidRepeat()
+            return .rapidRepeatConfirmationRequired
+        case .alreadyInProgress:
+            return .notSaved("That session is still being logged.")
         case .refused(let error):
             if case .storage = error { return .notSaved(error.message) }
             return .refused(error.message)
+        }
+    }
+
+    func undoSessionForVoice(
+        _ receipt: VoiceSessionReceipt
+    ) async -> VoiceSessionUndoExecution {
+        let result = await remote.deleteSession(
+            receipt.sankalpaId,
+            sessionId: receipt.sessionId,
+            knownToBeOnServer: receipt.acceptedByService
+        )
+        rebuild()
+        clearUndoReceipt()
+        switch result {
+        case .removed: return .removed
+        case .pendingOnDevice: return .pendingOnDevice
+        case .refused(let error): return .refused(error.message)
         }
     }
 

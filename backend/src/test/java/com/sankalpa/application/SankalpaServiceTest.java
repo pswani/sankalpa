@@ -161,10 +161,12 @@ class SankalpaServiceTest {
         LocalDateTime occurredAt = LocalDateTime.of(2026, 6, 10, 8, 0);
 
         Session first = service.logSession(result.id(), sessionId, occurredAt);
+        service.pause(result.id());
         Session retried = service.logSession(result.id(), sessionId, occurredAt);
 
         assertThat(retried).isSameAs(first);
         assertThat(sessions.saved).containsExactly(first);
+        assertThat(service.logSessionResult(result.id(), sessionId, occurredAt).created()).isFalse();
     }
 
     @Test
@@ -178,8 +180,53 @@ class SankalpaServiceTest {
         assertThatThrownBy(() -> service.logSession(
                 result.id(), sessionId, occurredAt.plusMinutes(1)))
                 .isInstanceOf(DomainException.class)
-                .extracting("code").isEqualTo("IDEMPOTENCY_CONFLICT");
+                .extracting("code").isEqualTo("SESSION_IDENTITY_CONFLICT");
         assertThat(sessions.saved).hasSize(1);
+    }
+
+    @Test
+    void separatelyIdentifiedSessionsAtTheSameMomentRemainSeparate() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        LocalDateTime occurredAt = LocalDateTime.of(2026, 6, 10, 8, 0);
+
+        Session first = service.logSession(result.id(), SessionId.newId(), occurredAt);
+        Session second = service.logSession(result.id(), SessionId.newId(), occurredAt);
+
+        assertThat(first.id()).isNotEqualTo(second.id());
+        assertThat(sessions.saved).containsExactly(first, second);
+    }
+
+    @Test
+    void deletingAStoredSessionRemovesItAndLeavesATombstone() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        SessionId sessionId = SessionId.newId();
+        LocalDateTime occurredAt = LocalDateTime.of(2026, 6, 10, 8, 0);
+        service.logSession(result.id(), sessionId, occurredAt);
+
+        service.deleteSession(result.id(), sessionId);
+        service.deleteSession(result.id(), sessionId);
+
+        assertThat(sessions.findById(sessionId)).isEmpty();
+        assertThat(sessions.findDeletionOwner(sessionId)).contains(result.id());
+        assertThatThrownBy(() -> service.logSession(result.id(), sessionId, occurredAt))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("SESSION_DELETED");
+    }
+
+    @Test
+    void deletingAnUnknownSessionPreventsADelayedCreate() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        SessionId sessionId = SessionId.newId();
+
+        service.deleteSession(result.id(), sessionId);
+
+        assertThatThrownBy(() -> service.logSession(
+                result.id(), sessionId, LocalDateTime.of(2026, 6, 10, 8, 0)))
+                .isInstanceOf(DomainException.class)
+                .extracting("code").isEqualTo("SESSION_DELETED");
     }
 
     private Sankalpa declare(PeriodUnit unit) {
@@ -211,10 +258,20 @@ class SankalpaServiceTest {
         private long lastOffset;
         private int lastLimit;
         private long total;
+        private final Map<SessionId, SankalpaId> deletions = new LinkedHashMap<>();
 
         @Override public void save(Session session) { saved.add(session); }
         @Override public Optional<Session> findById(SessionId id) {
             return saved.stream().filter(session -> session.id().equals(id)).findFirst();
+        }
+        @Override public Optional<SankalpaId> findDeletionOwner(SessionId id) {
+            return Optional.ofNullable(deletions.get(id));
+        }
+        @Override public void delete(SessionId id) {
+            saved.removeIf(session -> session.id().equals(id));
+        }
+        @Override public void recordDeletion(SessionId id, SankalpaId sankalpaId) {
+            deletions.put(id, sankalpaId);
         }
         @Override public List<Session> findForSankalpa(SankalpaId id, LocalDate from, LocalDate until) {
             lastFrom = from;

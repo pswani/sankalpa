@@ -1,7 +1,7 @@
 # Session Reliability and Correction — Architecture and Design
 
-**Status:** Proposed  
-**Requirements:** [Sankalpa — Reliable Logging and Correction](../../requirements/sankalpa.md#reliable-logging-and-correction)  
+**Status:** Implemented
+**Requirements:** [Sankalpa — Reliable Logging and Correction](../../requirements/sankalpa.md#reliable-logging-and-correction)
 **Applies to:** `backend/` and the server-backed iOS app in `app/`
 
 ## 1. Purpose
@@ -284,23 +284,21 @@ session remains distinct.
 ### 7.3 Result feedback and Undo
 
 - Accepted: “Session logged.”
-- Pending: “Saved on this iPhone — waiting to sync.”
+- Pending: “Session saved — waiting to sync.”
 - Both confirmations show Undo for four seconds and retain the exact `SessionLogReceipt`.
 
 Undo calls `deleteSession` with the receipt identity. For an accepted session this queues and sends
 a deletion. For a pending or uncertain create it atomically replaces the create with a deletion.
-The result is “Session removed” when finalized or “Removed on this iPhone — waiting to sync” when
-pending.
+The result is “Session undone” when finalized or “Deletion saved — waiting to sync” when pending.
 
 Session history uses the backend's paginated, unfiltered session query so every logged session can
-eventually be reached; the existing bounded snapshot remains sufficient for Today, detail,
-journal, and period calculations. Pages are merged with pending creates and filtered by pending
-deletion IDs. Loading another page never duplicates a session already supplied by the local
-overlay.
+be reached. The current implementation follows every page during refresh, then merges pending
+creates and filters pending deletion IDs in the local snapshot. Distinct session IDs prevent a
+local overlay entry from collapsing a separately confirmed session at the same performed time.
 
-Each history row exposes a destructive Delete action with a confirmation naming the performed date
-and time and explaining that period results may change. The action is available through both swipe
-and an accessibility action. There is no general session-editing flow.
+Each history row exposes a trailing trash control and native swipe-to-delete, with a confirmation
+naming the performed date and time and explaining that period results may change. A named
+accessibility action reaches the same confirmation. There is no general session-editing flow.
 
 The persistent offline notice reports creation and deletion counts separately, for example:
 “1 session waiting to be sent · 1 deletion waiting to sync.”

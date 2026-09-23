@@ -38,6 +38,7 @@ class ApiContractTest {
     @BeforeEach
     void clean() {
         jdbc.update("DELETE FROM practice_session");
+        jdbc.update("DELETE FROM session_deletion_tombstone");
         jdbc.update("DELETE FROM sankalpa_lifecycle_transition");
         jdbc.update("DELETE FROM sankalpa");
     }
@@ -56,6 +57,7 @@ class ApiContractTest {
         assertThat(paths.has("/api/v1/sankalpas/{id}/complete")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/stop")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/sessions")).isTrue();
+        assertThat(paths.has("/api/v1/sankalpas/{id}/sessions/{sessionId}")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/lifecycle-history")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/period-outcomes")).isTrue();
 
@@ -71,6 +73,8 @@ class ApiContractTest {
                 .has(MediaType.APPLICATION_PROBLEM_JSON_VALUE)).isTrue();
         assertThat(hasParameter(sessionGet, "page")).isTrue();
         assertThat(hasParameter(sessionGet, "size")).isTrue();
+        assertThat(hasParameter(paths.path("/api/v1/sankalpas/{id}/sessions").path("post"),
+                "Idempotency-Key")).isTrue();
 
         JsonNode declareResponses = paths.path("/api/v1/sankalpas").path("post").path("responses");
         assertThat(declareResponses.has("201")).isTrue();
@@ -99,6 +103,94 @@ class ApiContractTest {
         assertThat(pauseResponses.has("200")).isTrue();
         assertThat(pauseResponses.has("409")).isTrue();
         assertThat(pauseResponses.has("422")).isTrue();
+    }
+
+    @Test
+    void sessionIdentityMakesRetryAndDeletionSafe() throws Exception {
+        String sankalpaId = declare();
+        mvc.perform(post("/api/v1/sankalpas/{id}/begin", sankalpaId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"effectiveAt\":\"2026-06-01T00:00:00\"}"))
+                .andExpect(status().isOk());
+        String sessionId = "44444444-4444-4444-4444-444444444444";
+        String body = "{\"occurredAt\":\"2026-06-01T08:00:00\"}";
+
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(sessionId));
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/sankalpas/{id}/sessions/{sessionId}", sankalpaId, sessionId))
+                .andExpect(status().isNoContent());
+        mvc.perform(delete("/api/v1/sankalpas/{id}/sessions/{sessionId}", sankalpaId, sessionId))
+                .andExpect(status().isNoContent());
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.code").value("SESSION_DELETED"));
+        mvc.perform(get("/api/v1/sankalpas/{id}/sessions", sankalpaId))
+                .andExpect(jsonPath("$.totalElements").value(0));
+        mvc.perform(get("/api/v1/sankalpas/{id}/period-outcomes", sankalpaId)
+                        .queryParam("from", "2026-06-01").queryParam("until", "2026-06-01"))
+                .andExpect(jsonPath("$[0].performed").value(0))
+                .andExpect(jsonPath("$[0].missed").value(2));
+    }
+
+    @Test
+    void sessionIdentityRejectsMalformedMismatchedAndChangedCommands() throws Exception {
+        String sankalpaId = declare();
+        mvc.perform(post("/api/v1/sankalpas/{id}/begin", sankalpaId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"effectiveAt\":\"2026-06-01T00:00:00\"}"))
+                .andExpect(status().isOk());
+        String sessionId = "66666666-6666-6666-6666-666666666666";
+        String otherId = "77777777-7777-7777-7777-777777777777";
+
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", "not-a-uuid")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"occurredAt\":\"2026-06-01T08:00:00\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"id\":\"" + otherId
+                                + "\",\"occurredAt\":\"2026-06-01T08:00:00\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"occurredAt\":\"2026-06-01T08:00:00\"}"))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"occurredAt\":\"2026-06-01T09:00:00\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SESSION_IDENTITY_CONFLICT"));
+        mvc.perform(get("/api/v1/sankalpas/{id}/sessions", sankalpaId))
+                .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    void deleteBeforeCreateWinsAndIdentityCannotCrossParents() throws Exception {
+        String first = declare();
+        String second = declare();
+        String sessionId = "55555555-5555-5555-5555-555555555555";
+
+        mvc.perform(delete("/api/v1/sankalpas/{id}/sessions/{sessionId}", first, sessionId))
+                .andExpect(status().isNoContent());
+        mvc.perform(delete("/api/v1/sankalpas/{id}/sessions/{sessionId}", second, sessionId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SESSION_IDENTITY_CONFLICT"));
     }
 
     @Test

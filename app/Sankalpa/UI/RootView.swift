@@ -46,21 +46,37 @@ struct RootView: View {
         } message: { message in
             Text(message)
         }
+        .alert(
+            "A session was just logged. Log another?",
+            isPresented: Binding(
+                get: { model.repeatLogRequest != nil },
+                set: { if !$0 { model.cancelRapidRepeat() } }
+            )
+        ) {
+            Button("Confirm another session") { model.confirmRapidRepeat() }
+            Button("Cancel", role: .cancel) { model.cancelRapidRepeat() }
+        }
         .safeAreaInset(edge: .top) {
             // Saying the practice may be behind matters more than it looks: without it, a session
             // logged offline and a session the service has taken are indistinguishable, and the
             // user has no way to know whether their practice is actually recorded anywhere but
             // this phone.
-            if model.isShowingCachedPractice || model.pendingSessionCount > 0 {
+            if model.isShowingCachedPractice || model.pendingSessionCount > 0
+                || model.pendingDeletionCount > 0 {
                 OfflineNotice(
                     isCached: model.isShowingCachedPractice,
-                    pendingCount: model.pendingSessionCount
+                    pendingCount: model.pendingSessionCount,
+                    deletionCount: model.pendingDeletionCount
                 )
             }
         }
         .overlay(alignment: .top) {
             if let confirmation = model.confirmation {
-                ConfirmationBanner(text: confirmation)
+                ConfirmationBanner(
+                    text: confirmation,
+                    canUndo: model.undoReceipt != nil,
+                    undo: model.undoLastSession
+                )
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .task(id: model.confirmationToken) {
                     // Long enough to notice, short enough not to linger.
@@ -134,16 +150,19 @@ struct RootView: View {
 private struct OfflineNotice: View {
     let isCached: Bool
     let pendingCount: Int
+    let deletionCount: Int
 
     private var text: String {
-        switch (isCached, pendingCount) {
-        case (_, let waiting) where waiting > 0 && isCached:
-            return "Showing this phone's copy · \(waiting) session\(waiting == 1 ? "" : "s") waiting to be sent"
-        case (false, let waiting) where waiting > 0:
-            return "\(waiting) session\(waiting == 1 ? "" : "s") waiting to be sent"
-        default:
-            return "Showing this phone's copy — the service could not be reached"
+        var parts: [String] = []
+        if isCached { parts.append("Showing this phone's copy") }
+        if pendingCount > 0 {
+            parts.append("\(pendingCount) session\(pendingCount == 1 ? "" : "s") waiting to be sent")
         }
+        if deletionCount > 0 {
+            parts.append("\(deletionCount) deletion\(deletionCount == 1 ? "" : "s") waiting to sync")
+        }
+        if parts.isEmpty { return "The service could not be reached" }
+        return parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -165,16 +184,22 @@ private struct OfflineNotice: View {
 
 /// Non-disruptive success feedback, paired with a haptic at the call site.
 ///
-/// It used to carry an Undo for a session just logged. The service has no way to remove a logged
-/// session — deleting one is deliberately outside the requirements — so offering to take it back
-/// would be a promise the app cannot keep.
+/// The optional Undo is present only for the most recently logged session and shares this banner's
+/// four-second lifetime.
 private struct ConfirmationBanner: View {
     let text: String
+    let canUndo: Bool
+    let undo: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             Label(text, systemImage: "checkmark.circle.fill")
                 .font(.subheadline.weight(.semibold))
+            if canUndo {
+                Button("Undo", action: undo)
+                    .font(.subheadline.weight(.bold))
+                    .buttonStyle(.plain)
+            }
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 16)

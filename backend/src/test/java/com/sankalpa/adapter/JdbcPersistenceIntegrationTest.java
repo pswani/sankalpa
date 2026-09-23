@@ -29,8 +29,24 @@ class JdbcPersistenceIntegrationTest {
     @BeforeEach
     void clean() {
         jdbc.update("DELETE FROM practice_session");
+        jdbc.update("DELETE FROM session_deletion_tombstone");
         jdbc.update("DELETE FROM sankalpa_lifecycle_transition");
         jdbc.update("DELETE FROM sankalpa");
+    }
+
+    @Test
+    void roundTripsDeletionTombstones() {
+        LocalDate start = LocalDate.of(2026, 3, 1);
+        LocalDateTime now = start.atTime(12, 0);
+        Sankalpa sankalpa = Sankalpa.declare(SankalpaId.newId(), new Title("Walk"),
+                new Description(""), ActionType.PHYSICAL_ACTIVITY,
+                new Commitment(start, PeriodUnit.DAY, 1, null), now, start);
+        adapter.save(sankalpa);
+        SessionId sessionId = SessionId.newId();
+
+        adapter.recordDeletion(sessionId, sankalpa.id());
+
+        assertThat(adapter.findDeletionOwner(sessionId)).contains(sankalpa.id());
     }
 
     @Test

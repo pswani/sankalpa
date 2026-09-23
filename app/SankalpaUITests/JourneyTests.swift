@@ -68,6 +68,49 @@ final class JourneyTests: UITestCase {
         capture("31-after-logging")
     }
 
+    /// A quick second tap is ambiguous, while a confirmed second session is legitimate. Both
+    /// immediate Undo and later deletion must correct the exact session selected.
+    func testRepeatLoggingUndoAndPermanentDeletion() throws {
+        launch()
+        declareAndBegin(titled: "Reliability walk")
+
+        tap(app.buttons["Log a session"], "the first session could not be logged")
+        expect(text(containing: "1 of 1 sessions"), "the first session did not count")
+
+        tap(app.buttons["Log another"], "a second logging action could not be started")
+        expect(
+            app.staticTexts["A session was just logged. Log another?"],
+            "a rapid additional session did not require confirmation"
+        )
+        tap(app.buttons["Cancel"], "the rapid-repeat confirmation could not be cancelled")
+        expect(text(containing: "1 of 1 sessions"), "cancelling the repeat changed the count")
+
+        tap(app.buttons["Log another"], "the repeat action disappeared after cancellation")
+        tap(
+            app.buttons["Confirm another session"],
+            "the rapid-repeat confirmation could not be accepted"
+        )
+        expect(app.buttons["Undo"], "the confirmed second session was not reported as logged")
+        app.buttons["Undo"].tap()
+        expect(text(containing: "1 of 1 sessions"), "Undo did not remove the exact new session")
+
+        let allSessions = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'All ' AND label ENDSWITH ' sessions'")
+        ).firstMatch
+        tap(allSessions, "the remaining session could not be opened from history")
+        expect(app.cells.firstMatch, "session history did not contain the remaining session")
+        tap(
+            app.buttons["Delete this session"],
+            "the history row did not offer permanent deletion"
+        )
+        expect(
+            app.staticTexts["Permanently delete this session?"],
+            "permanent deletion did not require confirmation"
+        )
+        tap(app.buttons["Delete session"], "the deletion could not be confirmed")
+        expect(app.staticTexts["No sessions yet"], "the deleted session remained in history")
+    }
+
     /// Declare is refused without a title (S1). The form disables it rather than accepting the
     /// tap and answering with an alert, so the refusal has to be visible before it is attempted.
     func testDeclareIsRefusedUntilThereIsATitle() throws {

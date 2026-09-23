@@ -108,9 +108,13 @@ struct PeriodOutcomeRow: View {
 struct SessionHistoryView: View {
     @Environment(AppModel.self) private var model
     let summary: SankalpaSummary
+    @State private var sessionToDelete: Session?
 
     private var grouped: [(day: CalendarDay, sessions: [Session])] {
-        let sessions = model.recentSessions(summary.id, days: AppModel.historyDays)
+        // The session repository is a synchronous snapshot rather than observable state. Reading
+        // the model's revision makes accepted and pending deletions invalidate this query.
+        _ = model.revision
+        let sessions = model.sessionHistory(summary.id)
         return Dictionary(grouping: sessions, by: { $0.occurredAt.day })
             .map { (day: $0.key, sessions: $0.value.sorted { $0.occurredAt > $1.occurredAt }) }
             .sorted { $0.day > $1.day }
@@ -129,7 +133,30 @@ struct SessionHistoryView: View {
                     ForEach(grouped, id: \.day) { group in
                         Section(AppTime.relativeDayText(group.day, today: model.today)) {
                             ForEach(group.sessions) { session in
-                                SessionRow(session: session, today: model.today, showsDate: false)
+                                HStack(spacing: 8) {
+                                    SessionRow(
+                                        session: session, today: model.today, showsDate: false
+                                    )
+                                    Button {
+                                        sessionToDelete = session
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .frame(width: 44, height: 44)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .foregroundStyle(.red)
+                                    .accessibilityLabel("Delete this session")
+                                }
+                                .accessibilityAction(named: "Delete session") {
+                                    sessionToDelete = session
+                                }
+                            }
+                            .onDelete { offsets in
+                                sessionToDelete = offsets.compactMap { index in
+                                    group.sessions.indices.contains(index)
+                                        ? group.sessions[index]
+                                        : nil
+                                }.first
                             }
                         }
                     }
@@ -138,6 +165,24 @@ struct SessionHistoryView: View {
         }
         .navigationTitle("Sessions")
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+            "Permanently delete this session?",
+            isPresented: Binding(
+                get: { sessionToDelete != nil },
+                set: { if !$0 { sessionToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete session", role: .destructive) {
+                if let sessionToDelete { model.deleteSession(sessionToDelete) }
+                sessionToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { sessionToDelete = nil }
+        } message: {
+            if let sessionToDelete {
+                Text("The session on \(sessionToDelete.occurredAt.day.longDisplayText) at \(AppTime.timeText(sessionToDelete.occurredAt)) will be removed from history and from period and lifetime totals.")
+            }
+        }
     }
 }
 

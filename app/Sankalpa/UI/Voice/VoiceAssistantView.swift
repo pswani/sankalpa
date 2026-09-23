@@ -130,9 +130,17 @@ struct VoiceAssistantView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(assistant.isWorking)
+            case .listening where assistant.isWorking:
+                ProgressView("Finishing transcription…")
+                    .controlSize(.large)
             case .executing:
                 ProgressView().controlSize(.large)
             case .result:
+                if assistant.undoReceipt != nil {
+                    Button("Undo session") { Task { await assistant.undoSession() } }
+                        .buttonStyle(AnyButtonStyle(.quiet))
+                        .disabled(assistant.isWorking)
+                }
                 Button("Done") { dismiss() }
                     .buttonStyle(PrimaryButtonStyle())
             default:

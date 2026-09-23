@@ -240,16 +240,22 @@ private struct TodayCard: View {
             let satisfied = summary.currentPeriod?.isSatisfied ?? false
             HStack(spacing: 8) {
                 Button {
-                    Task { _ = await model.logSession(summary.id, occurredAt: model.now()) }
+                    Task {
+                        _ = await model.logSession(
+                            summary.id, occurredAt: model.now(), reportsRefusal: true
+                        )
+                    }
                 } label: {
                     Label(
-                        satisfied ? "Log another" : "Log a session",
+                        model.isLogging(summary.id)
+                            ? "Logging…"
+                            : (satisfied ? "Log another" : "Log a session"),
                         systemImage: "checkmark.circle.fill"
                     )
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(satisfied ? AnyButtonStyle(.quiet) : AnyButtonStyle(.primary))
-                .disabled(summary.currentPeriod == nil)
+                .disabled(summary.currentPeriod == nil || model.isLogging(summary.id))
 
                 Button(action: onLogAtTime) {
                     Image(systemName: "clock.arrow.circlepath")

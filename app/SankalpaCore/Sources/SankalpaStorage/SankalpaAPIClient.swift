@@ -110,10 +110,16 @@ public struct SankalpaAPIClient: Sendable {
         try await send(
             "POST", "/api/v1/sankalpas/\(id.value.uuidString)/sessions",
             body: API.LogSessionRequest(
-                id: sessionID.value,
                 occurredAt: WireFormat.text(occurredAt)
             ),
+            headers: ["Idempotency-Key": sessionID.value.uuidString],
             as: API.SessionResponse.self
+        )
+    }
+
+    func deleteSession(_ id: SankalpaId, sessionID: SessionId) async throws {
+        try await sendWithoutResponse(
+            "DELETE", "/api/v1/sankalpas/\(id.value.uuidString)/sessions/\(sessionID.value.uuidString)"
         )
     }
 
@@ -149,6 +155,7 @@ public struct SankalpaAPIClient: Sendable {
         _ method: String,
         _ path: String,
         body: Body?,
+        headers: [String: String] = [:],
         as type: Response.Type
     ) async throws -> Response {
         guard let url = URL(string: path, relativeTo: baseURL) else {
@@ -157,6 +164,7 @@ public struct SankalpaAPIClient: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             do {
@@ -185,6 +193,27 @@ public struct SankalpaAPIClient: Sendable {
             throw APIFailure.unreachable(
                 "The service sent a response this version of the app could not read."
             )
+        }
+    }
+
+    private func sendWithoutResponse(_ method: String, _ path: String) async throws {
+        guard let url = URL(string: path, relativeTo: baseURL) else {
+            throw APIFailure.unreachable("The service address is not usable.")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let data: Data
+        let response: HTTPURLResponse
+        do {
+            (data, response) = try await transport.send(request)
+        } catch let failure as APIFailure {
+            throw failure
+        } catch {
+            throw APIFailure.unreachable(Self.connectionMessage(for: error))
+        }
+        guard (200...299).contains(response.statusCode) else {
+            throw refusal(from: data, status: response.statusCode)
         }
     }
 

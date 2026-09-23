@@ -24,7 +24,8 @@ import java.util.stream.Collectors;
 public class ApiExceptionHandler {
     private static final Set<String> REQUEST_ERROR_CODES = Set.of(
             "INVALID_DATE_RANGE", "INVALID_PAGINATION", "PERIOD_RANGE_TOO_LARGE");
-    private static final Set<String> CONFLICT_ERROR_CODES = Set.of("IDEMPOTENCY_CONFLICT");
+    private static final Set<String> CONFLICT_ERROR_CODES = Set.of(
+            "IDEMPOTENCY_CONFLICT", "SESSION_IDENTITY_CONFLICT");
 
     @ExceptionHandler(NotFoundException.class)
     ResponseEntity<ProblemDetail> notFound(NotFoundException exception) {
@@ -36,6 +37,7 @@ public class ApiExceptionHandler {
         HttpStatus status;
         if (REQUEST_ERROR_CODES.contains(exception.code())) status = HttpStatus.BAD_REQUEST;
         else if (CONFLICT_ERROR_CODES.contains(exception.code())) status = HttpStatus.CONFLICT;
+        else if (exception.code().equals("SESSION_DELETED")) status = HttpStatus.GONE;
         else status = HttpStatus.UNPROCESSABLE_ENTITY;
         return problem(status, exception.code(), exception.getMessage(), null);
     }

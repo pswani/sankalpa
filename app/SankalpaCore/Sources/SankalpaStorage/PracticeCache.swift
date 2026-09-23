@@ -36,6 +36,58 @@ public struct PendingSession: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+public struct RecentSessionLog: Codable, Hashable, Sendable {
+    public let sessionId: SessionId
+    public let sankalpaId: SankalpaId
+    public let completedAt: Date
+
+    public init(sessionId: SessionId, sankalpaId: SankalpaId, completedAt: Date) {
+        self.sessionId = sessionId
+        self.sankalpaId = sankalpaId
+        self.completedAt = completedAt
+    }
+}
+
+public struct PendingSessionDeletion: Codable, Hashable, Sendable, Identifiable {
+    public let id: SessionId
+    public let sankalpaId: SankalpaId
+    public let requestedAt: Date
+    public let subtractsServerCount: Bool
+    public let suppressedRecentLog: RecentSessionLog?
+
+    public init(
+        id: SessionId,
+        sankalpaId: SankalpaId,
+        requestedAt: Date,
+        subtractsServerCount: Bool,
+        suppressedRecentLog: RecentSessionLog?
+    ) {
+        self.id = id
+        self.sankalpaId = sankalpaId
+        self.requestedAt = requestedAt
+        self.subtractsServerCount = subtractsServerCount
+        self.suppressedRecentLog = suppressedRecentLog
+    }
+}
+
+public struct PendingSessionOperations: Codable, Hashable, Sendable {
+    public static let currentSchemaVersion = 2
+    public var schemaVersion = currentSchemaVersion
+    public var creates: [PendingSession]
+    public var deletions: [PendingSessionDeletion]
+    public var recentLogs: [RecentSessionLog]
+
+    public init(
+        creates: [PendingSession] = [],
+        deletions: [PendingSessionDeletion] = [],
+        recentLogs: [RecentSessionLog] = []
+    ) {
+        self.creates = creates
+        self.deletions = deletions
+        self.recentLogs = recentLogs
+    }
+}
+
 /// What the last successful refresh returned, kept so the app has something to show when the
 /// service cannot be reached.
 struct CachedPractice: Codable, Sendable {
@@ -45,8 +97,7 @@ struct CachedPractice: Codable, Sendable {
     var serviceLocation: String
     var sankalpas: [Sankalpa]
     var sessions: [Session]
-    /// Lifetime counts as the service reported them, which can exceed the sessions held here
-    /// because session history is read a bounded number of pages deep.
+    /// Lifetime counts as the service reported them.
     var counts: [String: Int]
 }
 
@@ -55,10 +106,11 @@ struct CachedPractice: Codable, Sendable {
 /// The **cache** is a copy of what the service said last time. Losing it costs a round trip and
 /// nothing else, so a cache that cannot be read is simply discarded.
 ///
-/// The **outbox** is the opposite: it holds sessions that exist nowhere else until the service
-/// takes them. Losing it loses someone's practice, so a file that cannot be read is renamed and
-/// kept rather than written over — the same answer the app has always given to bytes it cannot
-/// parse, and the reason the two are separate files at all. A corrupt cache must not be able to
+/// The **operation file** is the opposite: it holds pending creates, pending deletions, and the
+/// short repeat-confirmation guard. Losing it can reverse an acknowledged action, so a file that
+/// cannot be read is renamed and kept rather than written over — the same answer the app has
+/// always given to bytes it cannot parse, and the reason the two are separate files at all. A
+/// corrupt cache must not be able to
 /// take the outbox with it.
 public final class PracticeCache {
     private let directory: URL
@@ -100,38 +152,60 @@ public final class PracticeCache {
         return cached
     }
 
-    func saveCache(_ practice: CachedPractice) {
-        guard let data = try? JSONEncoder().encode(practice) else { return }
+    @discardableResult
+    func saveCache(_ practice: CachedPractice) -> Bool {
+        guard let data = try? JSONEncoder().encode(practice) else { return false }
         // A cache that cannot be written is not worth telling anyone about: the app has the data
         // in memory, and the only cost is a round trip after the next launch.
-        try? writer(data, cacheURL)
+        do {
+            try writer(data, cacheURL)
+            return true
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Outbox
 
-    public func loadOutbox() -> [PendingSession] {
-        guard FileManager.default.fileExists(atPath: outboxURL.path) else { return [] }
-        guard let data = try? Data(contentsOf: outboxURL),
-              let pending = try? JSONDecoder().decode([PendingSession].self, from: data)
-        else {
-            setAsideUnreadableOutbox()
-            return []
+    public func loadOperations() -> PendingSessionOperations {
+        guard FileManager.default.fileExists(atPath: outboxURL.path) else {
+            return PendingSessionOperations()
         }
-        return pending
+        guard let data = try? Data(contentsOf: outboxURL) else {
+            setAsideUnreadableOutbox()
+            return PendingSessionOperations()
+        }
+        let decoder = JSONDecoder()
+        if let operations = try? decoder.decode(PendingSessionOperations.self, from: data),
+           operations.schemaVersion == PendingSessionOperations.currentSchemaVersion {
+            return operations
+        }
+        if let legacy = try? decoder.decode([PendingSession].self, from: data) {
+            return PendingSessionOperations(creates: legacy)
+        }
+        setAsideUnreadableOutbox()
+        return PendingSessionOperations()
     }
+
+    public func loadOutbox() -> [PendingSession] { loadOperations().creates }
 
     /// Returns whether the outbox reached the disk. A caller that has just accepted a session
     /// offline needs to know: reporting it as logged when it is only in memory would lose it on
     /// the next launch, which is the one thing this file exists to prevent.
     @discardableResult
-    func saveOutbox(_ pending: [PendingSession]) -> Bool {
-        guard let data = try? JSONEncoder().encode(pending) else { return false }
+    public func saveOperations(_ operations: PendingSessionOperations) -> Bool {
+        guard let data = try? JSONEncoder().encode(operations) else { return false }
         do {
             try writer(data, outboxURL)
             return true
         } catch {
             return false
         }
+    }
+
+    @discardableResult
+    func saveOutbox(_ pending: [PendingSession]) -> Bool {
+        saveOperations(PendingSessionOperations(creates: pending))
     }
 
     /// Renames a damaged outbox instead of deleting it, and says so. Starting fresh is what keeps
@@ -141,9 +215,9 @@ public final class PracticeCache {
         let destination = directory.appendingPathComponent("sankalpa-outbox-damaged-\(stamp).json")
         try? FileManager.default.moveItem(at: outboxURL, to: destination)
         outboxProblem = """
-            Some sessions were waiting to reach the Sankalpa service and could not be read. \
+            Some session changes were waiting to reach the Sankalpa service and could not be read. \
             They have been kept in a file named sankalpa-outbox-damaged-\(stamp).json rather than \
-            deleted, and logging has started again from empty.
+            deleted, and pending session changes have started again from empty.
             """
     }
 

@@ -1,6 +1,7 @@
 package com.sankalpa.adapter.in.web;
 
 import com.sankalpa.application.SankalpaUseCases;
+import com.sankalpa.application.SessionLogResult;
 import com.sankalpa.domain.SankalpaId;
 import com.sankalpa.domain.SessionId;
 import io.swagger.v3.oas.annotations.Operation;
@@ -139,6 +140,7 @@ public class SankalpaController {
             description = "occurredAt is interpreted in the configured application timezone. The response body identifies the created session.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Session logged"),
+            @ApiResponse(responseCode = "200", description = "Previously accepted session returned"),
             @ApiResponse(responseCode = "400", description = "Malformed request",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class))),
@@ -148,18 +150,54 @@ public class SankalpaController {
             @ApiResponse(responseCode = "409", description = "Concurrent modification or client-id conflict",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class))),
+            @ApiResponse(responseCode = "410", description = "Session was permanently deleted",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class))),
             @ApiResponse(responseCode = "422", description = "Session is not loggable",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class)))
     })
     public ResponseEntity<SessionResponse> logSession(@PathVariable String id,
+                                                       @RequestHeader(name = "Idempotency-Key", required = false)
+                                                       String idempotencyKey,
                                                        @Valid @RequestBody LogSessionRequest request) {
-        SessionResponse response = SessionResponse.from(
-                service.logSession(
-                        SankalpaId.parse(id),
-                        request.id() == null ? SessionId.newId() : new SessionId(request.id()),
-                        request.occurredAt()));
-        return ResponseEntity.status(201).body(response);
+        SessionId sessionId = sessionId(idempotencyKey, request);
+        SessionLogResult result = service.logSessionResult(
+                SankalpaId.parse(id), sessionId, request.occurredAt());
+        return ResponseEntity.status(result.created() ? 201 : 200)
+                .body(SessionResponse.from(result.session()));
+    }
+
+    @DeleteMapping("/{id}/sessions/{sessionId}")
+    @Operation(summary = "Permanently delete a session",
+            description = "Deletion is idempotent and prevents a delayed create with the same session identity.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Session absent and protected from recreation"),
+            @ApiResponse(responseCode = "400", description = "Malformed id",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Sankalpa not found",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class))),
+            @ApiResponse(responseCode = "409", description = "Session identity belongs to another sankalpa",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class)))
+    })
+    public ResponseEntity<Void> deleteSession(
+            @PathVariable String id, @PathVariable String sessionId) {
+        service.deleteSession(SankalpaId.parse(id), SessionId.parse(sessionId));
+        return ResponseEntity.noContent().build();
+    }
+
+    private SessionId sessionId(String idempotencyKey, LogSessionRequest request) {
+        SessionId headerId = idempotencyKey == null ? null : SessionId.parse(idempotencyKey);
+        SessionId bodyId = request.id() == null ? null : new SessionId(request.id());
+        if (headerId != null && bodyId != null && !headerId.equals(bodyId)) {
+            throw new IllegalArgumentException("Idempotency-Key and request id must match");
+        }
+        if (headerId != null) return headerId;
+        if (bodyId != null) return bodyId;
+        return SessionId.newId();
     }
 
     @GetMapping("/{id}/sessions")

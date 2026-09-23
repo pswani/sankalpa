@@ -10,7 +10,7 @@ public actor AppleSpeechTranscriber: VoiceTranscribing {
     private var resultTask: Task<Void, Never>?
     private var analysisTask: Task<Void, Never>?
     private var continuation: AsyncThrowingStream<VoiceTranscriptUpdate, Error>.Continuation?
-    private var finalText = ""
+    private var transcript = VoiceTranscriptAccumulator()
 
     public init() {}
 
@@ -40,7 +40,7 @@ public actor AppleSpeechTranscriber: VoiceTranscribing {
         self.analyzer = analyzer
         self.provider = provider
         self.continuation = pair.continuation
-        self.finalText = ""
+        self.transcript = VoiceTranscriptAccumulator()
 
         resultTask = Task { [weak self] in
             do {
@@ -66,9 +66,15 @@ public actor AppleSpeechTranscriber: VoiceTranscribing {
     public func finish() async throws -> String {
         guard let analyzer else { throw VoiceTranscriptionError.noFinalTranscript }
         provider?.captureSession.stopRunning()
-        try await analyzer.finalizeAndFinishThroughEndOfInput()
+
+        // CaptureInputSequenceProvider owns an open-ended input sequence. Stopping its capture
+        // session stops new buffers, but does not guarantee that the sequence terminates.
+        // finalizeAndFinishThroughEndOfInput() would therefore be allowed to wait forever.
+        // Finalize everything the analyzer has consumed, then explicitly finish the session so
+        // the module result stream terminates.
+        try await finishVoiceAnalysis(AppleSpeechAnalysisFinisher(analyzer: analyzer))
         await resultTask?.value
-        let text = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = transcript.text
         releasePipeline()
         guard !text.isEmpty else { throw VoiceTranscriptionError.noFinalTranscript }
         return text
@@ -84,8 +90,8 @@ public actor AppleSpeechTranscriber: VoiceTranscribing {
     }
 
     private func received(text: String, isFinal: Bool) {
-        if isFinal { finalText = text }
-        continuation?.yield(VoiceTranscriptUpdate(text: text, isFinal: isFinal))
+        let combined = transcript.receive(text, isFinal: isFinal)
+        continuation?.yield(VoiceTranscriptUpdate(text: combined, isFinal: isFinal))
     }
 
     private func failed(_ error: Error) {
@@ -100,5 +106,18 @@ public actor AppleSpeechTranscriber: VoiceTranscribing {
         analysisTask = nil
         provider = nil
         analyzer = nil
+    }
+}
+
+@available(iOS 27.0, macOS 27.0, *)
+private struct AppleSpeechAnalysisFinisher: VoiceAnalysisFinishing {
+    let analyzer: SpeechAnalyzer
+
+    func finalizeConsumedAudio() async throws {
+        try await analyzer.finalize(through: nil)
+    }
+
+    func finishImmediately() async {
+        await analyzer.cancelAndFinishNow()
     }
 }

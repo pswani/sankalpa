@@ -73,7 +73,7 @@ app/
       Speech/            In-memory SpeechAnalyzer capture and readiness checks
       Persistence/       One atomic, versioned declaration draft
       Gateway/           Narrow app command boundary and explicit result dispositions
-    Tests/               90 core tests + 67 adapter tests + 23 voice tests
+    Tests/               90 core tests + 76 adapter tests + 32 voice tests
   Sankalpa/              The iOS app
     UI/                  SwiftUI screens and the design system — the driving side
   SankalpaUITests/       Journeys through the app, and a tour that captures every screen

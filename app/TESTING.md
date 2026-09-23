@@ -23,7 +23,7 @@ first. It needs Maven and a working `backend/` checkout for that.
 
 | Suite | What it covers | Where it runs |
 |---|---|---|
-| Core | The domain rules, application service, service adapter, and deterministic voice layer — including reducer transitions, title resolution, draft durability, and accepted-versus-pending results. Network behavior uses a stub transport; voice tests inject interpreted turns | macOS toolchain, no simulator |
+| Core | The domain rules, application service, service adapter, and deterministic voice layer — including reducer transitions, title resolution, transcript accumulation, draft durability, and accepted-versus-pending results. Network behavior uses a stub transport; voice tests inject interpreted turns | macOS toolchain, no simulator |
 | UI | The journeys a person takes, the screens they see, and the states that are hard to reach by hand | iPhone simulator |
 | Release | That the app still compiles with every debug-only test hook removed | Unsigned, generic iOS device |
 

@@ -31,10 +31,14 @@ public interface SankalpaUseCases {
     Sankalpa resume(SankalpaId id);
     Sankalpa complete(SankalpaId id, CompletionOutcome outcome);
     Sankalpa stop(SankalpaId id);
-    Session logSession(SankalpaId id, SessionId sessionId, LocalDateTime occurredAt);
+    SessionLogResult logSessionResult(SankalpaId id, SessionId sessionId, LocalDateTime occurredAt);
+    default Session logSession(SankalpaId id, SessionId sessionId, LocalDateTime occurredAt) {
+        return logSessionResult(id, sessionId, occurredAt).session();
+    }
     default Session logSession(SankalpaId id, LocalDateTime occurredAt) {
         return logSession(id, SessionId.newId(), occurredAt);
     }
+    void deleteSession(SankalpaId id, SessionId sessionId);
     PageResult<Session> sessions(SankalpaId id, LocalDate from, LocalDate until, int page, int size);
     List<LifecycleTransition> lifecycleHistory(SankalpaId id);
     List<PeriodOutcome> periodOutcomes(SankalpaId id, LocalDate from, LocalDate until);

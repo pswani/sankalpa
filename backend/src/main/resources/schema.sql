@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS practice_session (
     FOREIGN KEY (sankalpa_id) REFERENCES sankalpa(id) ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS session_deletion_tombstone (
+    session_id VARCHAR(36) PRIMARY KEY,
+    sankalpa_id VARCHAR(36) NOT NULL,
+    FOREIGN KEY (sankalpa_id) REFERENCES sankalpa(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_session_sankalpa_occurred
     ON practice_session(sankalpa_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_transition_sankalpa_effective

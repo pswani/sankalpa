@@ -90,8 +90,10 @@ enum ServerRefusal {
             return .storage(.unavailable(
                 "This sankalpa was changed somewhere else. Pull to refresh, then try again."
             ))
-        case "IDEMPOTENCY_CONFLICT":
+        case "IDEMPOTENCY_CONFLICT", "SESSION_IDENTITY_CONFLICT":
             return .conflict(detail)
+        case "SESSION_DELETED":
+            return .conflict("That session was already deleted and cannot be restored.")
         default:
             // A code this version does not know about. The service's own sentence is better than
             // a generic one, and it is the only thing that can explain an unfamiliar rule.

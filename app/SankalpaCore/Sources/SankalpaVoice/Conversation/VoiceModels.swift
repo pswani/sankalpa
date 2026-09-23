@@ -198,19 +198,22 @@ public struct VoiceSessionProposal: Equatable, Sendable {
     public let title: String
     public let occurredAt: CalendarMoment
     public let savedDraft: VoiceDeclarationDraft?
+    public let isRapidRepeat: Bool
 
     public init(
         id: ProposalID = ProposalID(),
         sankalpaID: SankalpaId,
         title: String,
         occurredAt: CalendarMoment,
-        savedDraft: VoiceDeclarationDraft? = nil
+        savedDraft: VoiceDeclarationDraft? = nil,
+        isRapidRepeat: Bool = false
     ) {
         self.id = id
         self.sankalpaID = sankalpaID
         self.title = title
         self.occurredAt = occurredAt
         self.savedDraft = savedDraft
+        self.isRapidRepeat = isRapidRepeat
     }
 }
 
