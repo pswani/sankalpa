@@ -1,8 +1,9 @@
-#!/usr/bin/env bash
-set -uo pipefail
+#!/bin/zsh
+emulate -LR zsh
+setopt no_unset pipe_fail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 LOG_DIR="$PROJECT_DIR/logs"
 RAW_LOG="$LOG_DIR/test-$RUN_ID.log"
@@ -11,10 +12,10 @@ SUMMARY="$LOG_DIR/test-$RUN_ID-summary.md"
 mkdir -p "$LOG_DIR"
 cd "$PROJECT_DIR"
 
-set +e
+unsetopt err_exit
 mvn -Dmaven.repo.local=.m2/repository clean verify 2>&1 | tee "$RAW_LOG"
-STATUS=${PIPESTATUS[0]}
-set -e
+STATUS=${pipestatus[1]}
+setopt err_exit
 
 RESULT_LINE="$(grep -E 'Tests run: [0-9]+, Failures:' "$RAW_LOG" | tail -1 || true)"
 FAILURE_LINES="$(grep -E '^\[ERROR\]|<<< FAILURE|<<< ERROR' "$RAW_LOG" | tail -80 || true)"
