@@ -21,7 +21,7 @@ classDiagram
     +resume(now)
     +complete(outcome, now)
     +stop(now)
-    +logSession(occurredAt, now) Session
+    +logSession(sessionId, occurredAt, now) Session
     +state() LifecycleState
     +endDate() Optional~LocalDate~
   }
@@ -98,8 +98,10 @@ public final class Sankalpa {
 }
 ```
 
-There are no edit or delete methods yet because the requirements do not include edit/delete use
-cases.
+There is no session edit method. Permanent deletion is an application operation over a separate
+session fact, so it does not belong on the `Sankalpa` aggregate. The application first verifies the
+session identity's owner, then the persistence transaction removes the fact and reserves the
+identity as deleted.
 
 ## Aggregate/Record: Session
 
@@ -116,6 +118,10 @@ A session records a past fact. It has no behavior beyond construction-time valid
 
 `Sankalpa.logSession(...)` creates sessions so the lifecycle and commitment rules stay with the
 object that knows them.
+
+Deletion physically removes this fact. A separate technical identity ledger retains only the ID,
+owner, and `DELETED` state so a delayed create cannot resurrect it. That ledger is application and
+persistence state, not a soft-deleted `Session` domain object.
 
 ## Value Object: Commitment
 
@@ -266,6 +272,10 @@ every query.
 | S14 | Only Begin may be backdated; all other transitions take effect when recorded. | `LifecycleTimeline` |
 | S15 | Reaching the end date does not automatically change lifecycle state. | `Sankalpa` / application behavior |
 | S16 | A terminal transition excludes the interrupted and later windows from evaluation. | `PeriodOutcomeCalculator` |
+| S17 | One logging identity can create at most one session; an exact retry returns it. | Application service plus session-identity ledger |
+| S18 | Different identities remain different sessions even at the same performed-at time. | `SessionId` identity; no value-based uniqueness rule |
+| S19 | A deleted identity can never become active again. | `DeleteSession` transaction plus identity ledger |
+| S20 | Deleted sessions contribute to no history, total, or open/closed period calculation. | Physical removal and active-session read ports |
 
 ## Domain Errors
 
@@ -283,7 +293,6 @@ Use domain errors for business refusals:
 - `SessionInFuture`
 - `SessionOutsideCommitment`
 - `SankalpaNotInProgressAtThatTime`
-- `SankalpaNotFound`
 - `InvalidCompletionOutcome`
 
 These errors do not know HTTP status codes. Controllers map them to transport responses.

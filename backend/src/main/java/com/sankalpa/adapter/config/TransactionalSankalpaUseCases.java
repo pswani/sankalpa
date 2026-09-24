@@ -2,10 +2,13 @@ package com.sankalpa.adapter.config;
 
 import com.sankalpa.application.SankalpaUseCases;
 import com.sankalpa.application.PageResult;
+import com.sankalpa.application.SessionIdentityClaimConflictException;
+import com.sankalpa.application.SessionLogResult;
 import com.sankalpa.domain.ActionType;
 import com.sankalpa.domain.Sankalpa;
 import com.sankalpa.domain.SankalpaId;
 import com.sankalpa.domain.Session;
+import com.sankalpa.domain.SessionId;
 import com.sankalpa.domain.commitment.PeriodOutcome;
 import com.sankalpa.domain.commitment.PeriodUnit;
 import com.sankalpa.domain.lifecycle.CompletionOutcome;
@@ -53,8 +56,15 @@ public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
         return writing(() -> delegate.complete(id, outcome));
     }
     @Override public Sankalpa stop(SankalpaId id) { return writing(() -> delegate.stop(id)); }
-    @Override public Session logSession(SankalpaId id, LocalDateTime occurredAt) {
-        return writing(() -> delegate.logSession(id, occurredAt));
+    @Override public SessionLogResult logSession(SankalpaId id, SessionId sessionId,
+                                                  LocalDateTime occurredAt) {
+        return identityWriting(() -> delegate.logSession(id, sessionId, occurredAt));
+    }
+    @Override public void deleteSession(SankalpaId id, SessionId sessionId) {
+        identityWriting(() -> {
+            delegate.deleteSession(id, sessionId);
+            return null;
+        });
     }
     @Override public PageResult<Session> sessions(SankalpaId id, LocalDate from, LocalDate until,
                                                    int page, int size) {
@@ -65,5 +75,13 @@ public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
     }
     @Override public List<PeriodOutcome> periodOutcomes(SankalpaId id, LocalDate from, LocalDate until) {
         return reading(() -> delegate.periodOutcomes(id, from, until));
+    }
+
+    private <T> T identityWriting(Supplier<T> action) {
+        try {
+            return writing(action);
+        } catch (SessionIdentityClaimConflictException conflict) {
+            return writing(action);
+        }
     }
 }

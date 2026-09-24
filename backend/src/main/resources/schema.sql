@@ -31,6 +31,25 @@ CREATE TABLE IF NOT EXISTS practice_session (
     FOREIGN KEY (sankalpa_id) REFERENCES sankalpa(id) ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS session_identity (
+    session_id VARCHAR(36) PRIMARY KEY,
+    sankalpa_id VARCHAR(36) NOT NULL,
+    identity_state VARCHAR(16) NOT NULL CHECK (identity_state IN ('ACTIVE', 'DELETED')),
+    FOREIGN KEY (sankalpa_id) REFERENCES sankalpa(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS service_metadata (
+    metadata_key VARCHAR(64) PRIMARY KEY,
+    metadata_value VARCHAR(255) NOT NULL
+);
+
+INSERT INTO session_identity (session_id, sankalpa_id, identity_state)
+SELECT p.id, p.sankalpa_id, 'ACTIVE'
+FROM practice_session p
+WHERE NOT EXISTS (
+    SELECT 1 FROM session_identity i WHERE i.session_id = p.id
+);
+
 CREATE INDEX IF NOT EXISTS idx_session_sankalpa_occurred
     ON practice_session(sankalpa_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_transition_sankalpa_effective

@@ -91,11 +91,13 @@ boolean canLog = lifecycle.wasInProgressAt(occurredAt);
 
 ## DD-8 — No Event Infrastructure Yet
 
-**Decision.** Do not implement `DomainEventPublisher`, event handlers, outbox, process manager, or
-integration events.
+**Decision.** Do not implement server `DomainEventPublisher`, event handlers, event outbox, process
+manager, or integration events. The iOS operation journal is permitted because it is the durable
+copy of unresolved user commands, not event publication infrastructure.
 
-**Why.** The current requirements have no asynchronous reaction and no external consumer. The audit
-requirement is satisfied by stored lifecycle history.
+**Why.** No server domain fact has an asynchronous consumer. Client retry is direct command
+delivery from its durable journal, not publication of domain events. The audit requirement remains
+satisfied by stored lifecycle history.
 
 **Trigger to revisit.** Add events when another feature actually consumes facts from this context.
 
@@ -121,9 +123,9 @@ not asked it to do.
 
 ---
 
-## DD-11 — Single User Means No Identity Model
+## DD-11 — Single User Means No User Identity Model
 
-**Decision.** Keep identity, account, and ownership concepts out of the current model.
+**Decision.** Keep user identity, account, and ownership concepts out of the current model.
 
 **Why.** The application is explicitly single-user. A singleton `User` or owner key would add no
 domain rule or isolation boundary.
@@ -202,3 +204,103 @@ before calculating outcomes.
 
 **Why.** An indefinite daily commitment can accumulate thousands of windows. A bounded query keeps
 work proportional to what the caller is displaying and avoids premature projection infrastructure.
+
+---
+
+## DD-18 — Session Identity Is The Retry Identity
+
+**Decision.** The client creates one `SessionId` for each confirmed logging action and every retry
+uses it as the idempotency key. The server preserves it as the session ID.
+
+**Why.** A server-generated identity cannot connect an uncertain request to its retry. Reusing
+performed-at as identity would merge legitimate same-time sessions.
+
+---
+
+## DD-19 — One Global Identity Ledger Orders Create And Delete
+
+**Decision.** Every session ID has one durable `ACTIVE` or `DELETED` row in a global identity
+ledger. Both create and delete claim that row within their write transaction.
+
+**Why.** Separate active and tombstone tables cannot prevent a cross-parent create/delete race from
+committing contradictory rows. One primary key gives all commands a common contention point.
+
+---
+
+## DD-20 — Deletion Removes The Fact But Retains Its Identity Guard
+
+**Decision.** Permanently delete the `Session` fact and retain only ID, owner, and `DELETED` state.
+
+**Why.** Active reads and derived outcomes then have one simple source, while the minimal identity
+guard prevents delayed creation. This is not soft deletion or a user-visible audit trail.
+
+---
+
+## DD-21 — Pending Client Operations Are Durable Overlays
+
+**Decision.** Persist unresolved create/delete operations before acknowledging them and overlay
+them on the last server snapshot. Bind them to their originating persistent service instance, not
+to a network address.
+
+**Why.** A memory-only operation is lost on relaunch; mutating the base snapshot directly makes
+rejection hard to reverse; retargeting an operation can corrupt another server.
+
+---
+
+## DD-22 — Server-Accepted State Reaches Cache Before Journal Removal
+
+**Decision.** Apply an accepted create/delete to the durable base snapshot before removing its
+pending operation.
+
+**Why.** The reverse order creates a crash window in which a confirmed create disappears or a
+confirmed deletion reappears. Leaving the operation briefly is safe because server commands are
+idempotent.
+
+---
+
+## DD-23 — Repeat Confirmation Is An Interaction Rule
+
+**Decision.** The client asks for confirmation when another action for the same sankalpa begins
+within 60 seconds of an accepted or durably pending log. Confirmation creates a fresh identity.
+
+**Why.** The rule prevents accidental duplicate taps without making time proximity a domain
+uniqueness rule. The server accepts intentional same-time sessions.
+
+---
+
+## DD-24 — The Client Negotiates Identity Support Before Writing
+
+**Decision.** The server advertises a versioned session-command-identity capability and a stable
+service instance ID stored with its data. The client sends identified creates/deletes only after
+that exact instance has advertised support, and every mutation names the expected instance for the
+server to validate before changing data.
+
+**Why.** An older server silently ignores the new identity and generates another one. Deployment
+instructions alone cannot prevent a new client from connecting to it and duplicating a timed-out
+request; capability negotiation plus per-command instance binding can.
+
+---
+
+## DD-25 — Journal Ambiguity Fails Closed
+
+**Decision.** Conflicting same-ID journal operations or legacy operations without a confirmed
+service instance block session mutation and delivery while preserving the original data. Recovery
+requires an explicit warned discard. Legacy entries are never matched by time or value because
+their destination and command identity cannot be established safely.
+
+**Why.** Guessing between create and delete can lose a legitimate session; silently starting over
+can lose an unresolved action; inferring a legacy destination can mutate the wrong service; and
+time equality alone cannot distinguish a lost response from an intentional same-time session.
+
+---
+
+## DD-26 — Async Results Are Applied Conditionally
+
+**Decision.** Every pending operation has an immutable revision. A response removes or rejects an
+operation only when that exact revision is still current. A refresh publishes only for its captured
+service binding and refresh-publication revision; starting a newer refresh or accepting a local
+session mutation invalidates the older publication.
+
+**Why.** Swift actors are reentrant across network awaits. Undo or service relocation can happen
+before an older response returns; unconditional completion would erase the newer decision or
+publish data from the wrong service.

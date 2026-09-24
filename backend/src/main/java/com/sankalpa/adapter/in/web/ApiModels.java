@@ -51,9 +51,15 @@ public final class ApiModels {
     public record CompleteRequest(
             @NotNull @Schema(example = "SUCCESSFUL") CompletionOutcome outcome) {}
     public record LogSessionRequest(
+            @Schema(example = "720de829-5075-4f0e-94fa-444f851af73e",
+                    types = {"string", "null"}, format = "uuid",
+                    description = "Stable client session identity; legacy clients may omit during rollout")
+            UUID id,
             @NotNull @Schema(example = "2026-06-01T08:00:00",
                     description = "Past occurrence time, interpreted in the configured application timezone")
             LocalDateTime occurredAt) {}
+
+    public record CapabilitiesResponse(int sessionCommandIdentity, UUID serviceInstanceId) {}
 
     public record SankalpaResponse(
             UUID id,

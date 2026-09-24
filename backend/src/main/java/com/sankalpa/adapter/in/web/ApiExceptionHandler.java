@@ -2,6 +2,9 @@ package com.sankalpa.adapter.in.web;
 
 import com.sankalpa.application.ConcurrentModificationException;
 import com.sankalpa.application.NotFoundException;
+import com.sankalpa.application.ServiceInstanceMismatchException;
+import com.sankalpa.application.SessionDeletedException;
+import com.sankalpa.application.SessionIdentityConflictException;
 import com.sankalpa.domain.DomainException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -40,6 +43,21 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ConcurrentModificationException.class)
     ResponseEntity<ProblemDetail> conflict(ConcurrentModificationException exception) {
         return problem(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION", exception.getMessage(), null);
+    }
+
+    @ExceptionHandler(SessionIdentityConflictException.class)
+    ResponseEntity<ProblemDetail> identityConflict(SessionIdentityConflictException exception) {
+        return problem(HttpStatus.CONFLICT, "SESSION_IDENTITY_CONFLICT", exception.getMessage(), null);
+    }
+
+    @ExceptionHandler(ServiceInstanceMismatchException.class)
+    ResponseEntity<ProblemDetail> serviceMismatch(ServiceInstanceMismatchException exception) {
+        return problem(HttpStatus.CONFLICT, "SERVICE_INSTANCE_MISMATCH", exception.getMessage(), null);
+    }
+
+    @ExceptionHandler(SessionDeletedException.class)
+    ResponseEntity<ProblemDetail> deleted(SessionDeletedException exception) {
+        return problem(HttpStatus.GONE, "SESSION_DELETED", exception.getMessage(), null);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -19,6 +19,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -38,6 +39,7 @@ class ApiContractTest {
     @BeforeEach
     void clean() {
         jdbc.update("DELETE FROM practice_session");
+        jdbc.update("DELETE FROM session_identity");
         jdbc.update("DELETE FROM sankalpa_lifecycle_transition");
         jdbc.update("DELETE FROM sankalpa");
     }
@@ -50,12 +52,14 @@ class ApiContractTest {
                 .andReturn().getResponse().getContentAsString();
         JsonNode paths = json.readTree(body).path("paths");
         assertThat(paths.has("/api/v1/sankalpas")).isTrue();
+        assertThat(paths.has("/api/v1/capabilities")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/begin")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/pause")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/resume")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/complete")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/stop")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/sessions")).isTrue();
+        assertThat(paths.has("/api/v1/sankalpas/{id}/sessions/{sessionId}")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/lifecycle-history")).isTrue();
         assertThat(paths.has("/api/v1/sankalpas/{id}/period-outcomes")).isTrue();
 
@@ -72,6 +76,18 @@ class ApiContractTest {
         assertThat(hasParameter(sessionGet, "page")).isTrue();
         assertThat(hasParameter(sessionGet, "size")).isTrue();
 
+        JsonNode sessionPost = paths.path("/api/v1/sankalpas/{id}/sessions").path("post");
+        assertThat(sessionPost.path("responses").has("200")).isTrue();
+        assertThat(sessionPost.path("responses").has("201")).isTrue();
+        assertThat(sessionPost.path("responses").has("410")).isTrue();
+        assertThat(hasParameter(sessionPost, "Idempotency-Key")).isTrue();
+        assertThat(hasParameter(sessionPost, "Sankalpa-Service-Instance")).isTrue();
+        JsonNode sessionDelete = paths.path("/api/v1/sankalpas/{id}/sessions/{sessionId}")
+                .path("delete");
+        assertThat(sessionDelete.path("responses").has("204")).isTrue();
+        assertThat(sessionDelete.path("responses").has("409")).isTrue();
+        assertThat(hasParameter(sessionDelete, "Sankalpa-Service-Instance")).isTrue();
+
         JsonNode declareResponses = paths.path("/api/v1/sankalpas").path("post").path("responses");
         assertThat(declareResponses.has("201")).isTrue();
         assertThat(declareResponses.has("400")).isTrue();
@@ -84,6 +100,9 @@ class ApiContractTest {
                 .path("type").toString()).contains("null");
         assertThat(schemas.path("LogSessionRequest").path("properties").path("occurredAt")
                 .path("description").asText()).contains("application timezone");
+        assertThat(schemas.path("LogSessionRequest").path("properties").has("id")).isTrue();
+        assertThat(schemas.path("CapabilitiesResponse").path("properties")
+                .has("serviceInstanceId")).isTrue();
         assertThat(schemas.path("DeclareRequest").path("properties").path("timesPerPeriod")
                 .path("maximum").asInt()).isEqualTo(99);
         assertThat(schemas.path("DeclareRequest").path("properties").path("periodCount")
@@ -142,6 +161,73 @@ class ApiContractTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].effectiveAt").value("2026-06-01T00:00:00"))
                 .andExpect(jsonPath("$[0].recordedAt").value("2026-06-15T12:00:00"));
+    }
+
+    @Test
+    void identifiedSessionCommandsReplayAndDeleteSafely() throws Exception {
+        String sankalpaId = declare();
+        mvc.perform(post("/api/v1/sankalpas/{id}/begin", sankalpaId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"effectiveAt\":\"2026-06-01T00:00:00\"}"))
+                .andExpect(status().isOk());
+        String capability = mvc.perform(get("/api/v1/capabilities"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessionCommandIdentity").value(1))
+                .andReturn().getResponse().getContentAsString();
+        String serviceId = json.readTree(capability).path("serviceInstanceId").asText();
+        String sessionId = UUID.randomUUID().toString();
+        String request = "{\"id\":\"" + sessionId
+                + "\",\"occurredAt\":\"2026-06-01T08:00:00\"}";
+
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .header("Sankalpa-Service-Instance", serviceId)
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(sessionId));
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .header("Sankalpa-Service-Instance", serviceId)
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(sessionId));
+
+        mvc.perform(delete("/api/v1/sankalpas/{id}/sessions/{sessionId}", sankalpaId, sessionId)
+                        .header("Sankalpa-Service-Instance", serviceId))
+                .andExpect(status().isNoContent());
+        mvc.perform(delete("/api/v1/sankalpas/{id}/sessions/{sessionId}", sankalpaId, sessionId)
+                        .header("Sankalpa-Service-Instance", serviceId))
+                .andExpect(status().isNoContent());
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .header("Sankalpa-Service-Instance", serviceId)
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.code").value("SESSION_DELETED"));
+    }
+
+    @Test
+    void identifiedCommandsRequireMatchingIdentityAndServiceInstance() throws Exception {
+        String sankalpaId = declare();
+        String sessionId = UUID.randomUUID().toString();
+        String otherId = UUID.randomUUID().toString();
+        String request = "{\"id\":\"" + sessionId
+                + "\",\"occurredAt\":\"2026-06-01T08:00:00\"}";
+
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", otherId)
+                        .header("Sankalpa-Service-Instance", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        mvc.perform(post("/api/v1/sankalpas/{id}/sessions", sankalpaId)
+                        .header("Idempotency-Key", sessionId)
+                        .header("Sankalpa-Service-Instance", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SERVICE_INSTANCE_MISMATCH"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM session_identity", Integer.class)).isZero();
     }
 
     @Test

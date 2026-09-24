@@ -4,6 +4,7 @@ import com.sankalpa.domain.ActionType;
 import com.sankalpa.domain.Sankalpa;
 import com.sankalpa.domain.SankalpaId;
 import com.sankalpa.domain.Session;
+import com.sankalpa.domain.SessionId;
 import com.sankalpa.domain.commitment.PeriodOutcome;
 import com.sankalpa.domain.commitment.PeriodUnit;
 import com.sankalpa.domain.lifecycle.CompletionOutcome;
@@ -23,7 +24,8 @@ public interface SankalpaUseCases {
     Sankalpa resume(SankalpaId id);
     Sankalpa complete(SankalpaId id, CompletionOutcome outcome);
     Sankalpa stop(SankalpaId id);
-    Session logSession(SankalpaId id, LocalDateTime occurredAt);
+    SessionLogResult logSession(SankalpaId id, SessionId sessionId, LocalDateTime occurredAt);
+    void deleteSession(SankalpaId id, SessionId sessionId);
     PageResult<Session> sessions(SankalpaId id, LocalDate from, LocalDate until, int page, int size);
     List<LifecycleTransition> lifecycleHistory(SankalpaId id);
     List<PeriodOutcome> periodOutcomes(SankalpaId id, LocalDate from, LocalDate until);

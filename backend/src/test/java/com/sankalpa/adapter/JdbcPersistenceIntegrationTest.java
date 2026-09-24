@@ -29,6 +29,7 @@ class JdbcPersistenceIntegrationTest {
     @BeforeEach
     void clean() {
         jdbc.update("DELETE FROM practice_session");
+        jdbc.update("DELETE FROM session_identity");
         jdbc.update("DELETE FROM sankalpa_lifecycle_transition");
         jdbc.update("DELETE FROM sankalpa");
     }

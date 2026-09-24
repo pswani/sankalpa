@@ -31,8 +31,7 @@ class UITestCase: XCTestCase {
     /// Where the service for this run lives, passed in by `scripts/uitest.sh`.
     ///
     /// There is deliberately no default. Falling back to the app's own address would point the
-    /// suite at whatever is running on this Mac — quite possibly a real practice, which these
-    /// tests would then declare into and which has no delete to undo it with. Worse, the run would
+    /// suite at whatever is running on this Mac — quite possibly a real practice. Worse, the run would
     /// report ordinary test failures rather than saying it was misconfigured, which is exactly how
     /// a whole run gets spent chasing the wrong thing.
     static func serviceURL(file: StaticString = #filePath, line: UInt = #line) -> String {

@@ -533,6 +533,26 @@ def main(run: Path) -> int:
     release = parse_release(run)
     screens = collect_screens(run)
 
+    # A requested suite can fail before it creates even an empty result file. Represent that as a
+    # zero-test suite so the existing did-not-run handling makes the report fail instead of silently
+    # omitting the suite and claiming that everything passed.
+    requested_suites = (
+        ("ran_core", "Core (domain, application, storage)", "core.log"),
+        ("ran_ui", "UI (simulator journeys)", "ui-build.log"),
+    )
+    present = {suite["name"] for suite in suites}
+    for flag, name, log_name in requested_suites:
+        if environment.get(flag) == "1" and name not in present:
+            missing = {"name": name, "tests": [], "log": log_name}
+            missing["counts"] = tally(missing)
+            suites.append(missing)
+    if environment.get("ran_release") == "1" and release is None:
+        release = {
+            "name": "Release build (generic iOS device, unsigned)",
+            "status": "failed",
+            "errors": ["The requested Release build produced no log."],
+        }
+
     # A suite that produced no tests at all did not pass — it failed to build or failed to
     # start, and saying "0 failures" about it would be the most misleading thing in the report.
     for suite in suites:

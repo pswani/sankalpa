@@ -41,6 +41,7 @@ flowchart TB
   subgraph APP["Application layer"]
     UC[Use cases]
     PORTS[Repository, read, and clock ports]
+    REL[Session identity decisions]
   end
 
   subgraph DOM["Domain layer"]
@@ -53,6 +54,7 @@ flowchart TB
 
   subgraph DRIVEN["Driven adapters"]
     DB[Persistence adapter]
+    LEDGER[Session identity ledger]
     READ[Read adapter]
     CLOCK[Clock adapter]
   end
@@ -62,10 +64,12 @@ flowchart TB
   UC --> S
   UC --> SE
   UC --> O
+  UC --> REL
   S --> C
   S --> L
   UC --> PORTS
   DB -.implements.-> PORTS
+  DB --> LEDGER
   READ -.implements.-> PORTS
   CLOCK -.implements.-> PORTS
 ```
@@ -77,6 +81,7 @@ Included because the requirements need it:
 - One bounded context: `Sankalpa`.
 - A `Sankalpa` aggregate for commitment and lifecycle rules.
 - A separate `Session` record/aggregate so session history can grow without bloating `Sankalpa`.
+- Stable session identities, replay-safe logging, and permanent session deletion.
 - Value objects only for values with rules: commitment, period unit/count, number of times, title,
   description, period windows, lifecycle timeline.
 - A period-outcome calculator because the result spans commitment, lifecycle, and sessions.
@@ -85,9 +90,11 @@ Included because the requirements need it:
 Deliberately not included yet:
 
 - Separate subdomains or bounded contexts.
-- Domain events, event dispatcher, outbox, process manager, command bus, or integration events.
+- Server domain events, event dispatcher, server outbox, process manager, command bus, or
+  integration events. The iOS durable operation journal is a client reliability mechanism, not a
+  server event outbox.
 - Identity/accounts, activity catalogue, reminders, notifications, streaks, scoring, social
-  features, edit/delete flows, or per-sankalpa time zones.
+  features, session editing, sankalpa edit/delete flows, or per-sankalpa time zones.
 - DDD specification objects where a method or named helper is clearer.
 
 ## Requirements Traceability
@@ -102,6 +109,13 @@ Deliberately not included yet:
 | More than the number of times still satisfies | `PeriodOutcomeCalculator` compares performed count with a minimum |
 | Performed session date/time | `Session` |
 | Log only past sessions within commitment coverage and while In progress | `Sankalpa.logSession`, `Commitment`, `LifecycleTimeline` |
+| One logging action records at most once across retries | Client-generated `SessionId` plus server session-identity ledger |
+| Rapid repeat requires confirmation but remains a legitimate session | Client interaction coordinator; each confirmed action receives a new `SessionId` |
+| Immediate Undo and permanent later deletion | `DeleteSession` using the exact session identity |
+| Deleted sessions change all history and outcome calculations | Physical session removal; every calculation reads active sessions only |
+| Pending create/delete remains durable and visible | iOS operation journal and snapshot overlay |
+| Pending refusal corrects state and informs the user | Durable reconciliation notice plus overlay removal |
+| Pending work never crosses service data stores | Capability negotiation plus persistent service instance identity |
 | Start date can be up to one year in the past | `Sankalpa.declare` |
 | No duration means tracked until stopped | `Commitment` plus terminal lifecycle state |
 | Lifecycle states and allowed transitions | `LifecycleState` transition table |
@@ -109,7 +123,7 @@ Deliberately not included yet:
 | Time spent Paused does not extend end date | `Commitment.endDate()` is derived, not stored |
 | End date does not automatically change lifecycle | `Commitment` and lifecycle remain independent |
 | Completion or stop excludes partial and later periods | `PeriodOutcomeCalculator` applies the terminal transition as a cutoff |
-| Single-user application | No identity or ownership model |
+| Single-user application | No user/account identity or ownership model |
 | Inclusive end date | `Commitment.endDate()` returns the last covered date |
 | Missed count is derived from performed sessions | `PeriodOutcomeCalculator` |
 | Pauses do not shift or prorate periods | `PeriodOutcomeCalculator` evaluates partial-pause windows normally and reports only fully paused windows as `PAUSED` |
@@ -118,4 +132,5 @@ Deliberately not included yet:
 | Lifecycle/session consistency | Session logging checks commitment coverage and lifecycle state at occurrence time |
 | Long-running outcome history | `GetPeriodOutcomes` and session reads are date-range bounded |
 
-Anything not in this table is either an implementation concern or an open question.
+The cross-system mechanics behind these rows are specified in
+[Session Reliability And Correction Design](../../design/session-reliability/README.md).

@@ -6,12 +6,8 @@ import XCTest
 /// that the app *does* what the screens offer. Each test builds whatever it needs through the
 /// interface, so nothing here depends on the demo content — and a first run, which is the state
 /// every real user starts in, is exercised on every test rather than only in the one that
-/// captures it.
-///
-/// "Empty" is the service being empty, not a file: `scripts/uitest.sh` gives this class its own
-/// backend with a fresh database. Several of these assert on an empty state, so a run against a
-/// service that already holds sankalpas will fail — which is the honest outcome, because the API
-/// has no delete and nothing here could put it back.
+/// captures it. "Empty" is the service being empty, not a file: `scripts/uitest.sh` gives this
+/// class its own backend with a fresh database.
 final class JourneyTests: UITestCase {
 
     // MARK: - Declaring
@@ -42,6 +38,52 @@ final class JourneyTests: UITestCase {
             "logging a session did not move the period it belongs to"
         )
         capture("31-after-logging")
+    }
+
+    func testAJustLoggedSessionCanBeUndone() throws {
+        launch()
+        declareAndBegin(titled: "Undo walk")
+
+        tap(app.buttons["Log a session"], "the in-progress card offered no way to log")
+        expect(app.buttons["Undo"], "logging did not offer the immediate Undo action")
+        tap(app.buttons["Undo"], "the Undo action could not be used")
+
+        expect(text(containing: "0 of 1 sessions"), "Undo did not restore the period total")
+    }
+
+    func testAQuickRepeatRequiresConfirmation() throws {
+        launch()
+        declareAndBegin(titled: "Repeat walk")
+        tap(app.buttons["Log a session"], "the first session could not be logged")
+        expect(text(containing: "1 of 1 sessions"), "the first session was not counted")
+
+        tap(app.buttons["Log another"].firstMatch, "the repeat logging action was missing")
+        expect(
+            text(containing: "was just logged"),
+            "a repeat inside one minute was not confirmed"
+        )
+        tap(app.buttons["Cancel"].firstMatch, "the repeat confirmation had no cancel action")
+        expect(text(containing: "1 of 1 sessions"), "cancelling a repeat changed the count")
+
+        tap(app.buttons["Log another"].firstMatch, "the repeat action disappeared after cancel")
+        tap(app.alerts.buttons["Log another"], "the repeat confirmation had no confirm action")
+        expect(text(containing: "2 sessions · 1 committed"), "a confirmed repeat was not counted separately")
+    }
+
+    func testALoggedSessionCanBePermanentlyDeletedFromHistory() throws {
+        launch()
+        declareAndBegin(titled: "Delete walk")
+        tap(app.buttons["Log a session"], "the session could not be logged")
+        expect(text(containing: "1 of 1 sessions"), "the logged session was not counted")
+
+        tap(app.buttons["All 1 sessions"], "complete session history was not available")
+        expect(app.navigationBars["Sessions"], "the complete session history did not open")
+        tap(app.buttons["Delete session"], "the history row offered no permanent deletion")
+        tap(app.alerts.buttons["Delete"], "permanent deletion was not confirmed")
+        expect(app.staticTexts["No sessions yet"], "the deleted session stayed in history")
+
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        expect(text(containing: "0 of 1 sessions"), "deletion did not restore the period total")
     }
 
     /// Declare is refused without a title (S1). The form disables it rather than accepting the

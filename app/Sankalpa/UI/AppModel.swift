@@ -21,6 +21,11 @@ import SankalpaStorage
 @MainActor
 @Observable
 final class AppModel {
+    struct RepeatLogProposal: Identifiable {
+        let id = UUID()
+        let sankalpaTitle: String
+    }
+
     private let remote: RemoteSankalpaService
 
     /// Everything the list and Today screens render, refreshed after each command.
@@ -38,8 +43,9 @@ final class AppModel {
     /// the answer changes. The Journal is a tab, which means it stays alive after the first
     /// visit: without this, a session logged after that visit never appeared in it.
     private(set) var revision: Int = 0
-    /// How many sessions are logged on this phone but not yet accepted by the service.
+    /// How many session creates or deletions are not yet finalized by the service.
     private(set) var pendingSessionCount = 0
+    private(set) var processingSankalpas: Set<SankalpaId> = []
     /// True when what is on screen came from the phone's copy rather than from the service just
     /// now, so a screen can say the practice may be behind.
     private(set) var isShowingCachedPractice = false
@@ -47,6 +53,7 @@ final class AppModel {
     /// A refusal to show in an alert. Commands that have their own inline error surface return the
     /// error instead of setting this.
     var alertMessage: String?
+    private var alertCarriesReconciliationNotice = false
     /// What the alert is about. A rule the user ran into and a service that is not answering are
     /// different kinds of news, and "That is not allowed" is wrong for the second.
     private(set) var alertTitle: String = AppModel.refusalTitle
@@ -60,6 +67,9 @@ final class AppModel {
     private(set) var confirmationToken: Int = 0
     /// Bumped on every successful log so views can trigger haptics without owning the state.
     private(set) var successCount: Int = 0
+    private(set) var undoReceipt: SessionReceipt?
+    var repeatLogProposal: RepeatLogProposal?
+    private var repeatContinuation: CheckedContinuation<Bool, Never>?
 
     /// Non-nil when the service has never been reached, so there is nothing at all to show. The
     /// whole app drops into recovery rather than showing an empty practice, which would look
@@ -119,25 +129,33 @@ final class AppModel {
 
     /// Where the service is, as the app is currently configured.
     var serviceLocation: ServiceLocation { remote.serviceLocation }
+    var reliabilityProblem: String? { remote.reliabilityProblem }
+    var pendingCreates: [PendingSession] { remote.pending }
+    var pendingDeletions: [PendingSessionDeletion] { remote.pendingDeletions }
+    var quarantinedCreateIds: Set<SessionId> { remote.quarantinedCreateIds }
     /// True when an environment variable is deciding, so the settings screen can say the value it
     /// shows is not the one in use rather than appearing to ignore what was typed.
     var serviceLocationIsOverridden: Bool { locations.isOverriddenByEnvironment }
 
     /// Points the app at a different computer and reloads from it.
     ///
-    /// The cached practice belongs to the old one, so it goes. Sessions still waiting to be sent
-    /// do not: they exist nowhere else, so they follow and are offered to whatever is there.
+    /// The cached practice belongs to the old one, so it goes. A location change is refused while
+    /// session changes are pending, because those changes are bound to one service instance.
     func useService(at location: ServiceLocation) async {
+        guard await remote.relocate(to: location) else {
+            alertCarriesReconciliationNotice = false
+            alertTitle = AppModel.refusalTitle
+            alertMessage = remote.refreshFailure
+            return
+        }
         locations.save(location)
-        await remote.relocate(to: location)
         finishSync()
     }
 
     // MARK: - Reporting range
 
-    /// How much history the app reports on. Ten years is the longest duration a commitment can
-    /// declare, so in practice nothing a user has actually recorded falls outside it — but the
-    /// reads stay bounded (DD-17) and the screens say what their range is.
+    /// Bounded ranges for derived period and journal reporting. Complete session history is loaded
+    /// separately so every session remains available for correction.
     static let historyPeriodLimit = SankalpaApplicationService.historyPeriodLimit
     static let historyDays = 3_650
     /// The window the detail screen's "Recent sessions" preview covers.
@@ -166,10 +184,11 @@ final class AppModel {
         }
         // A session the service refused when it was finally sent is news the user has to get:
         // they were told it was logged, and it is about to disappear from the screen.
-        let rejections = remote.takeSyncRejections()
+        let rejections = remote.reconciliationNotices
         if !rejections.isEmpty {
             alertTitle = AppModel.refusalTitle
             alertMessage = rejections.joined(separator: "\n\n")
+            alertCarriesReconciliationNotice = true
         }
         rebuild()
     }
@@ -179,7 +198,7 @@ final class AppModel {
     func rebuild() {
         revision += 1
         today = remote.today()
-        pendingSessionCount = remote.pending.count
+        pendingSessionCount = remote.pendingChangeCount
         isShowingCachedPractice = remote.isShowingCachedPractice
         summaries = remote.queries.summaries()
         // Built once per refresh rather than per card per render. The work is small, but calling
@@ -241,6 +260,13 @@ final class AppModel {
         remote.queries.sessions(id, from: today.addingDays(-days), until: today)
     }
 
+    /// Every locally known session for permanent correction in the Sessions screen.
+    func allSessions(_ id: SankalpaId) -> [Session] {
+        remote.allSessions(for: id)
+    }
+
+    func isProcessingSession(for id: SankalpaId) -> Bool { processingSankalpas.contains(id) }
+
     func performedCount(_ id: SankalpaId, in window: PeriodWindow) -> Int {
         remote.queries.performedCount(id, in: window)
     }
@@ -267,9 +293,70 @@ final class AppModel {
     }
 
     func logSession(_ id: SankalpaId, occurredAt: CalendarMoment) async -> SankalpaCommandError? {
-        if let error = await remote.logSession(id, occurredAt: occurredAt) { return error }
-        succeed("Session logged")
-        return nil
+        guard !processingSankalpas.contains(id) else { return nil }
+        processingSankalpas.insert(id)
+        defer { processingSankalpas.remove(id) }
+
+        if remote.shouldConfirmRepeat(for: id) {
+            guard repeatContinuation == nil else {
+                return .storage(.unavailable(
+                    "Finish the current session confirmation before logging another session."
+                ))
+            }
+            let confirmed = await withCheckedContinuation { continuation in
+                repeatContinuation = continuation
+                repeatLogProposal = RepeatLogProposal(
+                    sankalpaTitle: summary(id)?.title ?? "this sankalpa"
+                )
+            }
+            guard confirmed else { return nil }
+        }
+
+        switch await remote.logSessionCommand(id, occurredAt: occurredAt) {
+        case .accepted(let receipt):
+            succeed("Session logged", undo: receipt)
+            return nil
+        case .pending(let receipt):
+            succeed("Session saved — waiting to send", undo: receipt)
+            return nil
+        case .rejected(let error):
+            rebuild()
+            return error
+        }
+    }
+
+    /// Quick-log entry points have no inline form to carry a refusal, so route it to the shared
+    /// alert instead of silently discarding the rejected status.
+    func logSessionAndReport(_ id: SankalpaId, occurredAt: CalendarMoment) async {
+        if let error = await logSession(id, occurredAt: occurredAt) {
+            report(error)
+            rebuild()
+        }
+    }
+
+    func resolveRepeatLog(confirmed: Bool) {
+        let continuation = repeatContinuation
+        repeatContinuation = nil
+        repeatLogProposal = nil
+        continuation?.resume(returning: confirmed)
+    }
+
+    func undoLastSession() {
+        guard let receipt = undoReceipt else { return }
+        undoReceipt = nil
+        Task { await deleteSession(receipt.session, isUndo: true) }
+    }
+
+    func deleteSession(_ session: Session, isUndo: Bool = false) async {
+        switch await remote.deleteSession(session) {
+        case .accepted:
+            succeed(isUndo ? "Session undone" : "Session deleted")
+        case .pending:
+            succeed(isUndo ? "Session removed — deletion pending" : "Session hidden — deletion pending")
+        case .rejected(let error):
+            report(error)
+            rebuild()
+        }
     }
 
     // MARK: - Commands with alert error reporting
@@ -304,6 +391,16 @@ final class AppModel {
         await refresh()
     }
 
+    func discardUnrecoverableSessionChanges() {
+        if remote.discardUnrecoverableSessionChanges() {
+            rebuild()
+            succeed("Preserved session changes discarded")
+        } else {
+            alertTitle = AppModel.unreachableTitle
+            alertMessage = remote.refreshFailure
+        }
+    }
+
     // MARK: - Plumbing
 
     /// Lifecycle commands are fired from buttons that do not wait for an answer, so they keep a
@@ -324,8 +421,9 @@ final class AppModel {
     }
 
     /// The command already refreshed the snapshot, so this only re-derives and announces.
-    private func succeed(_ text: String) {
+    private func succeed(_ text: String, undo: SessionReceipt? = nil) {
         rebuild()
+        undoReceipt = undo
         confirmation = text
         confirmationToken += 1
         successCount += 1
@@ -333,6 +431,7 @@ final class AppModel {
 
     /// Shows a refusal, titled for what kind of refusal it is.
     private func report(_ error: SankalpaCommandError) {
+        alertCarriesReconciliationNotice = false
         if case .storage = error {
             alertTitle = AppModel.unreachableTitle
         } else {
@@ -344,6 +443,15 @@ final class AppModel {
     /// Called when the confirmation banner is dismissed.
     func clearConfirmation() {
         confirmation = nil
+        undoReceipt = nil
+    }
+
+    func dismissAlert() {
+        alertMessage = nil
+        if alertCarriesReconciliationNotice {
+            remote.acknowledgeReconciliationNotices()
+            alertCarriesReconciliationNotice = false
+        }
     }
 }
 

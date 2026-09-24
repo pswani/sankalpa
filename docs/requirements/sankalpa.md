@@ -45,6 +45,27 @@ The user performs the intended actions in sessions.  Ex: Doing the Vipassana med
 
 Sessions can be logged for past dates.
 
+### Reliable logging and correction
+
+- One logging action records at most one session, even when the system must retry it.
+- While logging is unresolved, the user is clearly told whether it is processing, retained as
+  pending, accepted, or rejected.
+- The same logging action cannot be submitted again while it is still processing.
+- A new log for the same sankalpa within one minute of a completed or durably pending log requires
+  confirmation.
+- Confirming the repeat creates another legitimate session; cancelling has no effect.
+- Time proximity alone never silently merges or rejects confirmed sessions, including sessions
+  with identical performed-at times.
+- Immediately after logging, the user can Undo that session.
+- The user can permanently delete any logged session later.
+- A deleted session disappears from history and no longer contributes to totals, period outcomes,
+  or missed-session calculations, whether the affected period is open or closed.
+- Undoing or deleting a pending session prevents it from appearing later.
+- If a deletion cannot be finalized immediately, it remains visibly pending, is excluded locally,
+  and completes automatically when possible.
+- If a pending operation is ultimately rejected, the user is informed and the displayed state is
+  corrected.
+
 ## Start and End
 The sankalpa will have a definite start date and optional duration (end date implied).
 

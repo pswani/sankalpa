@@ -94,9 +94,11 @@ struct LogSessionView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Log", action: log)
-                        .fontWeight(.semibold)
-                        .disabled(isLogging)
+                    Button(action: log) {
+                        if isLogging { ProgressView() } else { Text("Log") }
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(isLogging || model.isProcessingSession(for: summary.id))
                 }
             }
             // Opens at the newest eligible moment rather than now, so a paused or finished

@@ -317,8 +317,8 @@ final class ScreenTour: UITestCase {
         tap(logButton, "there was no way to log a session while the service was away")
 
         expect(
-            text(containing: "waiting to be sent"),
-            "a session logged offline was not reported as waiting"
+            text(containing: "session change pending"),
+            "a session logged offline was not reported as pending"
         )
         capture("41-offline-session-waiting")
     }

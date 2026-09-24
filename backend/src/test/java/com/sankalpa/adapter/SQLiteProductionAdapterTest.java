@@ -4,6 +4,7 @@ import com.sankalpa.application.SankalpaUseCases;
 import com.sankalpa.adapter.out.persistence.JdbcSankalpaPersistenceAdapter;
 import com.sankalpa.domain.ActionType;
 import com.sankalpa.domain.Sankalpa;
+import com.sankalpa.domain.SessionId;
 import com.sankalpa.domain.commitment.PeriodUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +37,7 @@ class SQLiteProductionAdapterTest {
     void clean() {
         jdbc.execute("DROP TRIGGER IF EXISTS prevent_transition_delete");
         jdbc.update("DELETE FROM practice_session");
+        jdbc.update("DELETE FROM session_identity");
         jdbc.update("DELETE FROM sankalpa_lifecycle_transition");
         jdbc.update("DELETE FROM sankalpa");
     }
@@ -50,7 +52,8 @@ class SQLiteProductionAdapterTest {
         Sankalpa declared = useCases.declare("Walk", "Thirty minutes", ActionType.PHYSICAL_ACTIVITY,
                 LocalDate.now(), PeriodUnit.DAY, 1, null);
         Sankalpa begun = useCases.begin(declared.id(), null);
-        useCases.logSession(declared.id(), begun.lifecycle().transitions().getFirst().effectiveAt());
+        useCases.logSession(declared.id(), SessionId.newId(),
+                begun.lifecycle().transitions().getFirst().effectiveAt());
 
         assertThat(useCases.detail(declared.id()).title().value()).isEqualTo("Walk");
         assertThat(useCases.list()).extracting(item -> item.id()).containsExactly(declared.id());
@@ -63,9 +66,9 @@ class SQLiteProductionAdapterTest {
         Sankalpa declared = useCases.declare("Walk", "", ActionType.PHYSICAL_ACTIVITY,
                 now.toLocalDate(), PeriodUnit.DAY, 1, null);
         useCases.begin(declared.id(), now.toLocalDate().atStartOfDay());
-        useCases.logSession(declared.id(), now.minusMinutes(3));
-        var middle = useCases.logSession(declared.id(), now.minusMinutes(2));
-        var newest = useCases.logSession(declared.id(), now.minusMinutes(1));
+        useCases.logSession(declared.id(), SessionId.newId(), now.minusMinutes(3));
+        var middle = useCases.logSession(declared.id(), SessionId.newId(), now.minusMinutes(2)).session();
+        var newest = useCases.logSession(declared.id(), SessionId.newId(), now.minusMinutes(1)).session();
 
         var page = useCases.sessions(declared.id(), now.toLocalDate(), now.toLocalDate(), 0, 2);
 

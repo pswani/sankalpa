@@ -160,15 +160,22 @@ struct SankalpaDetailView: View {
 
                 HStack(spacing: 8) {
                     Button {
-                        Task { _ = await model.logSession(summary.id, occurredAt: model.now()) }
+                        Task {
+                            await model.logSessionAndReport(summary.id, occurredAt: model.now())
+                        }
                     } label: {
-                        Label(
-                            period.isSatisfied ? "Log another" : "Log a session",
-                            systemImage: "checkmark.circle.fill"
-                        )
-                        .frame(maxWidth: .infinity)
+                        if model.isProcessingSession(for: summary.id) {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else {
+                            Label(
+                                period.isSatisfied ? "Log another" : "Log a session",
+                                systemImage: "checkmark.circle.fill"
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
                     }
                     .buttonStyle(period.isSatisfied ? AnyButtonStyle(.quiet) : AnyButtonStyle(.primary))
+                    .disabled(model.isProcessingSession(for: summary.id))
 
                     Button { loggingSession = true } label: {
                         Image(systemName: "clock.arrow.circlepath")

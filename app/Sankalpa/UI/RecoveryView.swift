@@ -21,6 +21,7 @@ struct RecoveryView: View {
     @State private var lastAttemptFailed = false
     @State private var isRetrying = false
     @State private var changingService = false
+    @State private var confirmingDiscard = false
 
     var body: some View {
         ScrollView {
@@ -68,6 +69,13 @@ struct RecoveryView: View {
                 Button("Change computer…") { changingService = true }
                     .buttonStyle(.quiet)
 
+                if model.reliabilityProblem != nil {
+                    Button("Discard preserved session changes…", role: .destructive) {
+                        confirmingDiscard = true
+                    }
+                    .buttonStyle(.quiet)
+                }
+
                 if lastAttemptFailed {
                     // A button that changes nothing twice reads as a broken button.
                     VStack(spacing: 6) {
@@ -91,6 +99,15 @@ struct RecoveryView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .sheet(isPresented: $changingService) {
             ServiceSettingsView()
+        }
+        .alert("Discard preserved session changes?", isPresented: $confirmingDiscard) {
+            Button("Cancel", role: .cancel) {}
+            Button("Discard", role: .destructive) {
+                model.discardUnrecoverableSessionChanges()
+                Task { await model.retryConnection() }
+            }
+        } message: {
+            Text("This cannot be undone. Any unresolved session changes in the preserved journal will be lost.")
         }
     }
 }

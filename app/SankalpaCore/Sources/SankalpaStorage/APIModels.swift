@@ -29,6 +29,7 @@ enum API {
     }
 
     struct LogSessionRequest: Encodable, Sendable {
+        let id: UUID
         let occurredAt: String
     }
 
@@ -53,6 +54,11 @@ enum API {
         let sankalpaId: UUID
         let occurredAt: String
         let loggedAt: String
+    }
+
+    struct CapabilitiesResponse: Decodable, Sendable {
+        let sessionCommandIdentity: Int
+        let serviceInstanceId: UUID
     }
 
     struct SessionPageResponse: Decodable, Sendable {

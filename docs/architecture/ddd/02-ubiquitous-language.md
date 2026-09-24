@@ -17,6 +17,13 @@ do not give it a name.
 | Duration | Requirement | Optional count of periods. | `PeriodCount` |
 | End date | Requirement | Inclusive last date covered by a finite commitment; absent without duration. | `Commitment.endDate()` |
 | Session | Requirement | One occasion on which the intended action was performed. | `Session` |
+| Logging action | Requirement | One user intention to record one session; all delivery attempts for it share one identity. | `LogSession` command identified by `SessionId` |
+| Session identity | Design term | Stable UUID that identifies both the logging action and resulting session. | `SessionId` |
+| Replay | Design term | Repeating the same logging command identity and values after an uncertain result. | `SessionLogResult.created == false` |
+| Pending operation | Requirement/design term | A create or delete durably retained on the device until the service decision is safely reflected locally. | `PendingSession` or `PendingSessionDeletion` |
+| Undo | Requirement | Immediate deletion of the exact session just logged. | `DeleteSession` with a `SessionReceipt` |
+| Delete | Requirement | Permanently remove a logged session and prevent its identity from reappearing. | `DeleteSession` |
+| Repeat confirmation | Requirement | Confirmation required before another logging action for the same sankalpa within one minute. | Client interaction policy |
 | Lifecycle state | Requirement | Not started, In progress, Paused, Completed Successfully, Completed Unsuccessfully, Stopped. | `LifecycleState` |
 | Lifecycle transition | Requirement | A user-performed state change recorded for audit. Begin may be backdated; every other transition takes effect when performed. | `LifecycleTransition` |
 | Begin timing | Design term | Effective and recorded timestamps for the transition from Not started to In progress. | `BeginTiming` |
@@ -37,9 +44,15 @@ do not give it a name.
 | Complete | Move to Completed Successfully or Completed Unsuccessfully now. | `CompleteSankalpa` |
 | Stop | Move to Stopped now. | `StopSankalpa` |
 | Log | Record a performed session. | `LogSession` |
+| Undo | Immediately delete the exact session receipt returned by logging. | `DeleteSession` |
+| Delete | Permanently remove a selected session. | `DeleteSession` |
 
 A session is eligible only when its `occurredAt` is covered by the commitment and the lifecycle
 state at that time is In progress.
+
+Eligibility is evaluated only when a new identity is created. An exact replay returns the already
+accepted session even if the sankalpa's lifecycle has since changed. Two sessions may have the same
+`occurredAt`; identity, not time proximity, distinguishes them.
 
 There is no generic `updateStatus` use case because lifecycle changes are user intentions with
 different allowed transitions.
@@ -54,6 +67,7 @@ These words should stay out of the domain model until the requirements introduce
 - `Streak`, `Score`, `ProgressPercentage`
 - `DomainEvent`, `IntegrationEvent`, `EventHandler`
 - `Specification` suffixes for simple predicates
+- `SoftDeletedSession`, `SessionRevision`, `SessionAuditHistory`
 
 The examples in the requirements, such as Vipassana and Gym, remain examples. They are not catalogue
 entries unless the requirements make them data.

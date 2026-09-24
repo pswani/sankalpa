@@ -112,15 +112,15 @@ holds sessions that exist nowhere else; losing it loses someone's practice, so o
 read is renamed and kept rather than written over, and a session is reported as logged only once it
 has reached the disk. A corrupt cache must not be able to take the outbox with it.
 
-**Only session logging works offline.** Lifecycle transitions are refused with a clear reason:
-queuing them would need ordering and backdating rules the requirements do not settle, and "the
-service wins" cannot reconcile a queued Pause against a service that has moved on. Offline logging
-still applies the rules — the phone has the commitment and the lifecycle, so a session the domain
-would refuse is refused there too. Going offline defers *who* says no, never *whether*.
+**Only session logging and deletion work offline.** Lifecycle transitions are refused with a clear
+reason: queuing them would need ordering and backdating rules the requirements do not settle, and
+"the service wins" cannot reconcile a queued Pause against a service that has moved on. Offline
+session changes still apply the rules known to the phone. They remain visibly pending until the
+service accepts or rejects them; a rejected change is corrected locally and explained to the user.
 
 The recovery screen now appears only when the phone has nothing cached either. Once there is a
-copy, a failure becomes a strip across the top saying the practice may be behind and how much is
-waiting to be sent — a state, not an event, so not an alert that keeps coming back.
+copy, a failure becomes a strip across the top saying the practice may be behind and how many
+session changes are pending — a state, not an event, so not an alert that keeps coming back.
 
 **There is no export.** The practice is in the service, which is where a copy would come from.
 
@@ -191,14 +191,16 @@ they show everything:
 | Screen | Range |
 |---|---|
 | Periods, and the tally above it | The most recent 3,650 periods — one number for both, so the count can never describe rows the list does not contain. The footer says so only when something was actually cut off. |
-| Sessions | The last 3,650 days |
+| Sessions | Complete session history, loaded through all service pages |
 | Recent sessions, on detail | The last 120 days. When there is older history the card says so and still links to the full list. |
 | Journal | The last 3,650 days |
 
-3,650 is also the longest duration a commitment can declare, so in practice nothing a user has
-recorded falls outside it. The worst case the app can reach — ten years of daily practice, 3,650
-sessions, every period rebuilt — takes about 7 ms in a Debug build, which is why the Periods
-screen computes its list directly rather than caching it.
+3,650 is also the longest duration a commitment can declare, so it is sufficient for period and
+journal reporting. Session history is deliberately not bounded by that range: it is also the place
+where a user can find and permanently delete any recorded session, including one older than the
+current commitment window. The worst bounded reporting case — ten years of daily practice, 3,650
+sessions, every period rebuilt — takes about 7 ms in a Debug build, which is why the Periods screen
+computes its list directly rather than caching it.
 
 ## Responsiveness
 
@@ -234,7 +236,7 @@ a local single-user iPhone app leads to a few deliberate differences.
 | `SessionRepository.findForSankalpa` | Plus `sessions(from:until:)` across all sankalpas | The Journal reads performed sessions across sankalpas. Still day-range bounded, per DD-17. |
 | iPhone and iPad | iPhone only (`TARGETED_DEVICE_FAMILY = 1`), portrait only | The requirement is an iPhone app. Declaring iPad, or the landscape orientations the template turns on, would claim support for layouts that were never designed or tested. Every screen here is a single vertical column; landscape adds nothing it does not already do. |
 | Domain objects mapped to persistence rows | Explicit DTOs and a hand-written mapping in `SankalpaStorage` | The service is a separate deployable with its own release cycle, so its wire shape is a contract rather than an internal detail. A field this version cannot read is reported instead of guessed at. |
-| The repository port is the persistence seam | It is a read-through snapshot of the service, plus an outbox | Commands never go through it — they go to the service, or to the outbox — so its `save` methods refuse rather than pretend. The conformance exists so the query surface can run unchanged over server-sourced facts; reads merge in what is still waiting to be sent, because a session just logged has to count whether or not the service has heard about it. |
+| The repository port is the persistence seam | It is a read-through snapshot of the service, plus a durable operation journal | Commands never go through it — they go to the service, or to the journal — so its `save` methods refuse rather than pretend. The conformance exists so the query surface can run unchanged over server-sourced facts; reads overlay pending creates and deletions, so the visible practice immediately reflects a change whether or not the service has heard about it. |
 
 Four launch arguments remain, all compiled out of release builds: `-forceDarkMode` forces the
 appearance because the simulator's own switch does not reliably repaint this runtime,
@@ -262,15 +264,14 @@ accidental. Each is *decision → reason → what is still open*.
   (Q2/A3). The detail screen says so rather than leaving the user hunting for a button. *Open:
   amendment A3 would allow changing Key Information while Not started, which is the natural way to
   move a start date.*
-- **A logged session cannot be taken back.** The app used to offer one Undo on the confirmation
-  banner, backed by a local delete. The service has no way to remove a session — deleting one is
-  deliberately outside the requirements (Q3) — so the offer went rather than becoming a promise the
-  app cannot keep. *Open: whether taking back a just-logged session should become a use case.*
-- **A session sent twice is matched on its sankalpa and its moment, not its id.** The service
-  assigns the id, so a request that arrived while its answer was lost comes back with an id the
-  phone has never seen. Without matching on what the user actually chose, a flaky connection would
-  turn one session into two. *Open: an idempotency key on the API would settle it properly; two
-  sessions deliberately logged in the same second for the same sankalpa would be treated as one.*
+- **A logged session can be corrected.** The confirmation offers an immediate Undo, and complete
+  session history supports permanent deletion later. A deleted session is excluded immediately and
+  no longer contributes to totals or period outcomes; an unresolved deletion remains visibly
+  pending and completes when the service is reachable.
+- **Each logging action has a stable client-generated identity.** Retries use that identity, so a
+  lost response cannot create another session. Equal performed-at times do not collapse distinct
+  actions. A new action for the same sankalpa within one minute asks for confirmation; confirming it
+  intentionally creates another session.
 - **The time zone is captured once per launch**, so a day already recorded keeps its meaning if the
   device travels mid-session; a relaunch picks up the new zone. *Open: Q1 — no per-sankalpa zone is
   modelled, and repeated daylight-saving hours have no stated policy.*

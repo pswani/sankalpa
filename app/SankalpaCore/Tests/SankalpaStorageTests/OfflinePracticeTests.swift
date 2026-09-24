@@ -164,10 +164,7 @@ struct OfflinePracticeTests {
 
         // The service comes back, and now knows about the session.
         let back = Fixture.readyTransport()
-        back.on("POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions", status: 201, body: """
-            {"id":"\(Fixture.sessionId)","sankalpaId":"\(Fixture.sankalpaId)",
-             "occurredAt":"2026-09-10T07:00:00","loggedAt":"2026-09-10T12:00:00"}
-            """)
+        Fixture.acceptsLoggedSession(on: back)
         back.on("GET", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions",
                 body: Fixture.sessionPageJSON(occurrences: ["2026-09-10T07:00:00"]))
         let reconnected = Fixture.service(transport: back, today: today, cache: cache)
@@ -203,7 +200,7 @@ struct OfflinePracticeTests {
         await reconnected.sync()
 
         #expect(reconnected.pending.isEmpty)
-        let rejections = reconnected.takeSyncRejections()
+        let rejections = reconnected.reconciliationNotices
         #expect(rejections.count == 1)
         #expect(rejections.first?.contains("Vipassana") == true)
         // The reason is the service's, not one rebuilt from the phone's copy. That copy still
@@ -211,8 +208,10 @@ struct OfflinePracticeTests {
         // from there would produce a sentence that contradicts itself.
         #expect(rejections.first?.contains("was not in progress at that time") == true)
         #expect(rejections.first?.contains("was In progress at that time") == false)
-        // And it is news, not state: read once and gone.
-        #expect(reconnected.takeSyncRejections().isEmpty)
+        // The notice remains durable until the UI explicitly acknowledges it.
+        #expect(reconnected.reconciliationNotices.count == 1)
+        reconnected.acknowledgeReconciliationNotices()
+        #expect(reconnected.reconciliationNotices.isEmpty)
     }
 
     /// A session that reached the service while the answer was lost comes back in the refresh.
@@ -232,10 +231,7 @@ struct OfflinePracticeTests {
 
         // The POST had in fact arrived, so the refresh returns it.
         let back = Fixture.readyTransport()
-        back.on("POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions", status: 201, body: """
-            {"id":"\(Fixture.sessionId)","sankalpaId":"\(Fixture.sankalpaId)",
-             "occurredAt":"2026-09-10T07:00:00","loggedAt":"2026-09-10T12:00:00"}
-            """)
+        Fixture.acceptsLoggedSession(on: back)
         back.on("GET", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions",
                 body: Fixture.sessionPageJSON(occurrences: ["2026-09-10T07:00:00"]))
         let reconnected = Fixture.service(transport: back, today: today, cache: cache)
@@ -269,8 +265,8 @@ struct OfflinePracticeTests {
 
     // MARK: - Lifecycle is not offline
 
-    /// Only session logging works offline. A queued Pause would have to be reconciled against a
-    /// service that may have moved on, and "the service wins" cannot answer that.
+    /// Only session logging and deletion work offline. A queued Pause would have to be reconciled
+    /// against a service that may have moved on, and "the service wins" cannot answer that.
     @Test("A lifecycle change with the service away is refused, not queued")
     func lifecycleCommandsAreNotQueued() async {
         let cache = PracticeCache(directory: Fixture.temporaryDirectory())
@@ -303,10 +299,7 @@ struct OfflinePracticeTests {
         let back = Fixture.readyTransport()
         back.on("POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/pause",
                 body: Fixture.sankalpaJSON(state: "PAUSED"))
-        back.on("POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions", status: 201, body: """
-            {"id":"\(Fixture.sessionId)","sankalpaId":"\(Fixture.sankalpaId)",
-             "occurredAt":"2026-09-10T07:00:00","loggedAt":"2026-09-10T12:00:00"}
-            """)
+        Fixture.acceptsLoggedSession(on: back)
         back.on("GET", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions",
                 body: Fixture.sessionPageJSON(occurrences: ["2026-09-10T07:00:00"]))
         let reconnected = Fixture.service(transport: back, today: today, cache: cache)

@@ -69,18 +69,16 @@ struct ServiceSettingsView: View {
                     LabeledContent("In use", value: model.serviceLocation.displayText)
                     if model.pendingSessionCount > 0 {
                         LabeledContent(
-                            "Waiting to be sent",
-                            value: "\(model.pendingSessionCount) session\(model.pendingSessionCount == 1 ? "" : "s")"
+                            "Pending changes",
+                            value: "\(model.pendingSessionCount) change\(model.pendingSessionCount == 1 ? "" : "s")"
                         )
                     }
                 } footer: {
                     if model.pendingSessionCount > 0 {
-                        // These exist nowhere else, so switching computers must not read as
-                        // throwing them away.
                         Text(
                             """
-                            Sessions logged while the service was out of reach are kept on this \
-                            phone and sent when it answers. Changing the computer keeps them.
+                            Pending session changes are bound to this service. Send or resolve \
+                            them before changing computers.
                             """
                         )
                     }
@@ -97,7 +95,7 @@ struct ServiceSettingsView: View {
                         if isChecking { ProgressView() } else { Text("Save") }
                     }
                     .fontWeight(.semibold)
-                    .disabled(!hasChanged || isChecking)
+                    .disabled(!hasChanged || isChecking || model.pendingSessionCount > 0)
                 }
             }
             .onAppear { text = model.serviceLocation.displayText }

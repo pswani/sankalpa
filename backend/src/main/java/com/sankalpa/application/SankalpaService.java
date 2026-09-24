@@ -79,12 +79,58 @@ public class SankalpaService implements SankalpaUseCases {
     }
 
     @Override
-    public Session logSession(SankalpaId id, LocalDateTime occurredAt) {
+    public SessionLogResult logSession(SankalpaId id, SessionId sessionId,
+                                       LocalDateTime occurredAt) {
         Sankalpa sankalpa = sankalpas.findByIdForUpdate(id)
                 .orElseThrow(() -> new NotFoundException("Sankalpa " + id + " was not found"));
-        Session session = sankalpa.logSession(SessionId.newId(), occurredAt, clock.now());
+
+        var identity = sessions.findIdentity(sessionId);
+        if (identity.isPresent()) {
+            SessionIdentity stored = identity.get();
+            if (!stored.sankalpaId().equals(id)) {
+                throw identityConflict(sessionId);
+            }
+            if (stored.state() == SessionIdentityState.DELETED) {
+                throw new SessionDeletedException("Session " + sessionId + " was permanently deleted");
+            }
+            Session existing = sessions.findById(sessionId)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "ACTIVE session identity has no session fact: " + sessionId));
+            if (!existing.occurredAt().equals(occurredAt)) {
+                throw identityConflict(sessionId);
+            }
+            return new SessionLogResult(existing, false);
+        }
+
+        Session session = sankalpa.logSession(sessionId, occurredAt, clock.now());
+        sessions.claimIdentity(new SessionIdentity(sessionId, id, SessionIdentityState.ACTIVE));
         sessions.save(session);
-        return session;
+        return new SessionLogResult(session, true);
+    }
+
+    @Override
+    public void deleteSession(SankalpaId id, SessionId sessionId) {
+        sankalpas.findByIdForUpdate(id)
+                .orElseThrow(() -> new NotFoundException("Sankalpa " + id + " was not found"));
+
+        var identity = sessions.findIdentity(sessionId);
+        if (identity.isEmpty()) {
+            sessions.claimIdentity(new SessionIdentity(sessionId, id, SessionIdentityState.DELETED));
+            return;
+        }
+        SessionIdentity stored = identity.get();
+        if (!stored.sankalpaId().equals(id)) {
+            throw identityConflict(sessionId);
+        }
+        if (stored.state() == SessionIdentityState.DELETED) return;
+
+        sessions.delete(sessionId);
+        sessions.markDeleted(sessionId);
+    }
+
+    private SessionIdentityConflictException identityConflict(SessionId id) {
+        return new SessionIdentityConflictException(
+                "Session identity " + id + " is already bound to different values");
     }
 
     @Override

@@ -1,67 +1,164 @@
 import Foundation
 import SankalpaCore
 
-/// A session logged on the phone that the service has not accepted yet.
-///
-/// It carries a provisional id so the screens have something to key on immediately. The service
-/// assigns the real one when it takes the session, and the next refresh replaces this with the
-/// service's own record.
+/// A create command accepted on this device but not yet conclusively accepted or rejected by its
+/// originating service. Its id is also the eventual session id and is reused by every retry.
 public struct PendingSession: Codable, Hashable, Sendable, Identifiable {
     public let id: SessionId
     public let sankalpaId: SankalpaId
     public let occurredAt: CalendarMoment
     public let loggedAt: CalendarMoment
+    public let serviceInstanceId: UUID?
+    public let revision: UUID
 
     public init(
-        id: SessionId = SessionId(),
-        sankalpaId: SankalpaId,
-        occurredAt: CalendarMoment,
-        loggedAt: CalendarMoment
+        id: SessionId = SessionId(), sankalpaId: SankalpaId,
+        occurredAt: CalendarMoment, loggedAt: CalendarMoment,
+        serviceInstanceId: UUID? = nil, revision: UUID = UUID()
     ) {
         self.id = id
         self.sankalpaId = sankalpaId
         self.occurredAt = occurredAt
         self.loggedAt = loggedAt
+        self.serviceInstanceId = serviceInstanceId
+        self.revision = revision
     }
 
-    /// What the screens render it as while it waits. It is a real session as far as the period
-    /// arithmetic is concerned — that is the point of logging it offline.
     public var session: Session {
-        Session.rehydrate(
-            id: id, sankalpaId: sankalpaId, occurredAt: occurredAt, loggedAt: loggedAt
-        )
+        Session.rehydrate(id: id, sankalpaId: sankalpaId, occurredAt: occurredAt, loggedAt: loggedAt)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sankalpaId, occurredAt, loggedAt, serviceInstanceId, revision
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(SessionId.self, forKey: .id)
+        sankalpaId = try values.decode(SankalpaId.self, forKey: .sankalpaId)
+        occurredAt = try values.decode(CalendarMoment.self, forKey: .occurredAt)
+        loggedAt = try values.decode(CalendarMoment.self, forKey: .loggedAt)
+        serviceInstanceId = try values.decodeIfPresent(UUID.self, forKey: .serviceInstanceId)
+        revision = try values.decodeIfPresent(UUID.self, forKey: .revision) ?? UUID()
     }
 }
 
-/// What the last successful refresh returned, kept so the app has something to show when the
-/// service cannot be reached.
+public struct PendingSessionDeletion: Codable, Hashable, Sendable, Identifiable {
+    public let id: SessionId
+    public let sankalpaId: SankalpaId
+    public let occurredAt: CalendarMoment
+    public let serviceInstanceId: UUID
+    public let requestedAt: CalendarMoment
+    public let revision: UUID
+
+    public init(
+        id: SessionId, sankalpaId: SankalpaId, occurredAt: CalendarMoment,
+        serviceInstanceId: UUID,
+        requestedAt: CalendarMoment, revision: UUID = UUID()
+    ) {
+        self.id = id
+        self.sankalpaId = sankalpaId
+        self.occurredAt = occurredAt
+        self.serviceInstanceId = serviceInstanceId
+        self.requestedAt = requestedAt
+        self.revision = revision
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sankalpaId, occurredAt, serviceInstanceId, requestedAt, revision
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(SessionId.self, forKey: .id)
+        sankalpaId = try values.decode(SankalpaId.self, forKey: .sankalpaId)
+        requestedAt = try values.decode(CalendarMoment.self, forKey: .requestedAt)
+        occurredAt = try values.decodeIfPresent(CalendarMoment.self, forKey: .occurredAt)
+            ?? requestedAt
+        serviceInstanceId = try values.decode(UUID.self, forKey: .serviceInstanceId)
+        revision = try values.decodeIfPresent(UUID.self, forKey: .revision) ?? UUID()
+    }
+}
+
+struct ServiceCapability: Codable, Hashable, Sendable {
+    let sessionCommandIdentity: Int
+    let serviceInstanceId: UUID
+    var supportsReliableSessions: Bool { sessionCommandIdentity >= 1 }
+}
+
+struct RecentSessionLog: Codable, Hashable, Sendable {
+    let sessionId: SessionId
+    let sankalpaId: SankalpaId
+    /// The durable-pending/completion time, not the performed-at time.
+    let acceptedAt: CalendarMoment
+}
+
+struct ReliabilityJournal: Codable, Sendable {
+    var schemaVersion = 2
+    var serviceLocation: String
+    var capability: ServiceCapability?
+    var creates: [PendingSession] = []
+    var deletions: [PendingSessionDeletion] = []
+    var quarantinedCreates: [SessionId] = []
+    var recentLogs: [RecentSessionLog] = []
+    var notices: [String] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, serviceLocation, capability, creates, deletions, quarantinedCreates
+        case recentLogs, notices
+    }
+
+    init(serviceLocation: String) { self.serviceLocation = serviceLocation }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
+        serviceLocation = try values.decode(String.self, forKey: .serviceLocation)
+        capability = try values.decodeIfPresent(ServiceCapability.self, forKey: .capability)
+        creates = try values.decodeIfPresent([PendingSession].self, forKey: .creates) ?? []
+        deletions = try values.decodeIfPresent([PendingSessionDeletion].self, forKey: .deletions) ?? []
+        quarantinedCreates = try values.decodeIfPresent(
+            [SessionId].self, forKey: .quarantinedCreates
+        ) ?? []
+        recentLogs = try values.decodeIfPresent([RecentSessionLog].self, forKey: .recentLogs) ?? []
+        notices = try values.decodeIfPresent([String].self, forKey: .notices) ?? []
+    }
+}
+
+/// Complete session history from the last successful refresh. Schema-1 counts remain decodable
+/// during rollout, but schema 2 derives every total from `sessions`.
 struct CachedPractice: Codable, Sendable {
-    var schemaVersion = 1
-    /// Which service this came from. Pointing the app at a different computer makes it someone
-    /// else's practice, so it is discarded rather than shown.
+    var schemaVersion = 2
     var serviceLocation: String
     var sankalpas: [Sankalpa]
     var sessions: [Session]
-    /// Lifetime counts as the service reported them, which can exceed the sessions held here
-    /// because session history is read a bounded number of pages deep.
-    var counts: [String: Int]
+    var counts: [String: Int] = [:]
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, serviceLocation, sankalpas, sessions, counts
+    }
+
+    init(serviceLocation: String, sankalpas: [Sankalpa], sessions: [Session]) {
+        self.serviceLocation = serviceLocation
+        self.sankalpas = sankalpas
+        self.sessions = sessions
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        serviceLocation = try values.decode(String.self, forKey: .serviceLocation)
+        sankalpas = try values.decode([Sankalpa].self, forKey: .sankalpas)
+        sessions = try values.decode([Session].self, forKey: .sessions)
+        counts = try values.decodeIfPresent([String: Int].self, forKey: .counts) ?? [:]
+    }
 }
 
-/// The two files the app keeps on the phone, and the difference between them.
-///
-/// The **cache** is a copy of what the service said last time. Losing it costs a round trip and
-/// nothing else, so a cache that cannot be read is simply discarded.
-///
-/// The **outbox** is the opposite: it holds sessions that exist nowhere else until the service
-/// takes them. Losing it loses someone's practice, so a file that cannot be read is renamed and
-/// kept rather than written over — the same answer the app has always given to bytes it cannot
-/// parse, and the reason the two are separate files at all. A corrupt cache must not be able to
-/// take the outbox with it.
+/// Durable operations are separated from the disposable server snapshot. An unreadable journal
+/// is preserved in place and blocks new session mutations instead of being silently replaced.
 public final class PracticeCache {
     private let directory: URL
     private let writer: (Data, URL) throws -> Void
-
-    /// Set when the outbox could not be read and was set aside, so the app can say so once.
     public private(set) var outboxProblem: String?
 
     public init(
@@ -82,73 +179,102 @@ public final class PracticeCache {
     }
 
     private var cacheURL: URL { directory.appendingPathComponent("sankalpa-cache.json") }
-    private var outboxURL: URL { directory.appendingPathComponent("sankalpa-outbox.json") }
+    private var journalURL: URL { directory.appendingPathComponent("sankalpa-outbox.json") }
 
-    // MARK: - Cache
-
-    /// The cached practice, or `nil` when there is none this app can use — no file yet, a file it
-    /// cannot read, or one belonging to a different service.
     func loadCache(for location: ServiceLocation) -> CachedPractice? {
         guard let data = try? Data(contentsOf: cacheURL),
               let cached = try? JSONDecoder().decode(CachedPractice.self, from: data),
-              cached.schemaVersion <= 1,
+              cached.schemaVersion <= 2,
               cached.serviceLocation == location.displayText
         else { return nil }
         return cached
     }
 
-    func saveCache(_ practice: CachedPractice) {
-        guard let data = try? JSONEncoder().encode(practice) else { return }
-        // A cache that cannot be written is not worth telling anyone about: the app has the data
-        // in memory, and the only cost is a round trip after the next launch.
-        try? writer(data, cacheURL)
+    @discardableResult
+    func saveCache(_ practice: CachedPractice) -> Bool {
+        guard let data = try? JSONEncoder().encode(practice) else { return false }
+        do { try writer(data, cacheURL); return true } catch { return false }
     }
 
-    // MARK: - Outbox
-
-    public func loadOutbox() -> [PendingSession] {
-        guard FileManager.default.fileExists(atPath: outboxURL.path) else { return [] }
-        guard let data = try? Data(contentsOf: outboxURL),
-              let pending = try? JSONDecoder().decode([PendingSession].self, from: data)
-        else {
-            setAsideUnreadableOutbox()
-            return []
+    func loadJournal(for location: ServiceLocation) -> ReliabilityJournal {
+        let empty = ReliabilityJournal(serviceLocation: location.displayText)
+        guard FileManager.default.fileExists(atPath: journalURL.path) else { return empty }
+        guard let data = try? Data(contentsOf: journalURL) else {
+            preserveUnreadableJournal()
+            return empty
         }
-        return pending
+        if let journal = try? JSONDecoder().decode(ReliabilityJournal.self, from: data),
+           journal.schemaVersion == 2, isValid(journal) {
+            return journal
+        }
+        if (try? JSONDecoder().decode([PendingSession].self, from: data)) != nil {
+            preserveUnreadableJournal(message: "Older pending sessions need recovery before session changes can continue.")
+        } else {
+            preserveUnreadableJournal()
+        }
+        return empty
     }
 
-    /// Returns whether the outbox reached the disk. A caller that has just accepted a session
-    /// offline needs to know: reporting it as logged when it is only in memory would lose it on
-    /// the next launch, which is the one thing this file exists to prevent.
+    @discardableResult
+    func saveJournal(_ journal: ReliabilityJournal) -> Bool {
+        guard outboxProblem == nil, isValid(journal),
+              let data = try? JSONEncoder().encode(journal)
+        else { return false }
+        do { try writer(data, journalURL); return true } catch { return false }
+    }
+
+    /// Compatibility helpers for code that only needs to inspect pending creates.
+    public func loadOutbox() -> [PendingSession] {
+        loadJournal(for: ServiceLocation(host: "localhost", port: 8080)).creates
+    }
+
     @discardableResult
     func saveOutbox(_ pending: [PendingSession]) -> Bool {
-        guard let data = try? JSONEncoder().encode(pending) else { return false }
+        var journal = loadJournal(for: ServiceLocation(host: "localhost", port: 8080))
+        journal.creates = pending
+        return saveJournal(journal)
+    }
+
+    private func preserveUnreadableJournal(
+        message: String = "Pending session changes could not be read. They were preserved, and session changes are blocked until they are recovered."
+    ) {
+        outboxProblem = message
+    }
+
+    /// Explicitly replaces preserved unreadable/legacy operations after a warned user decision.
+    /// Nothing calls this automatically: recovery must never turn data loss into a side effect of
+    /// launch, refresh, or another mutation.
+    func discardUnrecoverableJournal(for location: ServiceLocation) -> ReliabilityJournal? {
+        guard outboxProblem != nil,
+              let data = try? JSONEncoder().encode(
+                ReliabilityJournal(serviceLocation: location.displayText)
+              )
+        else { return nil }
         do {
-            try writer(data, outboxURL)
-            return true
+            try writer(data, journalURL)
+            outboxProblem = nil
+            return ReliabilityJournal(serviceLocation: location.displayText)
         } catch {
-            return false
+            return nil
         }
     }
 
-    /// Renames a damaged outbox instead of deleting it, and says so. Starting fresh is what keeps
-    /// the app usable; keeping the bytes is what makes that honest.
-    private func setAsideUnreadableOutbox() {
-        let stamp = Int(Date().timeIntervalSince1970)
-        let destination = directory.appendingPathComponent("sankalpa-outbox-damaged-\(stamp).json")
-        try? FileManager.default.moveItem(at: outboxURL, to: destination)
-        outboxProblem = """
-            Some sessions were waiting to reach the Sankalpa service and could not be read. \
-            They have been kept in a file named sankalpa-outbox-damaged-\(stamp).json rather than \
-            deleted, and logging has started again from empty.
-            """
+    private func isValid(_ journal: ReliabilityJournal) -> Bool {
+        let createIds = journal.creates.map(\.id)
+        let deleteIds = journal.deletions.map(\.id)
+        let allIds = createIds + deleteIds
+        guard Set(allIds).count == allIds.count else { return false }
+        guard Set(journal.quarantinedCreates).count == journal.quarantinedCreates.count,
+              Set(journal.quarantinedCreates).isSubset(of: Set(createIds))
+        else { return false }
+        guard journal.creates.allSatisfy({ $0.serviceInstanceId != nil }) else { return false }
+        guard let expected = journal.capability?.serviceInstanceId else {
+            return allIds.isEmpty
+        }
+        return journal.creates.allSatisfy { $0.serviceInstanceId == expected }
+            && journal.deletions.allSatisfy { $0.serviceInstanceId == expected }
     }
 
-    public func clearOutboxProblem() { outboxProblem = nil }
-
-    /// Removes the cache and the outbox. This is for a test run starting from nothing — the same
-    /// job the store file's reset used to do — and is never part of using the app: the whole point
-    /// of both files is that they survive.
     public static func removeEverything(in directory: URL = PracticeCache.defaultDirectory()) {
         for name in ["sankalpa-cache.json", "sankalpa-outbox.json"] {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))

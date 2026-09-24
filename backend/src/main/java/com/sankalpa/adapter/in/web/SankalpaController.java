@@ -1,7 +1,10 @@
 package com.sankalpa.adapter.in.web;
 
 import com.sankalpa.application.SankalpaUseCases;
+import com.sankalpa.application.SessionLogResult;
+import com.sankalpa.adapter.out.persistence.ServiceInstanceIdentity;
 import com.sankalpa.domain.SankalpaId;
+import com.sankalpa.domain.SessionId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -21,6 +24,7 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 import static com.sankalpa.adapter.in.web.ApiModels.*;
 
@@ -30,8 +34,12 @@ import static com.sankalpa.adapter.in.web.ApiModels.*;
 @Validated
 public class SankalpaController {
     private final SankalpaUseCases service;
+    private final ServiceInstanceIdentity serviceIdentity;
 
-    public SankalpaController(SankalpaUseCases service) { this.service = service; }
+    public SankalpaController(SankalpaUseCases service, ServiceInstanceIdentity serviceIdentity) {
+        this.service = service;
+        this.serviceIdentity = serviceIdentity;
+    }
 
     @PostMapping
     @Operation(summary = "Declare a sankalpa",
@@ -131,9 +139,10 @@ public class SankalpaController {
 
     @PostMapping("/{id}/sessions")
     @Operation(summary = "Log a performed session",
-            description = "occurredAt is interpreted in the configured application timezone. The response body identifies the created session.")
+            description = "Reliable clients send the same UUID in body id and Idempotency-Key, plus the expected Sankalpa-Service-Instance. Exact replays return the original session.")
     @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "Session logged"),
+            @ApiResponse(responseCode = "201", description = "Session first created"),
+            @ApiResponse(responseCode = "200", description = "Exact replay returned"),
             @ApiResponse(responseCode = "400", description = "Malformed request",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class))),
@@ -143,15 +152,63 @@ public class SankalpaController {
             @ApiResponse(responseCode = "409", description = "Concurrent modification",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class))),
+            @ApiResponse(responseCode = "410", description = "This session identity was permanently deleted",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class))),
             @ApiResponse(responseCode = "422", description = "Session is not loggable",
                     content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ApiProblemResponse.class)))
     })
-    public ResponseEntity<SessionResponse> logSession(@PathVariable String id,
-                                                       @Valid @RequestBody LogSessionRequest request) {
-        SessionResponse response = SessionResponse.from(
-                service.logSession(SankalpaId.parse(id), request.occurredAt()));
-        return ResponseEntity.status(201).body(response);
+    public ResponseEntity<SessionResponse> logSession(
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(name = "Sankalpa-Service-Instance", required = false) String expectedService,
+            @Valid @RequestBody LogSessionRequest request) {
+        SessionId sessionId = resolveSessionId(request.id(), idempotencyKey, expectedService);
+        SessionLogResult result = service.logSession(
+                SankalpaId.parse(id), sessionId, request.occurredAt());
+        return ResponseEntity.status(result.created() ? 201 : 200)
+                .body(SessionResponse.from(result.session()));
+    }
+
+    @DeleteMapping("/{id}/sessions/{sessionId}")
+    @Operation(summary = "Permanently delete a session",
+            description = "Idempotently deletes or reserves the exact session identity. The expected persistent service instance is required.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Session deleted or deletion already reserved"),
+            @ApiResponse(responseCode = "400", description = "Malformed request",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Sankalpa not found",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class))),
+            @ApiResponse(responseCode = "409", description = "Identity owner or service instance conflicts",
+                    content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ApiProblemResponse.class)))
+    })
+    public ResponseEntity<Void> deleteSession(
+            @PathVariable String id,
+            @PathVariable String sessionId,
+            @RequestHeader(name = "Sankalpa-Service-Instance") String expectedService) {
+        serviceIdentity.require(UUID.fromString(expectedService));
+        service.deleteSession(SankalpaId.parse(id), SessionId.parse(sessionId));
+        return ResponseEntity.noContent().build();
+    }
+
+    private SessionId resolveSessionId(UUID bodyId, String headerId, String expectedService) {
+        UUID parsedHeader = headerId == null || headerId.isBlank()
+                ? null : UUID.fromString(headerId);
+        if (bodyId == null && parsedHeader == null) {
+            return SessionId.newId();
+        }
+        if (bodyId != null && parsedHeader != null && !bodyId.equals(parsedHeader)) {
+            throw new IllegalArgumentException("Body id and Idempotency-Key must match");
+        }
+        if (expectedService == null || expectedService.isBlank()) {
+            throw new IllegalArgumentException("Sankalpa-Service-Instance is required");
+        }
+        serviceIdentity.require(UUID.fromString(expectedService));
+        return new SessionId(bodyId != null ? bodyId : parsedHeader);
     }
 
     @GetMapping("/{id}/sessions")

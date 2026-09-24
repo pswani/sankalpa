@@ -5,6 +5,7 @@ import com.sankalpa.application.port.SankalpaRepository;
 import com.sankalpa.application.port.SessionRepository;
 import com.sankalpa.domain.*;
 import com.sankalpa.domain.commitment.PeriodUnit;
+import com.sankalpa.domain.commitment.PeriodStanding;
 import com.sankalpa.domain.lifecycle.CompletionOutcome;
 import com.sankalpa.domain.lifecycle.LifecycleState;
 import org.junit.jupiter.api.BeforeEach;
@@ -119,12 +120,107 @@ class SankalpaServiceTest {
         service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
         LocalDateTime occurredAt = LocalDateTime.of(2026, 6, 10, 8, 0);
 
-        Session logged = service.logSession(result.id(), occurredAt);
+        SessionId id = SessionId.newId();
+        Session logged = service.logSession(result.id(), id, occurredAt).session();
 
+        assertThat(logged.id()).isEqualTo(id);
         assertThat(logged.occurredAt()).isEqualTo(occurredAt);
         assertThat(logged.loggedAt()).isEqualTo(clock.now());
         assertThat(sessions.saved).containsExactly(logged);
         assertThat(sankalpas.forUpdateReads).isEqualTo(1);
+    }
+
+    @Test
+    void exactReplayReturnsOriginalWithoutRecheckingChangedLifecycle() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        SessionId id = SessionId.newId();
+        LocalDateTime occurredAt = LocalDateTime.of(2026, 6, 10, 8, 0);
+        Session first = service.logSession(result.id(), id, occurredAt).session();
+        clock.now = clock.now.plusHours(1);
+        service.pause(result.id());
+
+        SessionLogResult replay = service.logSession(result.id(), id, occurredAt);
+
+        assertThat(replay.created()).isFalse();
+        assertThat(replay.session()).isEqualTo(first);
+        assertThat(sessions.saved).containsExactly(first);
+    }
+
+    @Test
+    void identityReuseWithDifferentValuesConflictsButDifferentIdsAtSameTimeBothSucceed() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        LocalDateTime occurredAt = LocalDateTime.of(2026, 6, 10, 8, 0);
+        SessionId firstId = SessionId.newId();
+        service.logSession(result.id(), firstId, occurredAt);
+
+        assertThatThrownBy(() -> service.logSession(result.id(), firstId, occurredAt.plusMinutes(1)))
+                .isInstanceOf(SessionIdentityConflictException.class);
+
+        SessionLogResult second = service.logSession(result.id(), SessionId.newId(), occurredAt);
+        assertThat(second.created()).isTrue();
+        assertThat(sessions.saved).hasSize(2);
+    }
+
+    @Test
+    void deleteIsIdempotentAndPreventsDelayedCreate() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        SessionId id = SessionId.newId();
+
+        service.deleteSession(result.id(), id);
+        service.deleteSession(result.id(), id);
+
+        assertThat(sessions.identities.get(id).state()).isEqualTo(SessionIdentityState.DELETED);
+        assertThatThrownBy(() -> service.logSession(
+                result.id(), id, LocalDateTime.of(2026, 6, 10, 8, 0)))
+                .isInstanceOf(SessionDeletedException.class);
+        assertThat(sessions.saved).isEmpty();
+    }
+
+    @Test
+    void deletingActiveSessionRemovesItFromReads() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        SessionId id = SessionId.newId();
+        service.logSession(result.id(), id, LocalDateTime.of(2026, 6, 10, 8, 0));
+
+        service.deleteSession(result.id(), id);
+
+        assertThat(sessions.saved).isEmpty();
+        assertThat(sessions.identities.get(id).state()).isEqualTo(SessionIdentityState.DELETED);
+    }
+
+    @Test
+    void deletionRecalculatesClosedAndOpenPeriodOutcomes() {
+        Sankalpa result = declare(PeriodUnit.DAY);
+        service.begin(result.id(), LocalDateTime.of(2026, 6, 1, 0, 0));
+        SessionId closedId = SessionId.newId();
+        SessionId openId = SessionId.newId();
+        service.logSession(result.id(), closedId, LocalDateTime.of(2026, 6, 10, 8, 0));
+        service.logSession(result.id(), openId, LocalDateTime.of(2026, 6, 15, 8, 0));
+
+        var closedBefore = service.periodOutcomes(
+                result.id(), LocalDate.of(2026, 6, 10), LocalDate.of(2026, 6, 10)).getFirst();
+        var openBefore = service.periodOutcomes(
+                result.id(), LocalDate.of(2026, 6, 15), LocalDate.of(2026, 6, 15)).getFirst();
+        assertThat(closedBefore.standing()).isEqualTo(PeriodStanding.SATISFIED);
+        assertThat(openBefore.standing()).isEqualTo(PeriodStanding.OPEN);
+        assertThat(openBefore.performed()).isEqualTo(1);
+
+        service.deleteSession(result.id(), closedId);
+        service.deleteSession(result.id(), openId);
+
+        var closedAfter = service.periodOutcomes(
+                result.id(), LocalDate.of(2026, 6, 10), LocalDate.of(2026, 6, 10)).getFirst();
+        var openAfter = service.periodOutcomes(
+                result.id(), LocalDate.of(2026, 6, 15), LocalDate.of(2026, 6, 15)).getFirst();
+        assertThat(closedAfter.standing()).isEqualTo(PeriodStanding.UNSATISFIED);
+        assertThat(closedAfter.missed()).isEqualTo(1);
+        assertThat(openAfter.standing()).isEqualTo(PeriodStanding.OPEN);
+        assertThat(openAfter.performed()).isZero();
+        assertThat(openAfter.missed()).isZero();
     }
 
     private Sankalpa declare(PeriodUnit unit) {
@@ -151,17 +247,37 @@ class SankalpaServiceTest {
 
     private static final class FakeSessions implements SessionRepository {
         private final java.util.ArrayList<Session> saved = new java.util.ArrayList<>();
+        private final Map<SessionId, SessionIdentity> identities = new LinkedHashMap<>();
         private LocalDate lastFrom;
         private LocalDate lastUntil;
         private long lastOffset;
         private int lastLimit;
         private long total;
 
+        @Override public Optional<SessionIdentity> findIdentity(SessionId id) {
+            return Optional.ofNullable(identities.get(id));
+        }
+        @Override public void claimIdentity(SessionIdentity identity) {
+            if (identities.putIfAbsent(identity.sessionId(), identity) != null) {
+                throw new SessionIdentityClaimConflictException(null);
+            }
+        }
+        @Override public void markDeleted(SessionId id) {
+            SessionIdentity old = identities.get(id);
+            identities.put(id, new SessionIdentity(id, old.sankalpaId(), SessionIdentityState.DELETED));
+        }
+        @Override public Optional<Session> findById(SessionId id) {
+            return saved.stream().filter(session -> session.id().equals(id)).findFirst();
+        }
         @Override public void save(Session session) { saved.add(session); }
+        @Override public void delete(SessionId id) { saved.removeIf(session -> session.id().equals(id)); }
         @Override public List<Session> findForSankalpa(SankalpaId id, LocalDate from, LocalDate until) {
             lastFrom = from;
             lastUntil = until;
-            return List.of();
+            return saved.stream().filter(session -> session.sankalpaId().equals(id))
+                    .filter(session -> !session.occurredAt().toLocalDate().isBefore(from))
+                    .filter(session -> !session.occurredAt().toLocalDate().isAfter(until))
+                    .toList();
         }
         @Override public List<Session> findPageForSankalpa(
                 SankalpaId id, LocalDate from, LocalDate until, long offset, int limit) {

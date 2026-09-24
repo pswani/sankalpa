@@ -79,6 +79,9 @@ struct RemoteSankalpaServiceTests {
     func keepsServiceOrdering() async {
         let second = "33333333-3333-3333-3333-333333333333"
         let transport = StubTransport()
+        transport.on("GET", "/api/v1/capabilities", body: """
+            {"sessionCommandIdentity":1,"serviceInstanceId":"\(Fixture.serviceInstanceId)"}
+            """)
         transport.on("GET", "/api/v1/sankalpas", body: """
             [\(Fixture.sankalpaJSON(title: "First")),
              \(Fixture.sankalpaJSON(id: second, title: "Second"))]
@@ -147,10 +150,7 @@ struct RemoteSankalpaServiceTests {
     @Test("Logging a session posts it and then re-reads the practice")
     func logSessionPostsAndRefreshes() async {
         let transport = Fixture.readyTransport()
-        transport.on("POST", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions", status: 201, body: """
-            {"id":"\(Fixture.sessionId)","sankalpaId":"\(Fixture.sankalpaId)",
-             "occurredAt":"2026-09-10T07:00:00","loggedAt":"2026-09-10T12:00:00"}
-            """)
+        Fixture.acceptsLoggedSession(on: transport)
         let service = Fixture.service(transport: transport)
         await service.refresh()
 
@@ -161,8 +161,8 @@ struct RemoteSankalpaServiceTests {
 
         #expect(refusal == nil)
         #expect(transport.requests.contains("POST /api/v1/sankalpas/\(Fixture.sankalpaId)/sessions"))
-        // The command is followed by a re-read, which is what puts the new session on screen.
-        #expect(transport.requests.filter { $0 == "GET /api/v1/sankalpas" }.count == 2)
+        // The accepted response is applied durably without depending on another read succeeding.
+        #expect(service.queries.summaries().first?.currentPeriod?.performed == 1)
     }
 
     @Test("A refused session comes back as the app's own error, in the app's own words")
@@ -278,15 +278,22 @@ struct RemoteSankalpaServiceTests {
 
     /// The service pages at 200. A practice longer than one page has to be read through, or the
     /// period arithmetic silently loses its oldest sessions.
-    @Test("Session history is read past the first page")
-    func readsEverySessionPage() async {
+    @Test("Session history is read past the first page and an older-page session can be deleted")
+    func readsEverySessionPage() async throws {
         let transport = Fixture.readyTransport()
         let first = (0..<200).map { "2026-09-01T\(String(format: "%02d", $0 % 24)):00:00" }
         transport.on("GET", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions?page=0&size=200",
-                     body: Fixture.sessionPageJSON(occurrences: first, total: 201))
+                     body: Fixture.sessionPageJSON(
+                        occurrences: first, total: 201, page: 0, totalPages: 2))
         transport.on("GET", "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions?page=1&size=200",
                      body: Fixture.sessionPageJSON(
-                        occurrences: ["2026-09-02T07:00:00"], total: 201))
+                        occurrences: ["2026-09-02T07:00:00"], total: 201,
+                        page: 1, totalPages: 2, ids: [Fixture.sessionId]))
+        transport.on(
+            "DELETE",
+            "/api/v1/sankalpas/\(Fixture.sankalpaId)/sessions/\(Fixture.sessionId)",
+            status: 204, body: ""
+        )
         let service = Fixture.service(transport: transport)
 
         await service.refresh()
@@ -295,5 +302,14 @@ struct RemoteSankalpaServiceTests {
             "GET /api/v1/sankalpas/\(Fixture.sankalpaId)/sessions?page=1&size=200"
         ))
         #expect(service.queries.summaries().first?.totalSessions == 201)
+
+        let olderPageSession = try #require(service.allSessions(
+            for: SankalpaId(UUID(uuidString: Fixture.sankalpaId)!)
+        ).first { $0.id.value.uuidString.lowercased() == Fixture.sessionId })
+        guard case .accepted = await service.deleteSession(olderPageSession) else {
+            Issue.record("expected the older-page session deletion to be accepted")
+            return
+        }
+        #expect(service.queries.summaries().first?.totalSessions == 200)
     }
 }

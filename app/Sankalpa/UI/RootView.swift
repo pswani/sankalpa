@@ -1,5 +1,6 @@
 import SwiftUI
 import SankalpaCore
+import SankalpaStorage
 
 /// Named `AppTab` because SwiftUI's own `Tab` is the view used below.
 enum AppTab: Hashable {
@@ -11,6 +12,7 @@ struct RootView: View {
     @State private var selectedTab: AppTab = .today
     @State private var declaringSankalpa = false
     @State private var listFilter: SankalpaListView.Filter = .active
+    @State private var showingPendingChanges = false
 
     var body: some View {
         @Bindable var model = model
@@ -28,11 +30,14 @@ struct RootView: View {
         .sheet(isPresented: $declaringSankalpa) {
             DeclareSankalpaView()
         }
+        .sheet(isPresented: $showingPendingChanges) {
+            NavigationStack { PendingChangesView() }
+        }
         .alert(
             model.alertTitle,
             isPresented: Binding(
                 get: { model.alertMessage != nil },
-                set: { if !$0 { model.alertMessage = nil } }
+                set: { if !$0 { model.dismissAlert() } }
             ),
             presenting: model.alertMessage
         ) { _ in
@@ -45,26 +50,45 @@ struct RootView: View {
             // logged offline and a session the service has taken are indistinguishable, and the
             // user has no way to know whether their practice is actually recorded anywhere but
             // this phone.
-            if model.isShowingCachedPractice || model.pendingSessionCount > 0 {
+            if model.isShowingCachedPractice || model.pendingSessionCount > 0
+                || model.reliabilityProblem != nil {
                 OfflineNotice(
                     isCached: model.isShowingCachedPractice,
-                    pendingCount: model.pendingSessionCount
+                    pendingCount: model.pendingSessionCount,
+                    hasRecoveryProblem: model.reliabilityProblem != nil,
+                    open: { showingPendingChanges = true }
                 )
             }
         }
         .overlay(alignment: .top) {
             if let confirmation = model.confirmation {
-                ConfirmationBanner(text: confirmation)
+                ConfirmationBanner(
+                    text: confirmation,
+                    showsUndo: model.undoReceipt != nil,
+                    undo: { model.undoLastSession() }
+                )
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .task(id: model.confirmationToken) {
                     // Long enough to notice, short enough not to linger.
-                    try? await Task.sleep(for: .seconds(4))
+                    // A newer confirmation cancels this task. Returning on cancellation is
+                    // essential: the old timer must never clear a newer banner (and its Undo).
+                    do { try await Task.sleep(for: .seconds(4)) }
+                    catch { return }
                     withAnimation(.snappy) { model.clearConfirmation() }
                 }
             }
         }
         .animation(.snappy, value: model.confirmation)
         .sensoryFeedback(.success, trigger: model.successCount)
+        .task(id: model.pendingSessionCount) {
+            // Foreground/launch refreshes remain the primary trigger. While the app stays open,
+            // this bounded cadence also lets a pending deletion finish when connectivity returns.
+            while model.pendingSessionCount > 0 {
+                do { try await Task.sleep(for: .seconds(30)) }
+                catch { return }
+                await model.refresh()
+            }
+        }
     }
 
     private var tabs: some View {
@@ -88,6 +112,19 @@ struct RootView: View {
                 JournalView()
             }
         }
+        .alert(
+            "Log another session?",
+            isPresented: Binding(
+                get: { model.repeatLogProposal != nil },
+                set: { if !$0 && model.repeatLogProposal != nil { model.resolveRepeatLog(confirmed: false) } }
+            ),
+            presenting: model.repeatLogProposal
+        ) { _ in
+            Button("Cancel", role: .cancel) { model.resolveRepeatLog(confirmed: false) }
+            Button("Log another") { model.resolveRepeatLog(confirmed: true) }
+        } message: { proposal in
+            Text("A session for \(proposal.sankalpaTitle) was just logged. Confirm to record a separate session.")
+        }
     }
 }
 
@@ -99,26 +136,38 @@ struct RootView: View {
 private struct OfflineNotice: View {
     let isCached: Bool
     let pendingCount: Int
+    let hasRecoveryProblem: Bool
+    let open: () -> Void
 
     private var text: String {
+        if hasRecoveryProblem {
+            return "Preserved session changes need attention"
+        }
         switch (isCached, pendingCount) {
         case (_, let waiting) where waiting > 0 && isCached:
-            return "Showing this phone's copy · \(waiting) session\(waiting == 1 ? "" : "s") waiting to be sent"
+            return "Showing this phone's copy · \(waiting) session change\(waiting == 1 ? "" : "s") pending"
         case (false, let waiting) where waiting > 0:
-            return "\(waiting) session\(waiting == 1 ? "" : "s") waiting to be sent"
+            return "\(waiting) session change\(waiting == 1 ? "" : "s") pending"
         default:
             return "Showing this phone's copy — the service could not be reached"
         }
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90.icloud")
-                .accessibilityHidden(true)
-            Text(text)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+        Button(action: open) {
+            HStack(spacing: 8) {
+                Image(systemName: hasRecoveryProblem
+                      ? "exclamationmark.triangle" : "arrow.trianglehead.2.clockwise.rotate.90.icloud")
+                    .accessibilityHidden(true)
+                Text(text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .accessibilityHidden(true)
+            }
         }
+        .buttonStyle(.plain)
         .font(.footnote.weight(.medium))
         .foregroundStyle(Palette.pausedTint)
         .padding(.horizontal, 16)
@@ -128,18 +177,107 @@ private struct OfflineNotice: View {
     }
 }
 
+private struct PendingChangesView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingDiscard = false
+
+    var body: some View {
+        List {
+            if let problem = model.reliabilityProblem {
+                Section {
+                    Text(problem)
+                    Button("Discard preserved changes…", role: .destructive) {
+                        confirmingDiscard = true
+                    }
+                } header: {
+                    Text("Recovery required")
+                } footer: {
+                    Text("Discard only if you are sure those unresolved session changes should not be recovered.")
+                }
+            }
+
+            if !model.pendingCreates.isEmpty {
+                Section("Sessions waiting to send") {
+                    ForEach(model.pendingCreates) { operation in
+                        pendingRow(
+                            title: model.summary(operation.sankalpaId)?.title ?? "Sankalpa",
+                            kind: model.quarantinedCreateIds.contains(operation.id)
+                                ? "Session needs attention" : "Session pending",
+                            occurredAt: operation.occurredAt,
+                            destination: operation.serviceInstanceId
+                        )
+                    }
+                }
+            }
+
+            if !model.pendingDeletions.isEmpty {
+                Section("Deletions pending") {
+                    ForEach(model.pendingDeletions) { operation in
+                        pendingRow(
+                            title: model.summary(operation.sankalpaId)?.title ?? "Sankalpa",
+                            kind: "Deletion pending",
+                            occurredAt: operation.occurredAt,
+                            destination: operation.serviceInstanceId
+                        )
+                    }
+                }
+            }
+
+            if model.reliabilityProblem == nil && model.pendingSessionCount == 0 {
+                ContentUnavailableView(
+                    "No pending changes", systemImage: "checkmark.circle",
+                    description: Text("Session changes are up to date.")
+                )
+            }
+        }
+        .navigationTitle("Pending Changes")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+        }
+        .alert("Discard preserved session changes?", isPresented: $confirmingDiscard) {
+            Button("Cancel", role: .cancel) {}
+            Button("Discard", role: .destructive) {
+                model.discardUnrecoverableSessionChanges()
+            }
+        } message: {
+            Text("This cannot be undone. Any session changes that existed only in the preserved journal will be lost.")
+        }
+    }
+
+    private func pendingRow(
+        title: String, kind: String, occurredAt: CalendarMoment, destination: UUID?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.headline)
+            Text("\(kind) · \(occurredAt.day.longDisplayText) at \(AppTime.timeText(occurredAt))")
+                .font(.subheadline)
+            Text("Service \(destination?.uuidString ?? "not yet verified")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// Non-disruptive success feedback, paired with a haptic at the call site.
-///
-/// It used to carry an Undo for a session just logged. The service has no way to remove a logged
-/// session — deleting one is deliberately outside the requirements — so offering to take it back
-/// would be a promise the app cannot keep.
+/// A just-logged session also carries the immediate Undo promised by the logging requirements.
 private struct ConfirmationBanner: View {
     let text: String
+    let showsUndo: Bool
+    let undo: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             Label(text, systemImage: "checkmark.circle.fill")
                 .font(.subheadline.weight(.semibold))
+            if showsUndo {
+                Button("Undo", action: undo)
+                    .font(.subheadline.weight(.bold))
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Permanently deletes the session that was just logged")
+            }
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 16)

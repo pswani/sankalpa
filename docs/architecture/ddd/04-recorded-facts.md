@@ -1,15 +1,19 @@
 # 04 — Recorded Facts
 
-The requirements ask for lifecycle transitions to be audit logged. They do not ask for domain
-events, event handlers, integration events, an outbox, or asynchronous reactions.
+The requirements ask for lifecycle transitions to be audit logged and for unresolved client
+session operations to be retained. They do not ask for server domain events, event handlers,
+integration events, or a server outbox.
 
 So the design records facts directly:
 
 - `LifecycleTimeline` stores lifecycle transitions in order.
 - `Session` stores a logged performed session.
+- The server's session-identity ledger stores the minimum command fact needed for replay and
+  permanent deletion.
+- The iOS operation journal stores unresolved client intent until the server decides it.
 - Persistence stores those facts so they can be queried later.
 
-No event dispatcher is part of the current design.
+Neither reliability store is an event stream, and no event dispatcher is part of the design.
 
 ## Lifecycle Audit
 
@@ -52,8 +56,16 @@ public final class Session {
 }
 ```
 
-A session is a recorded past fact. The current requirements do not include editing or deleting
-sessions.
+A session is a recorded past fact and cannot be edited. Permanent deletion removes that fact from
+the active store, so history and derived outcomes are recalculated as though it were never logged.
+
+Deletion must still reserve the identity. The server retains a technical ledger row containing
+only session ID, sankalpa ID, and `DELETED`; it does not retain the deleted performed-at or logged-at
+fact. This is a resurrection guard, not user-visible audit history.
+
+The client journal is different: it is the durable copy of an unresolved create or delete. Once
+the server accepts a command and the accepted state reaches the local cache, its journal operation
+is removed. A later refusal is retained as a notice only until the user acknowledges it.
 
 ## When Events Would Add Value
 

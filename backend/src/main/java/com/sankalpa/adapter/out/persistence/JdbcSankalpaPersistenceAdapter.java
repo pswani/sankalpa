@@ -1,6 +1,9 @@
 package com.sankalpa.adapter.out.persistence;
 
 import com.sankalpa.application.ConcurrentModificationException;
+import com.sankalpa.application.SessionIdentity;
+import com.sankalpa.application.SessionIdentityClaimConflictException;
+import com.sankalpa.application.SessionIdentityState;
 import com.sankalpa.application.port.SankalpaRepository;
 import com.sankalpa.application.port.SessionRepository;
 import com.sankalpa.domain.*;
@@ -10,6 +13,7 @@ import com.sankalpa.domain.lifecycle.LifecycleState;
 import com.sankalpa.domain.lifecycle.LifecycleTimeline;
 import com.sankalpa.domain.lifecycle.LifecycleTransition;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Repository;
 
@@ -147,12 +151,60 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
     }
 
     @Override
+    public Optional<SessionIdentity> findIdentity(SessionId id) {
+        return jdbc.query("SELECT * FROM session_identity WHERE session_id = ?",
+                (rs, rowNum) -> new SessionIdentity(
+                        SessionId.parse(rs.getString("session_id")),
+                        SankalpaId.parse(rs.getString("sankalpa_id")),
+                        SessionIdentityState.valueOf(rs.getString("identity_state"))),
+                id.toString()).stream().findFirst();
+    }
+
+    @Override
+    public void claimIdentity(SessionIdentity identity) {
+        try {
+            jdbc.update("""
+                    INSERT INTO session_identity (session_id, sankalpa_id, identity_state)
+                    VALUES (?, ?, ?)
+                    """, identity.sessionId().toString(), identity.sankalpaId().toString(),
+                    identity.state().name());
+        } catch (DuplicateKeyException conflict) {
+            throw new SessionIdentityClaimConflictException(conflict);
+        }
+    }
+
+    @Override
+    public void markDeleted(SessionId id) {
+        int updated = jdbc.update("""
+                UPDATE session_identity SET identity_state = 'DELETED'
+                WHERE session_id = ? AND identity_state = 'ACTIVE'
+                """, id.toString());
+        if (updated != 1) {
+            throw new IllegalStateException("Expected one ACTIVE session identity for " + id);
+        }
+    }
+
+    @Override
+    public Optional<Session> findById(SessionId id) {
+        return jdbc.query("SELECT * FROM practice_session WHERE id = ?",
+                (rs, rowNum) -> mapSession(rs), id.toString()).stream().findFirst();
+    }
+
+    @Override
     public void save(Session session) {
         jdbc.update("""
                 INSERT INTO practice_session (id, sankalpa_id, occurred_at, logged_at)
                 VALUES (?, ?, ?, ?)
                 """, session.id().toString(), session.sankalpaId().toString(),
                 format(session.occurredAt()), format(session.loggedAt()));
+    }
+
+    @Override
+    public void delete(SessionId id) {
+        int deleted = jdbc.update("DELETE FROM practice_session WHERE id = ?", id.toString());
+        if (deleted != 1) {
+            throw new IllegalStateException("ACTIVE session identity has no session fact: " + id);
+        }
     }
 
     @Override
