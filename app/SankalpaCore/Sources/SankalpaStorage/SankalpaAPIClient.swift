@@ -49,12 +49,15 @@ public enum APIFailure: Error, Sendable {
 /// service's stable problem `code`.
 public struct SankalpaAPIClient: Sendable {
     private let baseURL: URL
+    private let bearerToken: String?
     private let transport: APITransport
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
-    public init(baseURL: URL, transport: APITransport = URLSessionTransport()) {
+    public init(baseURL: URL, bearerToken: String? = nil,
+                transport: APITransport = URLSessionTransport()) {
         self.baseURL = baseURL
+        self.bearerToken = bearerToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.transport = transport
     }
 
@@ -174,6 +177,7 @@ public struct SankalpaAPIClient: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        authorize(&request)
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -215,6 +219,7 @@ public struct SankalpaAPIClient: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        authorize(&request)
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         let data: Data
         let response: HTTPURLResponse
@@ -240,6 +245,12 @@ public struct SankalpaAPIClient: Sendable {
         }
         let detail = problem.detail ?? "The service refused that change."
         return .refused(code: code, detail: detail, status: status)
+    }
+
+    private func authorize(_ request: inout URLRequest) {
+        if let bearerToken, !bearerToken.isEmpty {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
     }
 
     private static func connectionMessage(for error: Error) -> String {

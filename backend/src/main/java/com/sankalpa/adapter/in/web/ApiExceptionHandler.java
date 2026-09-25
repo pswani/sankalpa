@@ -15,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import com.sankalpa.application.conversation.ConversationFailure;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 
@@ -25,6 +26,16 @@ import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(ConversationFailure.class)
+    ResponseEntity<ProblemDetail> conversation(ConversationFailure exception) {
+        HttpStatus status = switch (exception.code()) {
+            case "ASSISTANT_DISABLED" -> HttpStatus.NOT_FOUND;
+            case "ASSISTANT_BUSY" -> HttpStatus.CONFLICT;
+            case "AGUI_PROTOCOL_ERROR" -> HttpStatus.BAD_REQUEST;
+            default -> HttpStatus.UNPROCESSABLE_ENTITY;
+        };
+        return problem(status, exception.code(), exception.getMessage(), null);
+    }
     private static final Set<String> REQUEST_ERROR_CODES = Set.of(
             "INVALID_DATE_RANGE", "INVALID_PAGINATION", "PERIOD_RANGE_TOO_LARGE");
 

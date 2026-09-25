@@ -23,8 +23,12 @@ It keeps the raw Maven output and a compact, LLM-readable Markdown verdict under
 
 ## Run
 
+Copy `.env.example` to `.env`, then put the local time zone, API token, and provider credentials in
+that file. `.env` is ignored by Git and is loaded when the service starts from this directory.
+
 ```bash
-SANKALPA_TIMEZONE=America/Chicago mvn -Dmaven.repo.local=.m2/repository spring-boot:run
+cp .env.example .env
+mvn -Dmaven.repo.local=.m2/repository spring-boot:run
 ```
 
 The [iOS app](../app/README.md) is a client of this service and holds no data of its own. It must
@@ -35,7 +39,32 @@ By default the API listens on `http://localhost:8080` and stores data in `data/s
 the database with `SANKALPA_DB_URL` and the port with `PORT`. `SANKALPA_TIMEZONE` is required and
 must be an IANA zone id shared with the client (for example, `America/Chicago`). Startup fails when
 it is absent or invalid, avoiding silent interpretation of offset-free timestamps in the wrong zone.
-Authentication and TLS termination are intentionally not configured.
+For simulator-only development the API may run without authentication. Before exposing it to a
+phone or another machine, terminate TLS at the service boundary and set a high-entropy
+`SANKALPA_API_TOKEN`. When set, the same bearer token is required on every `/api/v1` endpoint.
+The iOS settings screen stores it in the device Keychain. Put tokens and provider keys only in the
+ignored `.env` file or the process environment, never in checked-in configuration.
+
+## Conversational assistant
+
+The optional assistant is disabled by default, so ordinary REST and manual app features do not
+depend on a model provider. Its HTTP/SSE endpoint is `POST /api/v1/assistant/runs`, using the pinned
+`ag-ui-sankalpa/1` profile advertised by `/api/v1/capabilities`.
+
+For deterministic local use, enable the scripted adapter:
+
+```bash
+SANKALPA_ASSISTANT_ENABLED=true SANKALPA_LLM_PROVIDER=fake \
+SANKALPA_TIMEZONE=America/Chicago mvn -Dmaven.repo.local=.m2/repository spring-boot:run
+```
+
+For OpenAI, the example environment selects `SANKALPA_LLM_MODEL=gpt-6-luna`. It also sets
+`SANKALPA_LLM_REASONING_EFFORT=none`, which that model requires for tool calling through Chat
+Completions. `SANKALPA_LLM_TIMEOUT` defaults to `PT30S` and
+`SANKALPA_ASSISTANT_RUNS_PER_MINUTE` defaults to 30. The provider key remains server-side.
+LangChain4j is isolated behind the application-owned `ConversationModel` port; it returns tool
+requests but never executes them. All writes are persisted proposals and require an explicit,
+replay-safe confirmation.
 
 ## Published API contract
 
@@ -59,6 +88,7 @@ endpoint cannot disappear unnoticed.
 | GET | `/api/v1/sankalpas/{id}/sessions?page=0&size=50` | Paginated session history, newest first |
 | GET | `/api/v1/sankalpas/{id}/lifecycle-history` | Lifecycle audit |
 | GET | `/api/v1/sankalpas/{id}/period-outcomes` | Range-bounded derived outcomes |
+| POST | `/api/v1/assistant/runs` | Pinned AG-UI JSON request and SSE response |
 
 Business-rule failures use `application/problem+json` with a stable `code` property. Request enums
 use uppercase names such as `MEDITATION`, `PHYSICAL_ACTIVITY`, `DAY`, and `SUCCESSFUL`.

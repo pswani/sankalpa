@@ -85,12 +85,19 @@ public enum SessionDeleteDisposition: Sendable {
     case rejected(SankalpaCommandError)
 }
 
+public struct AssistantCapability: Equatable, Sendable {
+    public let enabled: Bool
+    public let profile: String
+    public let authenticationRequired: Bool
+}
+
 /// Service-backed practice with a durable operation overlay. Session creates and deletes are
 /// journaled before network I/O, use one stable id, and remain visible (or suppressed) until the
 /// originating service reaches a conclusive result.
 @MainActor
 public final class RemoteSankalpaService {
     private var client: SankalpaAPIClient
+    private var bearerToken: String?
     private let transport: APITransport
     private let store = SnapshotStore()
     private let clock: SankalpaClock
@@ -106,20 +113,24 @@ public final class RemoteSankalpaService {
     public private(set) var refreshFailure: String?
     public private(set) var hasLoaded = false
     public private(set) var isShowingCachedPractice = false
+    public private(set) var isServiceReachable = false
     public private(set) var pending: [PendingSession] = []
     public private(set) var pendingDeletions: [PendingSessionDeletion] = []
+    public private(set) var assistantCapability: AssistantCapability?
 
     static let sessionPageSize = 200
 
     public init(
         location: ServiceLocation, clock: SankalpaClock,
-        cache: PracticeCache = PracticeCache(), transport: APITransport = URLSessionTransport()
+        cache: PracticeCache = PracticeCache(), transport: APITransport = URLSessionTransport(),
+        bearerToken: String? = nil
     ) {
         self.location = location
         self.clock = clock
         self.cache = cache
         self.transport = transport
-        client = SankalpaAPIClient(baseURL: location.url, transport: transport)
+        self.bearerToken = bearerToken
+        client = SankalpaAPIClient(baseURL: location.url, bearerToken: bearerToken, transport: transport)
         journal = cache.loadJournal(for: location)
         queries = SankalpaApplicationService(sankalpas: store, sessions: store, clock: clock)
         loadFromCache()
@@ -149,16 +160,25 @@ public final class RemoteSankalpaService {
         bindingRevision = UUID()
         refreshPublicationRevision = UUID()
         self.location = location
-        client = SankalpaAPIClient(baseURL: location.url, transport: transport)
+        client = SankalpaAPIClient(baseURL: location.url, bearerToken: bearerToken, transport: transport)
         journal = cache.loadJournal(for: location)
         store.replace(sankalpas: [], sessions: [])
         applyOperations()
         hasLoaded = false
         isShowingCachedPractice = false
+        isServiceReachable = false
+        assistantCapability = nil
         refreshFailure = nil
         loadFromCache()
         await sync()
         return true
+    }
+
+    public func useBearerToken(_ token: String?) {
+        bearerToken = token?.trimmingCharacters(in: .whitespacesAndNewlines)
+        client = SankalpaAPIClient(baseURL: location.url, bearerToken: bearerToken, transport: transport)
+        isServiceReachable = false
+        assistantCapability = nil
     }
 
     private func loadFromCache() {
@@ -213,6 +233,13 @@ public final class RemoteSankalpaService {
                 return cached
             }
             throw failure
+        }
+        if let assistant = response.assistant {
+            assistantCapability = AssistantCapability(enabled: assistant.enabled,
+                profile: assistant.aguiProfile,
+                authenticationRequired: assistant.authenticationRequired)
+        } else {
+            assistantCapability = nil
         }
         let capability = ServiceCapability(
             sessionCommandIdentity: response.sessionCommandIdentity,
@@ -285,13 +312,29 @@ public final class RemoteSankalpaService {
             applyOperations()
             hasLoaded = true
             isShowingCachedPractice = false
+            isServiceReachable = true
             refreshFailure = nil
             _ = persistSnapshot()
         } catch let failure as APIFailure {
+            guard binding == bindingRevision,
+                  publication == refreshPublicationRevision
+            else { return }
+            isServiceReachable = false
+            assistantCapability = nil
             refreshFailure = failure.fallbackMessage
         } catch let failure as WireDecodingError {
+            guard binding == bindingRevision,
+                  publication == refreshPublicationRevision
+            else { return }
+            isServiceReachable = false
+            assistantCapability = nil
             refreshFailure = failure.message
         } catch {
+            guard binding == bindingRevision,
+                  publication == refreshPublicationRevision
+            else { return }
+            isServiceReachable = false
+            assistantCapability = nil
             refreshFailure = "Your practice could not be reached right now. Try again."
         }
     }

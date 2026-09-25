@@ -6,3 +6,6 @@ app/build/
 app/SankalpaCore/.build/
 *.xcuserdatad
 __pycache__/
+
+# Local backend credentials and model configuration
+backend/.env

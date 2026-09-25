@@ -14,6 +14,11 @@ struct LogSessionView: View {
     /// True while the service is being asked, so the button cannot be tapped twice.
     @State private var isLogging = false
 
+    init(summary: SankalpaSummary, initialOccurredAt: Date? = nil) {
+        self.summary = summary
+        _occurredAt = State(initialValue: initialOccurredAt ?? Date())
+    }
+
     private var commitment: Commitment { summary.commitment }
 
     /// The newest moment the domain would still accept. After a pause or a stop this is before

@@ -1,10 +1,11 @@
 import SwiftUI
 import SankalpaCore
 import SankalpaStorage
+import SankalpaConversation
 
 /// Named `AppTab` because SwiftUI's own `Tab` is the view used below.
 enum AppTab: Hashable {
-    case today, sankalpas, journal
+    case today, sankalpas, journal, assistant
 }
 
 struct RootView: View {
@@ -13,6 +14,9 @@ struct RootView: View {
     @State private var declaringSankalpa = false
     @State private var listFilter: SankalpaListView.Filter = .active
     @State private var showingPendingChanges = false
+    @State private var assistantDetailId: SankalpaId?
+    @State private var declarationDraft: DeclarationDraft?
+    @State private var sessionDraft: (SankalpaSummary, Date)?
 
     var body: some View {
         @Bindable var model = model
@@ -28,7 +32,13 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $declaringSankalpa) {
-            DeclareSankalpaView()
+            DeclareSankalpaView(draft: declarationDraft)
+        }
+        .sheet(isPresented: Binding(get: { assistantDetailId != nil }, set: { if !$0 { assistantDetailId = nil } })) {
+            if let id = assistantDetailId { NavigationStack { SankalpaDetailView(sankalpaId: id) } }
+        }
+        .sheet(isPresented: Binding(get: { sessionDraft != nil }, set: { if !$0 { sessionDraft = nil } })) {
+            if let (summary, date) = sessionDraft { LogSessionView(summary: summary, initialOccurredAt: date) }
         }
         .sheet(isPresented: $showingPendingChanges) {
             NavigationStack { PendingChangesView() }
@@ -111,6 +121,17 @@ struct RootView: View {
             Tab("Journal", systemImage: "book.closed", value: AppTab.journal) {
                 JournalView()
             }
+            if model.isServiceReachable,
+               model.assistantCapability?.enabled == true,
+               model.assistantCapability?.profile == AGUI.profile {
+                Tab("Assistant", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.assistant) {
+                    AssistantView(appModel: model, navigate: { id in
+                        if let id { assistantDetailId = SankalpaId(id) }
+                        else { listFilter = .all; selectedTab = .sankalpas }
+                    }, edit: editProposal)
+                    .id(model.apiToken)
+                }
+            }
         }
         .alert(
             "Log another session?",
@@ -126,6 +147,50 @@ struct RootView: View {
             Text("A session for \(proposal.sankalpaTitle) was just logged. Confirm to record a separate session.")
         }
     }
+
+    private func editProposal(_ proposal: AssistantProposal) {
+        switch proposal.kind {
+        case .declareSankalpa:
+            guard let title = proposal.metadata.string("title"),
+                  let description = proposal.metadata.string("description"),
+                  let action = actionType(proposal.metadata.string("actionType")),
+                  let start = date(proposal.metadata.string("startDate")),
+                  let unit = periodUnit(proposal.metadata.string("periodUnit")),
+                  let times = proposal.metadata.int("timesPerPeriod") else { return }
+            declarationDraft = DeclarationDraft(title: title, description: description,
+                actionType: action, startDate: start, periodUnit: unit,
+                timesPerPeriod: times, periodCount: proposal.metadata.int("periodCount"))
+            declaringSankalpa = true
+        case .logSession:
+            guard let idText = proposal.metadata.string("sankalpaId"), let uuid = UUID(uuidString: idText),
+                  let summary = model.summary(SankalpaId(uuid)),
+                  let occurred = dateTime(proposal.metadata.string("occurredAt")) else { return }
+            sessionDraft = (summary, occurred)
+        }
+    }
+
+    private func date(_ text: String?) -> Date? {
+        guard let text else { return nil }
+        let formatter = DateFormatter(); formatter.calendar = .current; formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"; return formatter.date(from: text)
+    }
+    private func dateTime(_ text: String?) -> Date? {
+        guard let text else { return nil }
+        let formatter = DateFormatter(); formatter.calendar = .current; formatter.timeZone = .current
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter.date(from: text)
+    }
+    private func actionType(_ value: String?) -> ActionType? {
+        switch value { case "MEDITATION": .meditation; case "PRANAYAMA": .pranayama; case "PHYSICAL_ACTIVITY": .physicalActivity; case "OBSERVANCE": .observance; default: nil }
+    }
+    private func periodUnit(_ value: String?) -> PeriodUnit? {
+        switch value { case "DAY": .day; case "WEEK": .week; case "MONTH": .month; case "YEAR": .year; default: nil }
+    }
+}
+
+private extension Dictionary where Key == String, Value == JSONValue {
+    func string(_ key: String) -> String? { if case .string(let value)? = self[key] { value } else { nil } }
+    func int(_ key: String) -> Int? { if case .number(let value)? = self[key] { Int(value) } else { nil } }
 }
 
 /// Says that what is on screen came from this phone rather than from the service just now, and

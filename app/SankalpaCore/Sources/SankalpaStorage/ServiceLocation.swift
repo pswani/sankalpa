@@ -10,14 +10,16 @@ public struct ServiceLocation: Equatable, Sendable {
     /// A host name, an mDNS name like `studio.local`, or an address.
     public let host: String
     public let port: Int
+    public let scheme: String
 
     public static let defaultPort = 8080
     /// What the simulator needs, and a sensible thing to show someone who has not changed it yet.
     public static let simulatorDefault = ServiceLocation(host: "localhost", port: defaultPort)
 
-    public init(host: String, port: Int = ServiceLocation.defaultPort) {
+    public init(host: String, port: Int = ServiceLocation.defaultPort, scheme: String = "http") {
         self.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
         self.port = port
+        self.scheme = scheme == "https" ? "https" : "http"
     }
 
     /// Reads "studio.local", "studio.local:8080" or "http://studio.local:8080" the same way, so a
@@ -29,8 +31,10 @@ public struct ServiceLocation: Equatable, Sendable {
         var remainder = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !remainder.isEmpty else { return nil }
 
-        for scheme in ["http://", "https://"] where remainder.lowercased().hasPrefix(scheme) {
-            remainder = String(remainder.dropFirst(scheme.count))
+        var parsedScheme = "http"
+        for prefix in ["http://", "https://"] where remainder.lowercased().hasPrefix(prefix) {
+            parsedScheme = String(prefix.dropLast(3))
+            remainder = String(remainder.dropFirst(prefix.count))
         }
         // A trailing path is not part of where the service is; the client builds its own paths.
         if let slash = remainder.firstIndex(of: "/") {
@@ -62,20 +66,21 @@ public struct ServiceLocation: Equatable, Sendable {
               })
         else { return nil }
 
-        self.init(host: host, port: port)
+        self.init(host: host, port: port, scheme: parsedScheme)
     }
 
     public var url: URL {
         // Every component has been validated, so this cannot fail; the fallback keeps the type
         // honest without making every caller handle an impossible case.
-        URL(string: "http://\(host):\(port)") ?? ServiceLocation.simulatorDefault.fallbackURL
+        URL(string: "\(scheme)://\(host):\(port)") ?? ServiceLocation.simulatorDefault.fallbackURL
     }
 
     private var fallbackURL: URL { URL(string: "http://localhost:8080")! }
 
     /// What the settings screen shows and the recovery screen names.
     public var displayText: String {
-        port == ServiceLocation.defaultPort ? host : "\(host):\(port)"
+        let authority = port == ServiceLocation.defaultPort ? host : "\(host):\(port)"
+        return scheme == "https" ? "https://\(authority)" : authority
     }
 }
 

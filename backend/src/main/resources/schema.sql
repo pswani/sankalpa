@@ -43,6 +43,25 @@ CREATE TABLE IF NOT EXISTS service_metadata (
     metadata_value VARCHAR(255) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS assistant_proposal (
+    proposal_id VARCHAR(36) PRIMARY KEY,
+    thread_id VARCHAR(36) NOT NULL,
+    source_run_id VARCHAR(36) NOT NULL UNIQUE,
+    kind VARCHAR(32) NOT NULL CHECK (kind IN ('LOG_SESSION', 'DECLARE_SANKALPA')),
+    schema_version INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    status VARCHAR(16) NOT NULL CHECK (status IN ('PENDING', 'EXECUTED', 'CANCELLED', 'EXPIRED', 'REJECTED')),
+    confirmation_id VARCHAR(36) UNIQUE,
+    result_resource_id VARCHAR(36),
+    failure_code VARCHAR(64),
+    created_at VARCHAR(30) NOT NULL,
+    expires_at VARCHAR(30) NOT NULL,
+    resolved_at VARCHAR(30)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_proposal_thread_status
+    ON assistant_proposal(thread_id, status);
+
 INSERT INTO session_identity (session_id, sankalpa_id, identity_state)
 SELECT p.id, p.sankalpa_id, 'ACTIVE'
 FROM practice_session p

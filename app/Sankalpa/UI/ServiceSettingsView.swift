@@ -13,6 +13,7 @@ struct ServiceSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var text = ""
+    @State private var token = ""
     @State private var isChecking = false
     /// Set when what was typed is not a name this app can use, so the refusal sits with the field.
     @State private var problem: String?
@@ -20,7 +21,9 @@ struct ServiceSettingsView: View {
     /// What was typed, once it reads as somewhere to look.
     private var location: ServiceLocation? { ServiceLocation(text: text) }
 
-    private var hasChanged: Bool { location != nil && location != model.serviceLocation }
+    private var hasChanged: Bool {
+        (location != nil && location != model.serviceLocation) || token != model.apiToken
+    }
 
     var body: some View {
         NavigationStack {
@@ -49,6 +52,16 @@ struct ServiceSettingsView: View {
                             """
                         )
                     }
+                }
+
+                Section {
+                    SecureField("Bearer token", text: $token)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("Authentication")
+                } footer: {
+                    Text("Stored only in this device's Keychain. Leave empty only for a local development service with authentication disabled.")
                 }
 
                 if model.serviceLocationIsOverridden {
@@ -98,7 +111,10 @@ struct ServiceSettingsView: View {
                     .disabled(!hasChanged || isChecking || model.pendingSessionCount > 0)
                 }
             }
-            .onAppear { text = model.serviceLocation.displayText }
+            .onAppear {
+                text = model.serviceLocation.displayText
+                token = model.apiToken
+            }
         }
     }
 
@@ -107,10 +123,14 @@ struct ServiceSettingsView: View {
             problem = "That is not the name of a computer. Try something like studio.local."
             return
         }
-        guard location != model.serviceLocation else { return dismiss() }
         isChecking = true
         Task {
-            await model.useService(at: location)
+            if location != model.serviceLocation { await model.useService(at: location) }
+            guard await model.useAPIToken(token) else {
+                problem = "The authentication token could not be stored securely."
+                isChecking = false
+                return
+            }
             isChecking = false
             dismiss()
         }

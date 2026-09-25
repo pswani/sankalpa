@@ -22,6 +22,7 @@ struct RemoteSankalpaServiceTests {
         await service.refresh()
 
         #expect(service.hasLoaded)
+        #expect(service.isServiceReachable)
         #expect(service.refreshFailure == nil)
         #expect(transport.requests.contains("GET /api/v1/sankalpas"))
         #expect(transport.requests.contains(
@@ -30,6 +31,22 @@ struct RemoteSankalpaServiceTests {
         #expect(transport.requests.contains { $0.hasPrefix(
             "GET /api/v1/sankalpas/\(Fixture.sankalpaId)/sessions"
         ) })
+    }
+
+    @Test("A configured bearer credential protects every service request")
+    func sendsBearerCredentialOnOrdinaryAPIRequests() async {
+        let transport = Fixture.readyTransport()
+        let service = RemoteSankalpaService(location: Fixture.location,
+            clock: StubClock(CalendarMoment(day: day(2026, 9, 10), hour: 12)),
+            cache: PracticeCache(directory: Fixture.temporaryDirectory()),
+            transport: transport, bearerToken: "secret-token")
+
+        await service.refresh()
+
+        #expect(!transport.sentRequests.isEmpty)
+        #expect(transport.sentRequests.allSatisfy {
+            $0.value(forHTTPHeaderField: "Authorization") == "Bearer secret-token"
+        })
     }
 
     @Test("The summary a refresh produces carries the current period and the session count")
@@ -110,6 +127,7 @@ struct RemoteSankalpaServiceTests {
         await service.refresh()
 
         #expect(!service.hasLoaded)
+        #expect(!service.isServiceReachable)
         #expect(service.refreshFailure?.contains("not answering") == true)
     }
 
@@ -118,14 +136,24 @@ struct RemoteSankalpaServiceTests {
     @Test("A later failure keeps the snapshot that is already loaded")
     func laterFailureKeepsTheSnapshot() async {
         let transport = Fixture.readyTransport()
+        transport.on("GET", "/api/v1/capabilities", body: """
+            {"sessionCommandIdentity":1,"serviceInstanceId":"\(Fixture.serviceInstanceId)",
+             "assistant":{"enabled":true,"aguiProfile":"ag-ui-sankalpa/1",
+                          "maxMessages":20,"maxEventBytes":65536,"maxRequestBytes":262144,
+                          "authenticationRequired":true}}
+            """)
         let service = Fixture.service(transport: transport)
         await service.refresh()
         #expect(service.queries.summaries().count == 1)
+        #expect(service.isServiceReachable)
+        #expect(service.assistantCapability?.enabled == true)
 
         transport.failEverything(with: URLError(.timedOut))
         await service.refresh()
 
         #expect(service.hasLoaded)
+        #expect(!service.isServiceReachable)
+        #expect(service.assistantCapability == nil)
         #expect(service.refreshFailure != nil)
         #expect(service.queries.summaries().count == 1)
     }
