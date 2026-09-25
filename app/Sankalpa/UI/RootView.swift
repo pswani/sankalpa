@@ -11,6 +11,7 @@ enum AppTab: Hashable {
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var selectedTab: AppTab = .today
+    @State private var previousNonAssistantTab: AppTab = .today
     @State private var declaringSankalpa = false
     @State private var listFilter: SankalpaListView.Filter = .active
     @State private var showingPendingChanges = false
@@ -35,7 +36,18 @@ struct RootView: View {
             DeclareSankalpaView(draft: declarationDraft)
         }
         .sheet(isPresented: Binding(get: { assistantDetailId != nil }, set: { if !$0 { assistantDetailId = nil } })) {
-            if let id = assistantDetailId { NavigationStack { SankalpaDetailView(sankalpaId: id) } }
+            if let id = assistantDetailId {
+                NavigationStack {
+                    SankalpaDetailView(sankalpaId: id)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close", systemImage: "xmark") {
+                                    assistantDetailId = nil
+                                }
+                            }
+                        }
+                }
+            }
         }
         .sheet(isPresented: Binding(get: { sessionDraft != nil }, set: { if !$0 { sessionDraft = nil } })) {
             if let (summary, date) = sessionDraft { LogSessionView(summary: summary, initialOccurredAt: date) }
@@ -128,9 +140,18 @@ struct RootView: View {
                     AssistantView(appModel: model, navigate: { id in
                         if let id { assistantDetailId = SankalpaId(id) }
                         else { listFilter = .all; selectedTab = .sankalpas }
+                    }, close: {
+                        selectedTab = previousNonAssistantTab
                     }, edit: editProposal)
                     .id(model.apiToken)
                 }
+            }
+        }
+        .onChange(of: selectedTab) { oldTab, newTab in
+            if newTab == .assistant, oldTab != .assistant {
+                previousNonAssistantTab = oldTab
+            } else if newTab != .assistant {
+                previousNonAssistantTab = newTab
             }
         }
         .alert(

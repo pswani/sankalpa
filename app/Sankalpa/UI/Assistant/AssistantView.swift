@@ -4,11 +4,14 @@ import SankalpaConversation
 struct AssistantView: View {
     @State private var session: AssistantSession
     @State private var speech = SpeechComposer()
+    private let close: @MainActor () -> Void
     private let edit: @MainActor (AssistantProposal) -> Void
 
     init(appModel: AppModel,
          navigate: @escaping @MainActor @Sendable (UUID?) -> Void,
+         close: @escaping @MainActor () -> Void,
          edit: @escaping @MainActor (AssistantProposal) -> Void) {
+        self.close = close
         self.edit = edit
         let token = appModel.apiToken
         let client = AGUIClient(baseURL: appModel.serviceLocation.url, bearerToken: token)
@@ -66,6 +69,14 @@ struct AssistantView: View {
                 composer
             }
             .navigationTitle("Assistant")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Back", systemImage: "chevron.backward") {
+                        speech.stop()
+                        close()
+                    }
+                }
+            }
             .onChange(of: speech.transcript) { _, value in session.composer = value }
             .onDisappear { speech.stop() }
         }
@@ -83,7 +94,12 @@ struct AssistantView: View {
                 }.accessibilityHint("Recognized words remain editable and are not sent automatically")
                 Spacer()
                 if session.isBusy { ProgressView().accessibilityLabel("Understanding") }
-                Button("Send") { Task { await session.send() } }
+                Button("Send") {
+                    // Sending commits the reviewed transcript; recording must not continue in
+                    // parallel or a late partial result can repopulate the cleared composer.
+                    speech.stop()
+                    Task { await session.send() }
+                }
                     .buttonStyle(.borderedProminent)
                     .disabled(session.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.isBusy)
             }
