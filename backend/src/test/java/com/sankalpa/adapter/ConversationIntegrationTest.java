@@ -182,6 +182,27 @@ class ConversationIntegrationTest {
     }
 
     @Test
+    void confirmedSessionNavigatesToItsSankalpaRatherThanItsSession() {
+        var sankalpa = sankalpas.declare("Evening meditation", "Sit", ActionType.MEDITATION,
+                LocalDate.now(), PeriodUnit.DAY, 1, null);
+        sankalpas.begin(sankalpa.id(), null);
+        UUID thread = UUID.randomUUID();
+        Proposal proposal = proposals.proposeSession(thread, UUID.randomUUID(), sankalpa.id(),
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC), "Evening sit", List.of());
+
+        var result = coordinator.run(new ConversationCoordinator.RunInput(thread, UUID.randomUUID(),
+                List.of(), List.of("refresh_practice", "navigate_to_sankalpa"),
+                new ConversationCoordinator.Resume(proposal.id(), false, UUID.randomUUID())));
+
+        assertThat(result.effects()).extracting(ConversationCoordinator.Effect::name)
+                .containsExactly("refresh_practice", "navigate_to_sankalpa");
+        assertThat(result.effects().get(1).argumentsJson())
+                .isEqualTo("{\"sankalpaId\":\"" + sankalpa.id() + "\"}");
+        assertThat(result.resourceId())
+                .isEqualTo(((Proposal.LogSessionPayload) proposal.payload()).sessionId().value());
+    }
+
+    @Test
     void offsetTimestampFromModelCreatesLocalSessionProposal() {
         var sankalpa = sankalpas.declare("Gym", "Workout", ActionType.PHYSICAL_ACTIVITY,
                 LocalDate.now(), PeriodUnit.DAY, 1, null);

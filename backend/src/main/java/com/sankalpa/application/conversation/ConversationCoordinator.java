@@ -115,8 +115,10 @@ public final class ConversationCoordinator {
             effects.add(new Effect("refresh_practice", "{\"reason\":\"" + reason + "\"}"));
         }
         if (input.clientTools().contains("navigate_to_sankalpa")) {
+            UUID sankalpaId = p.payload() instanceof Proposal.LogSessionPayload session
+                    ? session.sankalpaId().value() : p.resultResourceId();
             effects.add(new Effect("navigate_to_sankalpa",
-                    "{\"sankalpaId\":\"" + p.resultResourceId() + "\"}"));
+                    "{\"sankalpaId\":\"" + sankalpaId + "\"}"));
         }
         return new RunResult(List.of(new Message(stable("resolved", p.id()), text)), effects,
                 null, null, p.resultResourceId());
