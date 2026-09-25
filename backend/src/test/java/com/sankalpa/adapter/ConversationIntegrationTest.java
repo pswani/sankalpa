@@ -182,6 +182,28 @@ class ConversationIntegrationTest {
     }
 
     @Test
+    void offsetTimestampFromModelCreatesLocalSessionProposal() {
+        var sankalpa = sankalpas.declare("Gym", "Workout", ActionType.PHYSICAL_ACTIVITY,
+                LocalDate.now(), PeriodUnit.DAY, 1, null);
+        var occurredAt = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+                .minusMinutes(1).withNano(0);
+        sankalpas.begin(sankalpa.id(), occurredAt.toLocalDateTime().minusHours(1));
+        model.enqueue(new ConversationModel.ToolRequestsTurn(List.of(new ConversationModel.ToolCall(
+                "log", "propose_log_session", """
+                {"sankalpaId":"%s","occurredAt":"%s","userSummary":"Gym session",
+                 "alternativeSankalpaIds":[]}
+                """.formatted(sankalpa.id(), occurredAt)))));
+
+        var result = coordinator.run(new ConversationCoordinator.RunInput(UUID.randomUUID(),
+                UUID.randomUUID(), List.of(new ConversationModel.Message("user", "Gym at 7 PM")),
+                List.of(), null));
+
+        assertThat(result.proposal()).isNotNull();
+        assertThat(((Proposal.LogSessionPayload) result.proposal().payload()).occurredAt())
+                .isEqualTo(occurredAt.toLocalDateTime());
+    }
+
+    @Test
     void ordinaryInputIsRejectedWhileThreadHasPendingProposal() {
         UUID thread = UUID.randomUUID();
         declaration(thread, UUID.randomUUID());

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.sankalpa.application.conversation.*;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -22,6 +24,7 @@ import static com.sankalpa.adapter.in.conversation.AGUIModels.*;
 @RestController
 @RequestMapping("/api/v1/assistant")
 public final class ConversationController {
+    private static final Logger log = LoggerFactory.getLogger(ConversationController.class);
     public static final String AGUI_PROFILE = "ag-ui-sankalpa/1";
     private final ConversationCoordinator coordinator;
     private final ThreadPoolTaskExecutor executor;
@@ -64,6 +67,8 @@ public final class ConversationController {
             catch (IOException ignored) { }
             emitter.complete();
         } catch (Exception failure) {
+            log.warn("Assistant run failed ({}): {}",
+                    failure.getClass().getSimpleName(), failure.getMessage());
             try { send(emitter, event("RUN_ERROR", input, Map.of(
                     "code", "ASSISTANT_UNAVAILABLE", "message", "The assistant is unavailable."))); }
             catch (IOException ignored) { }

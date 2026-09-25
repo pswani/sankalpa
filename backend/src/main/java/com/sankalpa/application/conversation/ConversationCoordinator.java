@@ -6,9 +6,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Bounded, model-independent orchestration. It never holds a transaction across model calls. */
 public final class ConversationCoordinator {
+    private static final Logger log = LoggerFactory.getLogger(ConversationCoordinator.class);
     public static final int MAX_ROUNDS = 3;
     public static final int MAX_TOOL_CALLS = 3;
     private final ConversationModel model;
@@ -68,6 +71,7 @@ public final class ConversationCoordinator {
                     if (repairUsed || !"ASSISTANT_COULD_NOT_INTERPRET".equals(failure.code())) {
                         throw failure;
                     }
+                    log.warn("Assistant tool request rejected ({}): {}", call.name(), failure.getMessage());
                     repairUsed = true;
                     results.add(new ConversationModel.ToolResult(call.id(), call.name(),
                             "{\"error\":\"INVALID_TOOL_REQUEST\"}"));
