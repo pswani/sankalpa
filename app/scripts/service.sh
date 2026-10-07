@@ -24,7 +24,9 @@ service_start() {
     local port="$1" name="$2" backend
     backend="$(service_backend_dir)"
 
+    # An empty token overrides one in backend/.env: the suites and the seeder send no credential.
     ( cd "$backend" && \
+      SANKALPA_API_TOKEN="" \
       SANKALPA_TIMEZONE="$SERVICE_TIMEZONE" \
       SANKALPA_DB_URL="jdbc:sqlite:$SERVICE_WORK_DIR/$name.db" \
       PORT="$port" \

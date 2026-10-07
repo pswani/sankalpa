@@ -1,5 +1,9 @@
 import Foundation
 import Observation
+import os
+
+/// Diagnostics for assistant runs (Console.app, subsystem `com.sankalpa`). Never the transcript.
+private let assistantLog = Logger(subsystem: "com.sankalpa", category: "assistant")
 
 public protocol AssistantRunClient: Sendable {
     func run(_ input: AGUI.RunAgentInput) -> AsyncThrowingStream<AGUI.Event, Error>
@@ -105,10 +109,17 @@ public final class AssistantSession {
             }
             return true
         } catch let error as AGUIError {
+            assistantLog.error("Run \(runId.uuidString, privacy: .public) failed: \(String(describing: error), privacy: .public)")
             errorMessage = error.userMessage
+            if error.closesProposal {
+                // The server has settled it, so the card must not keep offering Confirm.
+                pendingProposal = nil
+                pendingConfirmationId = nil
+            }
             state = pendingProposal.map(State.awaitingConfirmation) ?? .failed(error.userMessage)
             return false
         } catch {
+            assistantLog.error("Run \(runId.uuidString, privacy: .public) was interrupted: \(error.localizedDescription, privacy: .public)")
             let message = "The assistant connection was interrupted. You can retry safely."
             errorMessage = message
             state = pendingProposal.map(State.awaitingConfirmation) ?? .failed(message)
@@ -118,6 +129,13 @@ public final class AssistantSession {
 }
 
 private extension AGUIError {
+    /// Server outcomes after which the open proposal can no longer be confirmed.
+    var closesProposal: Bool {
+        guard case .server(let code, _) = self else { return false }
+        return ["PROPOSAL_EXPIRED", "PROPOSAL_REJECTED", "PROPOSAL_NOT_FOUND",
+                "PROPOSAL_ALREADY_RESOLVED"].contains(code)
+    }
+
     var userMessage: String {
         switch self {
         case .server(_, let message), .unavailable(let message): message

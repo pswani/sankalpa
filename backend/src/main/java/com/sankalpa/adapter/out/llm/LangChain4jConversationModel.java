@@ -35,7 +35,8 @@ public final class LangChain4jConversationModel implements ConversationModel {
                     "assistant".equals(m.role()) ? AiMessage.from(m.content()) : UserMessage.from(m.content())));
             for (ToolResult result : request.results()) {
                 ToolExecutionRequest call = ToolExecutionRequest.builder()
-                        .id(result.id()).name(result.name()).arguments("{}").build();
+                        .id(result.id()).name(result.name())
+                        .arguments(replayableArguments(result.argumentsJson())).build();
                 messages.add(AiMessage.from(call));
                 messages.add(ToolExecutionResultMessage.from(call, result.resultJson()));
             }
@@ -58,6 +59,19 @@ public final class LangChain4jConversationModel implements ConversationModel {
             throw new ConversationFailure("ASSISTANT_UNAVAILABLE",
                     "The configured model provider is unavailable");
         }
+    }
+
+    /**
+     * The model's own arguments, so it can tell which result answers which call. Arguments that are
+     * not a JSON object (a malformed call being repaired) are replaced so the provider accepts them.
+     */
+    private String replayableArguments(String arguments) {
+        try {
+            if (arguments != null && json.readTree(arguments).isObject()) return arguments;
+        } catch (JsonProcessingException ignored) {
+            // Fall through to the empty object.
+        }
+        return "{}";
     }
 
     private ToolSpecification specification(ToolDefinition definition) {

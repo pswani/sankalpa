@@ -61,19 +61,31 @@ public final class ConversationController {
                     ? Map.of("type", "success") : interrupt(result.proposal());
             send(emitter, event("RUN_FINISHED", input, Map.of("outcome", outcome)));
             emitter.complete();
+            log.info("Assistant run {} on thread {} finished: {}", input.runId(), input.threadId(),
+                    outcomeLabel(input, result));
         } catch (ConversationFailure failure) {
+            log.info("Assistant run {} on thread {} ended with {}: {}", input.runId(),
+                    input.threadId(), failure.code(), failure.getMessage());
             try { send(emitter, event("RUN_ERROR", input, Map.of(
                     "code", failure.code(), "message", safeMessage(failure)))); }
             catch (IOException ignored) { }
             emitter.complete();
         } catch (Exception failure) {
-            log.warn("Assistant run failed ({}): {}",
-                    failure.getClass().getSimpleName(), failure.getMessage());
+            log.error("Assistant run {} on thread {} failed unexpectedly", input.runId(),
+                    input.threadId(), failure);
             try { send(emitter, event("RUN_ERROR", input, Map.of(
                     "code", "ASSISTANT_UNAVAILABLE", "message", "The assistant is unavailable."))); }
             catch (IOException ignored) { }
             emitter.complete();
         }
+    }
+
+    private static String outcomeLabel(ConversationCoordinator.RunInput input,
+                                       ConversationCoordinator.RunResult result) {
+        if (result.proposal() != null) return "proposal " + result.proposal().kind();
+        if (input.resume() != null) return input.resume().cancelled() ? "cancelled" : "confirmed";
+        if (!result.effects().isEmpty()) return "app action " + result.effects().getFirst().name();
+        return "reply";
     }
 
     private void message(SseEmitter emitter, ConversationCoordinator.RunInput input,

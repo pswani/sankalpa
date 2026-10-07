@@ -1,5 +1,10 @@
 import Foundation
+import os
 import SankalpaCore
+
+/// Diagnostics for synchronization with the service (Console.app, subsystem `com.sankalpa`).
+/// Messages carry states and service reasons, never practice titles or descriptions.
+private let syncLog = Logger(subsystem: "com.sankalpa", category: "sync")
 
 final class SnapshotStore: SankalpaRepository, SessionRepository {
     private var sankalpas: [Sankalpa] = []
@@ -322,6 +327,7 @@ public final class RemoteSankalpaService {
             isServiceReachable = false
             assistantCapability = nil
             refreshFailure = failure.fallbackMessage
+            syncLog.notice("Refresh failed: \(self.refreshFailure ?? "", privacy: .public)")
         } catch let failure as WireDecodingError {
             guard binding == bindingRevision,
                   publication == refreshPublicationRevision
@@ -329,6 +335,7 @@ public final class RemoteSankalpaService {
             isServiceReachable = false
             assistantCapability = nil
             refreshFailure = failure.message
+            syncLog.notice("Refresh failed: \(self.refreshFailure ?? "", privacy: .public)")
         } catch {
             guard binding == bindingRevision,
                   publication == refreshPublicationRevision
@@ -336,6 +343,7 @@ public final class RemoteSankalpaService {
             isServiceReachable = false
             assistantCapability = nil
             refreshFailure = "Your practice could not be reached right now. Try again."
+            syncLog.notice("Refresh failed: \(self.refreshFailure ?? "", privacy: .public)")
         }
     }
 
@@ -613,6 +621,7 @@ public final class RemoteSankalpaService {
         proposed.quarantinedCreates.removeAll { $0 == entry.id }
         proposed.recentLogs.removeAll { $0.sessionId == entry.id }
         proposed.notices.append(describe(entry, refusedBy: failure))
+        syncLog.notice("Service rejected pending session: \(failure.fallbackMessage, privacy: .public)")
         return persistJournal(proposed)
     }
 
@@ -623,10 +632,12 @@ public final class RemoteSankalpaService {
         var proposed = journal
         proposed.deletions.removeAll { $0.id == entry.id && $0.revision == entry.revision }
         proposed.notices.append("The session could not be deleted. \(failure.fallbackMessage)")
+        syncLog.notice("Service rejected pending deletion: \(failure.fallbackMessage, privacy: .public)")
         return persistJournal(proposed)
     }
 
     private func recordNotice(_ text: String) {
+        syncLog.notice("\(text, privacy: .public)")
         var proposed = journal
         if !proposed.notices.contains(text) { proposed.notices.append(text) }
         _ = persistJournal(proposed)
@@ -643,6 +654,7 @@ public final class RemoteSankalpaService {
         if !proposed.quarantinedCreates.contains(entry.id) {
             proposed.quarantinedCreates.append(entry.id)
         }
+        syncLog.error("Quarantined pending session \(entry.id.value.uuidString, privacy: .public): the service response did not match it")
         let message = "A service response did not match pending session \(entry.id.value.uuidString). It was preserved and automatic retries stopped."
         if !proposed.notices.contains(message) { proposed.notices.append(message) }
         return persistJournal(proposed)

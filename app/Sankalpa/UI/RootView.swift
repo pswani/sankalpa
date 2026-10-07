@@ -32,7 +32,8 @@ struct RootView: View {
                 tabs
             }
         }
-        .sheet(isPresented: $declaringSankalpa) {
+        // A draft prefilled from an assistant proposal is for that one sheet, not the next Declare.
+        .sheet(isPresented: $declaringSankalpa, onDismiss: { declarationDraft = nil }) {
             DeclareSankalpaView(draft: declarationDraft)
         }
         .sheet(isPresented: Binding(get: { assistantDetailId != nil }, set: { if !$0 { assistantDetailId = nil } })) {
@@ -190,16 +191,12 @@ struct RootView: View {
         }
     }
 
+    // Proposal values use the REST wire format, where Java drops zero seconds ("…T19:00").
     private func date(_ text: String?) -> Date? {
-        guard let text else { return nil }
-        let formatter = DateFormatter(); formatter.calendar = .current; formatter.timeZone = .current
-        formatter.dateFormat = "yyyy-MM-dd"; return formatter.date(from: text)
+        text.flatMap(WireFormat.day(from:)).map { AppTime.date(from: $0) }
     }
     private func dateTime(_ text: String?) -> Date? {
-        guard let text else { return nil }
-        let formatter = DateFormatter(); formatter.calendar = .current; formatter.timeZone = .current
-        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        return formatter.date(from: text)
+        text.flatMap(WireFormat.moment(from:)).map { AppTime.date(from: $0) }
     }
     private func actionType(_ value: String?) -> ActionType? {
         switch value { case "MEDITATION": .meditation; case "PRANAYAMA": .pranayama; case "PHYSICAL_ACTIVITY": .physicalActivity; case "OBSERVANCE": .observance; default: nil }

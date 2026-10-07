@@ -32,6 +32,15 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(resumes[0].payload, resumes[1].payload)
     }
 
+    func testExpiredConfirmationRemovesTheProposalCard() async {
+        let client = ScriptedClient(scripts: [.proposal(UUID()), .expired])
+        let session = AssistantSession(client: client)
+        session.composer = "Declare"; await session.send()
+        await session.confirm()
+
+        XCTAssertEqual(session.state, .failed("Expired"))
+    }
+
     func testEditingSpeechTranscriptDoesNotSendUntilExplicitSend() async {
         let client = ScriptedClient(scripts: [.success(text: "Done")])
         let session = AssistantSession(client: client)
@@ -56,7 +65,7 @@ final class AssistantSessionTests: XCTestCase {
 }
 
 private final class ScriptedClient: AssistantRunClient, @unchecked Sendable {
-    enum Script { case proposal(UUID), success(text: String), successWithRefresh(text: String), error }
+    enum Script { case proposal(UUID), success(text: String), successWithRefresh(text: String), error, expired }
     private let lock = NSLock(); private var scripts: [Script]; private var stored: [AGUI.RunAgentInput] = []
     init(scripts: [Script]) { self.scripts = scripts }
     var inputs: [AGUI.RunAgentInput] { lock.withLock { stored } }
@@ -69,6 +78,9 @@ private final class ScriptedClient: AssistantRunClient, @unchecked Sendable {
             case .error:
                 continuation.yield(.runError(threadId: input.threadId, runId: input.runId,
                     code: "ASSISTANT_UNAVAILABLE", message: "Try again"))
+            case .expired:
+                continuation.yield(.runError(threadId: input.threadId, runId: input.runId,
+                    code: "PROPOSAL_EXPIRED", message: "Expired"))
             case .success(let text), .successWithRefresh(let text):
                 let id = UUID(); continuation.yield(.textStart(threadId: input.threadId, runId: input.runId, messageId: id))
                 continuation.yield(.textContent(threadId: input.threadId, runId: input.runId, messageId: id, delta: text))

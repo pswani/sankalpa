@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -39,7 +40,25 @@ public final class ProposalService implements ConversationUseCases {
 
     @Override
     public Proposal findPendingByThread(UUID threadId) {
-        return proposals.findPendingByThread(threadId).orElse(null);
+        return livePending(threadId).orElse(null);
+    }
+
+    /** The thread's open proposal, recording expiry first so a stale one never blocks the thread. */
+    private Optional<Proposal> livePending(UUID threadId) {
+        Optional<Proposal> pending = proposals.findPendingByThread(threadId);
+        if (pending.isPresent() && isExpired(pending.get())) {
+            proposals.update(expire(pending.get()));
+            return Optional.empty();
+        }
+        return pending;
+    }
+
+    private boolean isExpired(Proposal proposal) {
+        return !clock.now().isBefore(proposal.expiresAt());
+    }
+
+    private Proposal expire(Proposal proposal) {
+        return proposal.resolve(Proposal.Status.EXPIRED, null, null, "PROPOSAL_EXPIRED", clock.now());
     }
 
     @Override
@@ -104,12 +123,13 @@ public final class ProposalService implements ConversationUseCases {
         Proposal proposal = lockedOwned(threadId, proposalId);
         if (proposal.status() == Proposal.Status.EXECUTED
                 && confirmationId.equals(proposal.confirmationId())) return new Resolution(proposal, true);
+        if (proposal.status() == Proposal.Status.EXPIRED) return new Resolution(proposal, true);
         if (proposal.status() != Proposal.Status.PENDING) alreadyResolved();
-        if (!clock.now().isBefore(proposal.expiresAt())) {
-            Proposal expired = proposal.resolve(Proposal.Status.EXPIRED, null, null,
-                    "PROPOSAL_EXPIRED", clock.now());
+        if (isExpired(proposal)) {
+            // Returned rather than thrown, so the EXPIRED status commits with this transaction.
+            Proposal expired = expire(proposal);
             proposals.update(expired);
-            throw new ConversationFailure("PROPOSAL_EXPIRED", "The proposal has expired");
+            return new Resolution(expired, false);
         }
         try {
             UUID result;
@@ -136,7 +156,10 @@ public final class ProposalService implements ConversationUseCases {
     @Override
     public Resolution cancel(UUID threadId, UUID proposalId) {
         Proposal proposal = lockedOwned(threadId, proposalId);
-        if (proposal.status() == Proposal.Status.CANCELLED) return new Resolution(proposal, true);
+        // Cancelling asks that nothing be changed, which already holds for these outcomes.
+        if (proposal.status() == Proposal.Status.CANCELLED
+                || proposal.status() == Proposal.Status.EXPIRED
+                || proposal.status() == Proposal.Status.REJECTED) return new Resolution(proposal, true);
         if (proposal.status() != Proposal.Status.PENDING) alreadyResolved();
         Proposal cancelled = proposal.resolve(Proposal.Status.CANCELLED, null, null, null, clock.now());
         proposals.update(cancelled);
@@ -153,7 +176,7 @@ public final class ProposalService implements ConversationUseCases {
     }
 
     private void rejectPending(UUID threadId) {
-        if (proposals.findPendingByThread(threadId).isPresent()) {
+        if (livePending(threadId).isPresent()) {
             throw new ConversationFailure("PROPOSAL_ALREADY_RESOLVED",
                     "Confirm or cancel the pending proposal first");
         }

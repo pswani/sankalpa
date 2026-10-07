@@ -15,6 +15,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 import com.sankalpa.application.conversation.ConversationFailure;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
@@ -88,6 +90,9 @@ public class ApiExceptionHandler {
 
     private ResponseEntity<ProblemDetail> problem(HttpStatus status, String code, String detail,
                                                    Map<String, String> errors) {
+        // Lets the request log name the refusal without logging the request itself.
+        RequestContextHolder.currentRequestAttributes().setAttribute(
+                RequestLoggingFilter.PROBLEM_CODE, code, RequestAttributes.SCOPE_REQUEST);
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setType(URI.create("urn:sankalpa:problem:" + code.toLowerCase()));
         problem.setTitle(status.getReasonPhrase());

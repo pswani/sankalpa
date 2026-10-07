@@ -45,6 +45,8 @@ FAILURE_LINES="$(grep -E '^\[ERROR\]|<<< FAILURE|<<< ERROR' "$RAW_LOG" | tail -8
   fi
 } > "$SUMMARY"
 
+# Keep the ten newest runs; older ones only accumulate.
+rm -f -- "$LOG_DIR"/test-*-summary.md(Nom[11,-1]) "$LOG_DIR"/test-*[0-9]Z.log(Nom[11,-1])
 cp "$RAW_LOG" "$LOG_DIR/latest.log"
 cp "$SUMMARY" "$LOG_DIR/latest-summary.md"
 echo "LLM summary: $SUMMARY"

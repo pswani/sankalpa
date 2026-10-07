@@ -18,6 +18,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -47,6 +48,7 @@ class ConversationIntegrationTest {
     @Autowired ConversationContextLoader contexts;
     @Autowired ConversationToolExecutor tools;
     @Autowired ObjectMapper json;
+    @Autowired ProposalRepository proposalRepository;
 
     @BeforeEach
     void clean() {
@@ -225,16 +227,68 @@ class ConversationIntegrationTest {
     }
 
     @Test
-    void ordinaryInputIsRejectedWhileThreadHasPendingProposal() {
+    void ordinaryInputPresentsThePendingProposalAgain() {
         UUID thread = UUID.randomUUID();
-        declaration(thread, UUID.randomUUID());
+        Proposal pending = declaration(thread, UUID.randomUUID());
         var input = new ConversationCoordinator.RunInput(thread, UUID.randomUUID(),
                 List.of(new ConversationModel.Message("user", "Change it")), List.of(), null);
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> coordinator.run(input))
-                .isInstanceOf(ConversationFailure.class)
-                .hasMessageContaining("Confirm or cancel");
+        // No model turn is scripted: the pending proposal is answered without consulting it.
+        var result = coordinator.run(input);
+
+        assertThat(result.proposal().id()).isEqualTo(pending.id());
+        assertThat(result.messages().getFirst().text()).contains("confirm or cancel");
+        assertThat(count("assistant_proposal")).isEqualTo(1);
         assertThat(count("sankalpa")).isZero();
+    }
+
+    @Test
+    void expiredProposalIsRecordedAndNoLongerBlocksTheThread() {
+        UUID thread = UUID.randomUUID();
+        Proposal stale = storedProposal(thread, new Proposal.DeclareSankalpaPayload("Meditate", "",
+                ActionType.MEDITATION, LocalDate.now(), PeriodUnit.DAY, 1, null, List.of()),
+                utcNow().minusMinutes(1));
+
+        var confirm = new ConversationCoordinator.RunInput(thread, UUID.randomUUID(), List.of(),
+                List.of(), new ConversationCoordinator.Resume(stale.id(), false, UUID.randomUUID()));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> coordinator.run(confirm))
+                .isInstanceOf(ConversationFailure.class)
+                .extracting(failure -> ((ConversationFailure) failure).code())
+                .isEqualTo("PROPOSAL_EXPIRED");
+
+        assertThat(storedStatus(stale.id())).isEqualTo("EXPIRED");
+        assertThat(proposals.findPendingByThread(thread)).isNull();
+        assertThat(proposals.cancel(thread, stale.id()).replay()).isTrue();
+        assertThat(count("sankalpa")).isZero();
+    }
+
+    @Test
+    void unconfirmedExpiredProposalIsExpiredWhenTheThreadMovesOn() {
+        UUID thread = UUID.randomUUID();
+        Proposal stale = storedProposal(thread, new Proposal.DeclareSankalpaPayload("Meditate", "",
+                ActionType.MEDITATION, LocalDate.now(), PeriodUnit.DAY, 1, null, List.of()),
+                utcNow().minusMinutes(1));
+
+        assertThat(proposals.findPendingByThread(thread)).isNull();
+        assertThat(storedStatus(stale.id())).isEqualTo("EXPIRED");
+    }
+
+    @Test
+    void confirmationRefusedByTheDomainIsRecordedAsRejected() {
+        var notBegun = sankalpas.declare("Walk", "", ActionType.PHYSICAL_ACTIVITY,
+                LocalDate.now(), PeriodUnit.DAY, 1, null);
+        UUID thread = UUID.randomUUID();
+        Proposal proposal = storedProposal(thread, new Proposal.LogSessionPayload(
+                com.sankalpa.domain.SessionId.newId(), notBegun.id(), "Walk",
+                utcNow().minusMinutes(5), "Walked"), utcNow().plusMinutes(30));
+
+        var resolution = proposals.confirm(thread, proposal.id(), UUID.randomUUID());
+
+        assertThat(resolution.proposal().status()).isEqualTo(Proposal.Status.REJECTED);
+        assertThat(resolution.proposal().failureCode()).isEqualTo("SANKALPA_NOT_IN_PROGRESS");
+        assertThat(storedStatus(proposal.id())).isEqualTo("REJECTED");
+        assertThat(proposals.findPendingByThread(thread)).isNull();
+        assertThat(count("practice_session")).isZero();
     }
 
     @Test
@@ -320,6 +374,25 @@ class ConversationIntegrationTest {
         return proposals.proposeDeclaration(thread, run, "Meditate", "Sit daily",
                 ActionType.MEDITATION, LocalDate.now(), PeriodUnit.DAY, 1, null,
                 List.of("startDate"));
+    }
+
+    private Proposal storedProposal(UUID thread, Proposal.Payload payload, LocalDateTime expiresAt) {
+        Proposal.Kind kind = payload instanceof Proposal.LogSessionPayload
+                ? Proposal.Kind.LOG_SESSION : Proposal.Kind.DECLARE_SANKALPA;
+        Proposal proposal = new Proposal(UUID.randomUUID(), thread, UUID.randomUUID(), kind,
+                Proposal.SCHEMA_VERSION, payload, Proposal.Status.PENDING, null, null, null,
+                expiresAt.minusMinutes(30), expiresAt, null);
+        proposalRepository.insert(proposal);
+        return proposal;
+    }
+
+    private static LocalDateTime utcNow() {
+        return LocalDateTime.now(java.time.ZoneOffset.UTC);
+    }
+
+    private String storedStatus(UUID proposalId) {
+        return jdbc.queryForObject("SELECT status FROM assistant_proposal WHERE proposal_id = ?",
+                String.class, proposalId.toString());
     }
 
     private int count(String table) {

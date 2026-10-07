@@ -39,7 +39,9 @@ xcrun simctl install "$DEVICE" "$APP"
 # The practice lives in the service, so the app is pointed at one rather than given a store.
 # SIMCTL_CHILD_ is how simctl passes an environment variable through to the app.
 SERVICE_URL="${SANKALPA_API_BASE_URL:-http://localhost:8080}"
-if ! curl -sf --max-time 2 "$SERVICE_URL/api/v1/sankalpas" -o /dev/null; then
+# 401 means the service is up and protected by SANKALPA_API_TOKEN, which the app sends itself.
+HTTP_CODE="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "$SERVICE_URL/api/v1/capabilities" || true)"
+if [ "$HTTP_CODE" != 200 ] && [ "$HTTP_CODE" != 401 ]; then
   echo
   echo "The Sankalpa service is not answering at $SERVICE_URL." >&2
   echo "Start it first, with the same time zone this Mac is in:" >&2

@@ -45,6 +45,16 @@ phone or another machine, terminate TLS at the service boundary and set a high-e
 The iOS settings screen stores it in the device Keychain. Put tokens and provider keys only in the
 ignored `.env` file or the process environment, never in checked-in configuration.
 
+### Logs
+
+The service logs to the console; `scripts/deploy.sh` captures it in `logs/server.log` and keeps
+the replaced run's log as `logs/server.previous.log`. Each API change or refusal logs one line,
+such as `POST /api/v1/sankalpas/{id}/pause -> 422 INVALID_LIFECYCLE_TRANSITION (8 ms)`, and each
+assistant run logs its outcome. Successful reads log at DEBUG
+(`LOGGING_LEVEL_COM_SANKALPA_ADAPTER_IN_WEB=DEBUG` to see them). Request bodies, practice text and
+assistant transcripts are never logged. The iOS app logs sync and assistant failures to the unified
+log under subsystem `com.sankalpa`, visible in Console.app.
+
 ## Conversational assistant
 
 The optional assistant is disabled by default, so ordinary REST and manual app features do not

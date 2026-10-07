@@ -9,6 +9,8 @@ struct LogSessionView: View {
     @Environment(\.dismiss) private var dismiss
 
     let summary: SankalpaSummary
+    /// A time proposed elsewhere (the assistant's Edit), kept instead of the newest eligible moment.
+    private let initialOccurredAt: Date?
     @State private var occurredAt = Date()
     @State private var error: SankalpaCommandError?
     /// True while the service is being asked, so the button cannot be tapped twice.
@@ -16,6 +18,7 @@ struct LogSessionView: View {
 
     init(summary: SankalpaSummary, initialOccurredAt: Date? = nil) {
         self.summary = summary
+        self.initialOccurredAt = initialOccurredAt
         _occurredAt = State(initialValue: initialOccurredAt ?? Date())
     }
 
@@ -107,8 +110,13 @@ struct LogSessionView: View {
                 }
             }
             // Opens at the newest eligible moment rather than now, so a paused or finished
-            // sankalpa starts on a time that will actually be accepted.
-            .onAppear { occurredAt = range.upperBound }
+            // sankalpa starts on a time that will actually be accepted. A proposed time is kept,
+            // brought inside the eligible range.
+            .onAppear {
+                occurredAt = initialOccurredAt.map {
+                    min(max($0, range.lowerBound), range.upperBound)
+                } ?? range.upperBound
+            }
         }
         .presentationDetents([.medium, .large])
     }

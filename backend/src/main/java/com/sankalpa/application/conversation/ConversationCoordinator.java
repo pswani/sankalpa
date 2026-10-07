@@ -36,9 +36,13 @@ public final class ConversationCoordinator {
             if (input.resume() != null) return resume(input);
             Proposal replay = proposals.findBySourceRunId(input.runId());
             if (replay != null) return proposalResult(input, replay);
-            if (proposals.findPendingByThread(input.threadId()) != null) {
-                throw new ConversationFailure("PROPOSAL_ALREADY_RESOLVED",
-                        "Confirm or cancel the pending proposal first");
+            Proposal pending = proposals.findPendingByThread(input.threadId());
+            if (pending != null) {
+                // The client may have lost the run that created it. Presenting it again lets the
+                // user confirm or cancel instead of leaving the thread blocked.
+                return new RunResult(List.of(new Message(UUID.randomUUID(),
+                        "Please confirm or cancel this first. " + summary(pending))),
+                        List.of(), pending, pending.id(), null);
             }
             ConversationModel.Context context = contexts.load();
             List<ConversationModel.ToolResult> results = new ArrayList<>();
@@ -74,7 +78,7 @@ public final class ConversationCoordinator {
                     log.warn("Assistant tool request rejected ({}): {}", call.name(), failure.getMessage());
                     repairUsed = true;
                     results.add(new ConversationModel.ToolResult(call.id(), call.name(),
-                            "{\"error\":\"INVALID_TOOL_REQUEST\"}"));
+                            call.argumentsJson(), "{\"error\":\"INVALID_TOOL_REQUEST\"}"));
                     continue;
                 }
                 if (outcome instanceof ConversationToolExecutor.ProposalResult proposal) {
@@ -85,7 +89,7 @@ public final class ConversationCoordinator {
                             null, null, null);
                 }
                 results.add(new ConversationModel.ToolResult(call.id(), call.name(),
-                        ((ConversationToolExecutor.ReadResult) outcome).json()));
+                        call.argumentsJson(), ((ConversationToolExecutor.ReadResult) outcome).json()));
             }
             throw new ConversationFailure("ASSISTANT_LIMIT_REACHED", "Assistant round limit reached");
         } finally {
@@ -104,8 +108,13 @@ public final class ConversationCoordinator {
         if (resume.confirmationId() == null) invalid();
         resolution = proposals.confirm(input.threadId(), resume.interruptId(), resume.confirmationId());
         Proposal p = resolution.proposal();
+        if (p.status() == Proposal.Status.EXPIRED) {
+            throw new ConversationFailure("PROPOSAL_EXPIRED",
+                    "That proposal expired before it was confirmed. Nothing was changed; please ask again.");
+        }
         if (p.status() == Proposal.Status.REJECTED) {
-            throw new ConversationFailure("PROPOSAL_REJECTED", p.failureCode());
+            throw new ConversationFailure("PROPOSAL_REJECTED",
+                    "The service refused that change (" + p.failureCode() + "). Nothing was saved.");
         }
         String reason = p.kind() == Proposal.Kind.LOG_SESSION ? "SESSION_LOGGED" : "SANKALPA_DECLARED";
         String text = p.kind() == Proposal.Kind.LOG_SESSION

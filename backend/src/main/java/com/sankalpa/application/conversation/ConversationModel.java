@@ -17,7 +17,8 @@ public interface ConversationModel {
                         List<ToolDefinition> tools, List<ToolResult> results,
                         int remainingToolCalls) {}
     record ToolCall(String id, String name, String argumentsJson) {}
-    record ToolResult(String id, String name, String resultJson) {}
+    /** A tool call the model made this run, replayed with its own arguments and the result. */
+    record ToolResult(String id, String name, String argumentsJson, String resultJson) {}
 
     sealed interface ModelTurn permits TextTurn, ToolRequestsTurn, RefusalTurn {}
     record TextTurn(String text) implements ModelTurn {}

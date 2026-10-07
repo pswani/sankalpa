@@ -40,8 +40,13 @@ public class ApplicationConfiguration {
         return new TransactionalSankalpaUseCases(service, manager);
     }
 
+    /**
+     * Receives the undecorated service: every proposal call already runs inside the transaction
+     * owned by {@link TransactionalConversationUseCases}. A nested transactional wrapper would mark
+     * that shared transaction rollback-only on a domain refusal, losing the REJECTED status.
+     */
     @Bean
-    ProposalService proposalService(ProposalRepository proposals, SankalpaUseCases sankalpas,
+    ProposalService proposalService(ProposalRepository proposals, SankalpaService sankalpas,
                                     SankalpaClock clock,
                                     @Value("${sankalpa.assistant.proposal-lifetime:PT30M}") Duration lifetime) {
         return new ProposalService(proposals, sankalpas, clock, lifetime);
