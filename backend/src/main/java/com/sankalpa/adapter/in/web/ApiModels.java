@@ -59,7 +59,11 @@ public final class ApiModels {
                     description = "Past occurrence time, interpreted in the configured application timezone")
             LocalDateTime occurredAt) {}
 
-    public record CapabilitiesResponse(int sessionCommandIdentity, UUID serviceInstanceId) {}
+    public record CapabilitiesResponse(int sessionCommandIdentity, UUID serviceInstanceId,
+                                       AssistantCapability assistant) {}
+    public record AssistantCapability(boolean enabled, String aguiProfile,
+                                      int maxMessages, int maxEventBytes,
+                                      int maxRequestBytes, boolean authenticationRequired) {}
 
     public record SankalpaResponse(
             UUID id,

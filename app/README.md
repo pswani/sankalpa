@@ -41,6 +41,18 @@ screen, which is where someone with nothing on screen yet will be. `SANKALPA_API
 scheme's environment overrides the setting without disturbing it, which is how a UI run points the
 app at its own service.
 
+When the service advertises the `ag-ui-sankalpa/1` capability, an Assistant tab appears. It can
+answer questions and prepare session or declaration proposals, but nothing is saved until the
+proposal card is confirmed. Cancel and Edit cancel the server proposal first. Dictation uses
+on-device speech recognition to fill the same editable composer and never sends automatically.
+
+For a protected service, enter its bearer credential under **Sankalpas → Sankalpa service →
+Authentication**. The credential is stored in the iOS Keychain and is sent to both the ordinary
+REST API and assistant endpoint. A physical-device deployment must use an `https://` service
+address backed by a certificate the device trusts; the app does not weaken platform TLS checks.
+Enabling the assistant sends transcript text and bounded practice context to the model provider
+configured on the service, but microphone audio stays on the device.
+
 **A normal launch shows whatever the service holds.** There is no demo seed inside the app any
 more: with a shared service there is no per-launch sandbox to seed and no delete endpoint to undo
 it with. [`scripts/seed-demo.py`](scripts/seed-demo.py) builds the same five-sankalpa fixture
@@ -54,7 +66,7 @@ through the API instead — point it at a throwaway service, never at your own.
 
 ```text
 app/
-  SankalpaCore/          Swift package, two library targets
+  SankalpaCore/          Swift package, domain, storage, and conversation library targets
     Sources/SankalpaCore/
       Domain/            Sankalpa, Session, Commitment, LifecycleTimeline, PeriodOutcomeCalculator
       Application/       Ports, use cases, queries, read models

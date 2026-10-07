@@ -27,6 +27,8 @@ final class AppModel {
     }
 
     private let remote: RemoteSankalpaService
+    private let credentials = ServiceCredentialStore()
+    private(set) var apiToken: String
 
     /// Everything the list and Today screens render, refreshed after each command.
     private(set) var summaries: [SankalpaSummary] = []
@@ -49,6 +51,9 @@ final class AppModel {
     /// True when what is on screen came from the phone's copy rather than from the service just
     /// now, so a screen can say the practice may be behind.
     private(set) var isShowingCachedPractice = false
+    /// The assistant is intentionally unavailable unless the latest complete refresh proved that
+    /// the service can be reached. Cached practice remains useful offline; conversation does not.
+    private(set) var isServiceReachable = false
 
     /// A refusal to show in an alert. Commands that have their own inline error surface return the
     /// error instead of setting this.
@@ -88,6 +93,7 @@ final class AppModel {
     init(remote: RemoteSankalpaService, locations: ServiceLocationStore = ServiceLocationStore()) {
         self.remote = remote
         self.locations = locations
+        self.apiToken = credentials.load()
         self.today = remote.today()
         // The cache may already have something to show, so the first frame is not empty while the
         // service is being asked.
@@ -104,11 +110,13 @@ final class AppModel {
         }
         #endif
         let locations = ServiceLocationStore()
+        let credential = ServiceCredentialStore().load()
         self.init(
             remote: RemoteSankalpaService(
                 location: locations.current,
                 clock: SystemClock(),
-                transport: AppModel.transport()
+                transport: AppModel.transport(),
+                bearerToken: credential
             ),
             locations: locations
         )
@@ -129,6 +137,7 @@ final class AppModel {
 
     /// Where the service is, as the app is currently configured.
     var serviceLocation: ServiceLocation { remote.serviceLocation }
+    var assistantCapability: AssistantCapability? { remote.assistantCapability }
     var reliabilityProblem: String? { remote.reliabilityProblem }
     var pendingCreates: [PendingSession] { remote.pending }
     var pendingDeletions: [PendingSessionDeletion] { remote.pendingDeletions }
@@ -150,6 +159,15 @@ final class AppModel {
         }
         locations.save(location)
         finishSync()
+    }
+
+    @discardableResult
+    func useAPIToken(_ token: String) async -> Bool {
+        guard credentials.save(token) else { return false }
+        apiToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        remote.useBearerToken(apiToken)
+        await refresh()
+        return true
     }
 
     // MARK: - Reporting range
@@ -200,6 +218,7 @@ final class AppModel {
         today = remote.today()
         pendingSessionCount = remote.pendingChangeCount
         isShowingCachedPractice = remote.isShowingCachedPractice
+        isServiceReachable = remote.isServiceReachable
         summaries = remote.queries.summaries()
         // Built once per refresh rather than per card per render. The work is small, but calling
         // into the application layer from inside a view's body is the kind of thing that stops

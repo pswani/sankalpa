@@ -12,12 +12,12 @@ import SankalpaCore
 /// Both ends interpret these values in one configured zone — the device's for the app
 /// (`AppTime.timeZone`), `SANKALPA_TIMEZONE` for the service. The deployment has to set them to
 /// the same zone; nothing in the format can check that.
-enum WireFormat {
+public enum WireFormat {
 
     // MARK: - Decoding
 
     /// `2026-09-21`
-    static func day(from text: String) -> CalendarDay? {
+    public static func day(from text: String) -> CalendarDay? {
         let parts = text.split(separator: "-", omittingEmptySubsequences: false)
         guard parts.count == 3,
               let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2])
@@ -30,7 +30,7 @@ enum WireFormat {
     /// All three shapes are real: Java's `ISO_LOCAL_DATE_TIME` drops the seconds when they are
     /// zero and prints sub-second digits when the clock has them. Fractional seconds are read and
     /// discarded, because `CalendarMoment` has one-second resolution.
-    static func moment(from text: String) -> CalendarMoment? {
+    public static func moment(from text: String) -> CalendarMoment? {
         let halves = text.split(separator: "T", omittingEmptySubsequences: false)
         guard halves.count == 2, let day = day(from: String(halves[0])) else { return nil }
 

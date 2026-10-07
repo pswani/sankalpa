@@ -1,5 +1,10 @@
 import Foundation
+import os
 import SankalpaCore
+
+/// Diagnostics for synchronization with the service (Console.app, subsystem `com.sankalpa`).
+/// Messages carry states and service reasons, never practice titles or descriptions.
+private let syncLog = Logger(subsystem: "com.sankalpa", category: "sync")
 
 final class SnapshotStore: SankalpaRepository, SessionRepository {
     private var sankalpas: [Sankalpa] = []
@@ -85,12 +90,19 @@ public enum SessionDeleteDisposition: Sendable {
     case rejected(SankalpaCommandError)
 }
 
+public struct AssistantCapability: Equatable, Sendable {
+    public let enabled: Bool
+    public let profile: String
+    public let authenticationRequired: Bool
+}
+
 /// Service-backed practice with a durable operation overlay. Session creates and deletes are
 /// journaled before network I/O, use one stable id, and remain visible (or suppressed) until the
 /// originating service reaches a conclusive result.
 @MainActor
 public final class RemoteSankalpaService {
     private var client: SankalpaAPIClient
+    private var bearerToken: String?
     private let transport: APITransport
     private let store = SnapshotStore()
     private let clock: SankalpaClock
@@ -106,20 +118,24 @@ public final class RemoteSankalpaService {
     public private(set) var refreshFailure: String?
     public private(set) var hasLoaded = false
     public private(set) var isShowingCachedPractice = false
+    public private(set) var isServiceReachable = false
     public private(set) var pending: [PendingSession] = []
     public private(set) var pendingDeletions: [PendingSessionDeletion] = []
+    public private(set) var assistantCapability: AssistantCapability?
 
     static let sessionPageSize = 200
 
     public init(
         location: ServiceLocation, clock: SankalpaClock,
-        cache: PracticeCache = PracticeCache(), transport: APITransport = URLSessionTransport()
+        cache: PracticeCache = PracticeCache(), transport: APITransport = URLSessionTransport(),
+        bearerToken: String? = nil
     ) {
         self.location = location
         self.clock = clock
         self.cache = cache
         self.transport = transport
-        client = SankalpaAPIClient(baseURL: location.url, transport: transport)
+        self.bearerToken = bearerToken
+        client = SankalpaAPIClient(baseURL: location.url, bearerToken: bearerToken, transport: transport)
         journal = cache.loadJournal(for: location)
         queries = SankalpaApplicationService(sankalpas: store, sessions: store, clock: clock)
         loadFromCache()
@@ -149,16 +165,25 @@ public final class RemoteSankalpaService {
         bindingRevision = UUID()
         refreshPublicationRevision = UUID()
         self.location = location
-        client = SankalpaAPIClient(baseURL: location.url, transport: transport)
+        client = SankalpaAPIClient(baseURL: location.url, bearerToken: bearerToken, transport: transport)
         journal = cache.loadJournal(for: location)
         store.replace(sankalpas: [], sessions: [])
         applyOperations()
         hasLoaded = false
         isShowingCachedPractice = false
+        isServiceReachable = false
+        assistantCapability = nil
         refreshFailure = nil
         loadFromCache()
         await sync()
         return true
+    }
+
+    public func useBearerToken(_ token: String?) {
+        bearerToken = token?.trimmingCharacters(in: .whitespacesAndNewlines)
+        client = SankalpaAPIClient(baseURL: location.url, bearerToken: bearerToken, transport: transport)
+        isServiceReachable = false
+        assistantCapability = nil
     }
 
     private func loadFromCache() {
@@ -213,6 +238,13 @@ public final class RemoteSankalpaService {
                 return cached
             }
             throw failure
+        }
+        if let assistant = response.assistant {
+            assistantCapability = AssistantCapability(enabled: assistant.enabled,
+                profile: assistant.aguiProfile,
+                authenticationRequired: assistant.authenticationRequired)
+        } else {
+            assistantCapability = nil
         }
         let capability = ServiceCapability(
             sessionCommandIdentity: response.sessionCommandIdentity,
@@ -285,14 +317,33 @@ public final class RemoteSankalpaService {
             applyOperations()
             hasLoaded = true
             isShowingCachedPractice = false
+            isServiceReachable = true
             refreshFailure = nil
             _ = persistSnapshot()
         } catch let failure as APIFailure {
+            guard binding == bindingRevision,
+                  publication == refreshPublicationRevision
+            else { return }
+            isServiceReachable = false
+            assistantCapability = nil
             refreshFailure = failure.fallbackMessage
+            syncLog.notice("Refresh failed: \(self.refreshFailure ?? "", privacy: .public)")
         } catch let failure as WireDecodingError {
+            guard binding == bindingRevision,
+                  publication == refreshPublicationRevision
+            else { return }
+            isServiceReachable = false
+            assistantCapability = nil
             refreshFailure = failure.message
+            syncLog.notice("Refresh failed: \(self.refreshFailure ?? "", privacy: .public)")
         } catch {
+            guard binding == bindingRevision,
+                  publication == refreshPublicationRevision
+            else { return }
+            isServiceReachable = false
+            assistantCapability = nil
             refreshFailure = "Your practice could not be reached right now. Try again."
+            syncLog.notice("Refresh failed: \(self.refreshFailure ?? "", privacy: .public)")
         }
     }
 
@@ -570,6 +621,7 @@ public final class RemoteSankalpaService {
         proposed.quarantinedCreates.removeAll { $0 == entry.id }
         proposed.recentLogs.removeAll { $0.sessionId == entry.id }
         proposed.notices.append(describe(entry, refusedBy: failure))
+        syncLog.notice("Service rejected pending session: \(failure.fallbackMessage, privacy: .public)")
         return persistJournal(proposed)
     }
 
@@ -580,10 +632,12 @@ public final class RemoteSankalpaService {
         var proposed = journal
         proposed.deletions.removeAll { $0.id == entry.id && $0.revision == entry.revision }
         proposed.notices.append("The session could not be deleted. \(failure.fallbackMessage)")
+        syncLog.notice("Service rejected pending deletion: \(failure.fallbackMessage, privacy: .public)")
         return persistJournal(proposed)
     }
 
     private func recordNotice(_ text: String) {
+        syncLog.notice("\(text, privacy: .public)")
         var proposed = journal
         if !proposed.notices.contains(text) { proposed.notices.append(text) }
         _ = persistJournal(proposed)
@@ -600,6 +654,7 @@ public final class RemoteSankalpaService {
         if !proposed.quarantinedCreates.contains(entry.id) {
             proposed.quarantinedCreates.append(entry.id)
         }
+        syncLog.error("Quarantined pending session \(entry.id.value.uuidString, privacy: .public): the service response did not match it")
         let message = "A service response did not match pending session \(entry.id.value.uuidString). It was preserved and automatic retries stopped."
         if !proposed.notices.contains(message) { proposed.notices.append(message) }
         return persistJournal(proposed)

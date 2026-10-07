@@ -1,6 +1,8 @@
 spring:
   application:
     name: sankalpa-backend
+  config:
+    import: "optional:file:.env[.properties]"
   datasource:
     url: ${SANKALPA_DB_URL:jdbc:sqlite:./data/sankalpa.db}
     driver-class-name: org.sqlite.JDBC
@@ -17,5 +19,17 @@ springdoc:
     path: /v3/api-docs
 server:
   port: ${PORT:8080}
+  tomcat:
+    max-http-form-post-size: 256KB
 sankalpa:
   timezone: ${SANKALPA_TIMEZONE}
+  assistant:
+    enabled: ${SANKALPA_ASSISTANT_ENABLED:false}
+    provider: ${SANKALPA_LLM_PROVIDER:fake}
+    model: ${SANKALPA_LLM_MODEL:gpt-6-luna}
+    api-key: ${SANKALPA_LLM_API_KEY:}
+    timeout: ${SANKALPA_LLM_TIMEOUT:PT30S}
+    reasoning-effort: ${SANKALPA_LLM_REASONING_EFFORT:none}
+    proposal-lifetime: PT30M
+    runs-per-minute: ${SANKALPA_ASSISTANT_RUNS_PER_MINUTE:30}
+    api-token: ${SANKALPA_API_TOKEN:}

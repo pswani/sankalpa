@@ -59,6 +59,16 @@ enum API {
     struct CapabilitiesResponse: Decodable, Sendable {
         let sessionCommandIdentity: Int
         let serviceInstanceId: UUID
+        let assistant: AssistantCapability?
+    }
+
+    struct AssistantCapability: Decodable, Sendable {
+        let enabled: Bool
+        let aguiProfile: String
+        let maxMessages: Int
+        let maxEventBytes: Int
+        let maxRequestBytes: Int
+        let authenticationRequired: Bool
     }
 
     struct SessionPageResponse: Decodable, Sendable {

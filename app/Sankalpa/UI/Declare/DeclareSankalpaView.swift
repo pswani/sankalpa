@@ -2,6 +2,16 @@ import SwiftUI
 import SankalpaCore
 import SankalpaStorage
 
+struct DeclarationDraft {
+    let title: String
+    let description: String
+    let actionType: ActionType
+    let startDate: Date
+    let periodUnit: PeriodUnit
+    let timesPerPeriod: Int
+    let periodCount: Int?
+}
+
 /// Required basics first, optional details after, with the derived commitment always visible so
 /// "26 weeks" never has to be worked out in the user's head.
 struct DeclareSankalpaView: View {
@@ -24,6 +34,20 @@ struct DeclareSankalpaView: View {
 
     @FocusState private var titleFocused: Bool
     @FocusState private var periodCountFocused: Bool
+
+    init(draft: DeclarationDraft? = nil) {
+        guard let draft else { return }
+        _title = State(initialValue: draft.title)
+        _description = State(initialValue: draft.description)
+        _actionType = State(initialValue: draft.actionType)
+        _startDate = State(initialValue: draft.startDate)
+        _periodUnit = State(initialValue: draft.periodUnit)
+        _timesPerPeriod = State(initialValue: draft.timesPerPeriod)
+        _hasDuration = State(initialValue: draft.periodCount != nil)
+        let count = draft.periodCount ?? 30
+        _periodCount = State(initialValue: count)
+        _periodCountText = State(initialValue: String(count))
+    }
 
     /// No duration can be longer than `PeriodCount.maxValue`, so nothing past its digit count is
     /// worth keeping in the field.

@@ -95,6 +95,12 @@ public final class Sankalpa {
     }
 
     public Session logSession(SessionId sessionId, LocalDateTime occurredAt, LocalDateTime now) {
+        validateSessionAt(sessionId, occurredAt, now);
+        return new Session(sessionId, id, occurredAt, now);
+    }
+
+    /** Side-effect-free validation used when a conversational proposal is prepared. */
+    public void validateSessionAt(SessionId sessionId, LocalDateTime occurredAt, LocalDateTime now) {
         if (sessionId == null || occurredAt == null || now == null) {
             throw new DomainException("INVALID_SESSION", "Session id and times are required");
         }
@@ -112,7 +118,6 @@ public final class Sankalpa {
         if (!lifecycle.wasInProgressAt(occurredAt)) {
             throw new DomainException("SANKALPA_NOT_IN_PROGRESS", "Sankalpa was not in progress at that time");
         }
-        return new Session(sessionId, id, occurredAt, now);
     }
 
     public SankalpaId id() { return id; }

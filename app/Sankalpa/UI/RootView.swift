@@ -1,18 +1,23 @@
 import SwiftUI
 import SankalpaCore
 import SankalpaStorage
+import SankalpaConversation
 
 /// Named `AppTab` because SwiftUI's own `Tab` is the view used below.
 enum AppTab: Hashable {
-    case today, sankalpas, journal
+    case today, sankalpas, journal, assistant
 }
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var selectedTab: AppTab = .today
+    @State private var previousNonAssistantTab: AppTab = .today
     @State private var declaringSankalpa = false
     @State private var listFilter: SankalpaListView.Filter = .active
     @State private var showingPendingChanges = false
+    @State private var assistantDetailId: SankalpaId?
+    @State private var declarationDraft: DeclarationDraft?
+    @State private var sessionDraft: (SankalpaSummary, Date)?
 
     var body: some View {
         @Bindable var model = model
@@ -27,8 +32,26 @@ struct RootView: View {
                 tabs
             }
         }
-        .sheet(isPresented: $declaringSankalpa) {
-            DeclareSankalpaView()
+        // A draft prefilled from an assistant proposal is for that one sheet, not the next Declare.
+        .sheet(isPresented: $declaringSankalpa, onDismiss: { declarationDraft = nil }) {
+            DeclareSankalpaView(draft: declarationDraft)
+        }
+        .sheet(isPresented: Binding(get: { assistantDetailId != nil }, set: { if !$0 { assistantDetailId = nil } })) {
+            if let id = assistantDetailId {
+                NavigationStack {
+                    SankalpaDetailView(sankalpaId: id)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close", systemImage: "xmark") {
+                                    assistantDetailId = nil
+                                }
+                            }
+                        }
+                }
+            }
+        }
+        .sheet(isPresented: Binding(get: { sessionDraft != nil }, set: { if !$0 { sessionDraft = nil } })) {
+            if let (summary, date) = sessionDraft { LogSessionView(summary: summary, initialOccurredAt: date) }
         }
         .sheet(isPresented: $showingPendingChanges) {
             NavigationStack { PendingChangesView() }
@@ -111,6 +134,26 @@ struct RootView: View {
             Tab("Journal", systemImage: "book.closed", value: AppTab.journal) {
                 JournalView()
             }
+            if model.isServiceReachable,
+               model.assistantCapability?.enabled == true,
+               model.assistantCapability?.profile == AGUI.profile {
+                Tab("Assistant", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.assistant) {
+                    AssistantView(appModel: model, navigate: { id in
+                        if let id { assistantDetailId = SankalpaId(id) }
+                        else { listFilter = .all; selectedTab = .sankalpas }
+                    }, close: {
+                        selectedTab = previousNonAssistantTab
+                    }, edit: editProposal)
+                    .id(model.apiToken)
+                }
+            }
+        }
+        .onChange(of: selectedTab) { oldTab, newTab in
+            if newTab == .assistant, oldTab != .assistant {
+                previousNonAssistantTab = oldTab
+            } else if newTab != .assistant {
+                previousNonAssistantTab = newTab
+            }
         }
         .alert(
             "Log another session?",
@@ -126,6 +169,46 @@ struct RootView: View {
             Text("A session for \(proposal.sankalpaTitle) was just logged. Confirm to record a separate session.")
         }
     }
+
+    private func editProposal(_ proposal: AssistantProposal) {
+        switch proposal.kind {
+        case .declareSankalpa:
+            guard let title = proposal.metadata.string("title"),
+                  let description = proposal.metadata.string("description"),
+                  let action = actionType(proposal.metadata.string("actionType")),
+                  let start = date(proposal.metadata.string("startDate")),
+                  let unit = periodUnit(proposal.metadata.string("periodUnit")),
+                  let times = proposal.metadata.int("timesPerPeriod") else { return }
+            declarationDraft = DeclarationDraft(title: title, description: description,
+                actionType: action, startDate: start, periodUnit: unit,
+                timesPerPeriod: times, periodCount: proposal.metadata.int("periodCount"))
+            declaringSankalpa = true
+        case .logSession:
+            guard let idText = proposal.metadata.string("sankalpaId"), let uuid = UUID(uuidString: idText),
+                  let summary = model.summary(SankalpaId(uuid)),
+                  let occurred = dateTime(proposal.metadata.string("occurredAt")) else { return }
+            sessionDraft = (summary, occurred)
+        }
+    }
+
+    // Proposal values use the REST wire format, where Java drops zero seconds ("…T19:00").
+    private func date(_ text: String?) -> Date? {
+        text.flatMap(WireFormat.day(from:)).map { AppTime.date(from: $0) }
+    }
+    private func dateTime(_ text: String?) -> Date? {
+        text.flatMap(WireFormat.moment(from:)).map { AppTime.date(from: $0) }
+    }
+    private func actionType(_ value: String?) -> ActionType? {
+        switch value { case "MEDITATION": .meditation; case "PRANAYAMA": .pranayama; case "PHYSICAL_ACTIVITY": .physicalActivity; case "OBSERVANCE": .observance; default: nil }
+    }
+    private func periodUnit(_ value: String?) -> PeriodUnit? {
+        switch value { case "DAY": .day; case "WEEK": .week; case "MONTH": .month; case "YEAR": .year; default: nil }
+    }
+}
+
+private extension Dictionary where Key == String, Value == JSONValue {
+    func string(_ key: String) -> String? { if case .string(let value)? = self[key] { value } else { nil } }
+    func int(_ key: String) -> Int? { if case .number(let value)? = self[key] { Int(value) } else { nil } }
 }
 
 /// Says that what is on screen came from this phone rather than from the service just now, and

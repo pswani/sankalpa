@@ -114,6 +114,10 @@ while IFS= read -r pid; do
 done < <(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)
 
 echo "Starting backend on port ${PORT}…"
+# Keep the replaced run's log: it is what explains a crash or a bad deploy.
+if [[ -f "$SERVER_LOG" ]]; then
+    mv "$SERVER_LOG" "$LOG_DIR/server.previous.log"
+fi
 : > "$SERVER_LOG"
 cd "$PROJECT_DIR"
 SANKALPA_TIMEZONE="$TIMEZONE" \
@@ -123,9 +127,12 @@ java -jar "$JAR" >> "$SERVER_LOG" 2>&1 &!
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
 
-HEALTH_URL="http://localhost:$PORT/api/v1/sankalpas"
+HEALTH_URL="http://localhost:$PORT/api/v1/capabilities"
+# 401 means SANKALPA_API_TOKEN is set; the service is up, and startup has already verified the
+# database. The script has no token to send, and must not stop a healthy service for lacking one.
 repeat 60; do
-    if curl -sf --max-time 2 "$HEALTH_URL" -o /dev/null; then
+    HTTP_CODE="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "$HEALTH_URL" || true)"
+    if [[ "$HTTP_CODE" == 200 || "$HTTP_CODE" == 401 ]]; then
         echo "Backend deployed successfully."
         echo "PID: $NEW_PID"
         echo "Health: $HEALTH_URL"
