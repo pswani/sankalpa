@@ -68,7 +68,7 @@ class JdbcPersistenceIntegrationTest {
                 WHERE LOWER(TABLE_NAME) IN ('practice_session', 'sankalpa_lifecycle_transition')
                   AND CONSTRAINT_TYPE = 'FOREIGN KEY'
                 """, Integer.class);
-        assertThat(foreignKeys).isEqualTo(2);
+        assertThat(foreignKeys).isEqualTo(3);
     }
 
     @Test

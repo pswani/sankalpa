@@ -18,8 +18,16 @@ public final class ConversationContextLoader {
         this.zone = zone;
     }
 
+    public void requireReadable(Proposal proposal, com.sankalpa.application.PracticeContract contract) {
+        if(proposal.payload() instanceof Proposal.LogSessionPayload p) sankalpas.detail(p.sankalpaId(),contract);
+    }
+
     public ConversationModel.Context load() {
-        var all = sankalpas.list();
+        return load(com.sankalpa.application.PracticeContract.SINGLE_VOW_V1);
+    }
+
+    public ConversationModel.Context load(com.sankalpa.application.PracticeContract contract) {
+        var all = sankalpas.list(contract);
         if (all.size() > MAX_CATALOG) {
             throw new ConversationFailure("ASSISTANT_LIMIT_REACHED", "Sankalpa catalog is too large");
         }

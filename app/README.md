@@ -92,12 +92,25 @@ The service owns every rule. The app sends a command, the service accepts or ref
 app maps the refusal's stable `code` back into the domain error the screens were already written
 around — so a refusal reads in the app's own voice rather than as an API `detail` string.
 
-Reads work the other way. `GET /sankalpas` returns declarations only: no current period, no session
-count, no transitions. Everything the screens actually show — the Today board's progress rings, the
-period strip, the satisfied/missed tally, the journal, the list ordering — is derived on the device
-from the sankalpas, sessions and lifecycle transitions a refresh pulls down, using the same
-`PeriodOutcomeCalculator` and query surface as before. That is why a refresh is `1 + 2N` requests,
-and why `SankalpaCore` still holds a full domain model rather than a set of view structs.
+Reads reconstruct the practice from declarations, lifecycle histories, and unique session facts.
+When the service advertises `linkedSankalpaExtensions: 1`, the app reads the canonical cursor journal,
+pins all reads to one service instance and practice revision, and publishes only a fully validated
+snapshot. A changed revision restarts the read once; a failed refresh retains the last valid cache.
+Older services retain the existing per-vow refresh path. Progress and period outcomes continue to
+use `PeriodOutcomeCalculator` over the snapshot and pending session overlays.
+
+Ongoing finite vows offer **Extend** with a greater total duration from the original start date.
+The extension gets a separate identity, copied lifecycle history with provenance, and independent
+completion. Eligible sessions contribute across the explicit series without duplicate journal
+facts. Linked navigation shows duration and end date, and successful shorter vows remain visible
+as wins. Shared deletion explains which commitments it affects.
+
+An extension requires a connection. Before sending it, the app atomically saves one service-bound
+attempt in `sankalpa-extension.json`; retries preserve the request identity and duration. Accepted
+results remain durable until their series is cached. A competing existing child is opened with an
+explicit notice, and malformed responses preserve the attempt for recovery. The session journal
+uses a series-wide recent-log guard and projects pending creates/deletes across eligible members.
+Assistant session confirmation uses the same gate and service headers.
 
 `SankalpaStorage` is a library target rather than app code specifically so this seam can be tested
 without a simulator: the wire format, the mapping, the refusal translation and the refresh fan-out

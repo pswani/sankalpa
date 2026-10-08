@@ -10,12 +10,16 @@ classDiagram
   class Sankalpa {
     <<Aggregate Root>>
     +SankalpaId id
+    +SankalpaId seriesId
+    +Optional~SankalpaId~ extensionOf
     +Title title
     +Description description
     +ActionType actionType
     +Commitment commitment
     +LifecycleTimeline lifecycle
     +declare(...)
+    +extend(newId, totalPeriodCount, now) Sankalpa
+    +acceptsPerformedAt(at) boolean
     +begin(timing)
     +pause(now)
     +resume(now)
@@ -74,6 +78,8 @@ can grow without making the sankalpa aggregate unbounded.
 ```java
 public final class Sankalpa {
     private final SankalpaId id;
+    private final SankalpaId seriesId;
+    private final Optional<SankalpaId> extensionOf;
     private final LocalDateTime declaredAt;
     private Title title;
     private Description description;
@@ -82,6 +88,9 @@ public final class Sankalpa {
     private LifecycleTimeline lifecycle;
 
     public static Result<Sankalpa, DeclarationError> declare(Declaration declaration);
+    public Result<Sankalpa, ExtensionError> extend(
+        SankalpaId newId, PeriodCount totalPeriodCount, LocalDateTime now);
+    public boolean acceptsPerformedAt(LocalDateTime at);
 
     public Result<Void, LifecycleTransitionError> begin(BeginTiming timing);
     public Result<Void, LifecycleTransitionError> pause(LocalDateTime now);
@@ -117,7 +126,8 @@ public final class Session {
 A session records a past fact. It has no behavior beyond construction-time validity.
 
 `Sankalpa.logSession(...)` creates sessions so the lifecycle and commitment rules stay with the
-object that knows them.
+object that knows them. Its `sankalpaId` is the immutable logging owner. Other eligible vows in
+the same series count the same fact through derived contributions, not copied sessions.
 
 Deletion physically removes this fact. A separate technical identity ledger retains only the ID,
 owner, and `DELETED` state so a delayed create cannot resurrect it. That ledger is application and
@@ -165,7 +175,8 @@ public record LifecycleTransition(
     LifecycleState from,
     LifecycleState to,
     LocalDateTime effectiveAt,
-    LocalDateTime recordedAt
+    LocalDateTime recordedAt,
+    SankalpaId originSankalpaId
 ) {}
 
 public record BeginTiming(
@@ -258,7 +269,7 @@ every query.
 |---|---|---|
 | S1 | Title is present and not blank. | `Title` |
 | S2 | Action type is one of the four requirement values. | `ActionType` |
-| S3 | Start date is no more than one year before today. | `Sankalpa.declare` |
+| S3 | An unrelated declaration starts no more than one year before today; an extension preserves its source start date. | `Sankalpa.declare` / `extend` |
 | S4 | Times per period is positive. | `TimesPerPeriod` |
 | S5 | Duration, when present, is a whole number of periods. | `PeriodCount` on `Commitment` |
 | S6 | End date is derived, inclusive, and not stored. | `Commitment.endDate()` |
@@ -276,6 +287,11 @@ every query.
 | S18 | Different identities remain different sessions even at the same performed-at time. | `SessionId` identity; no value-based uniqueness rule |
 | S19 | A deleted identity can never become active again. | `DeleteSession` transaction plus identity ledger |
 | S20 | Deleted sessions contribute to no history, total, or open/closed period calculation. | Physical removal and active-session read ports |
+| S21 | Extensions are finite, longer, and created from In progress or Paused sources; their end date is not past. | `Sankalpa.extend` |
+| S22 | A source has at most one child, with immutable same-series links. | Extension transaction and persistence constraints |
+| S23 | Inherited practice fields and timeline are preserved at creation; later lifecycle changes are independent. | Extension factory and transition provenance |
+| S24 | Only eligible same-series vows count a session, at most once each. | Series contribution helper and unique `SessionId` |
+| S25 | Combined practice totals count each session once, while successful vows remain distinct. | Unique-fact reads and independent completion queries |
 
 ## Domain Errors
 
@@ -294,5 +310,17 @@ Use domain errors for business refusals:
 - `SessionOutsideCommitment`
 - `SankalpaNotInProgressAtThatTime`
 - `InvalidCompletionOutcome`
+- `SourceNotExtendable`
+- `DurationNotGreater`
+- `ExtensionEndsInPast`
 
 These errors do not know HTTP status codes. Controllers map them to transport responses.
+
+## Linked Extensions
+
+[Linked extensions](11-linked-extensions.md) specifies the creation factory, immutable membership,
+inherited transition origins, and shared contribution predicate. The original vow's ID is the
+series identity. No series aggregate loads all sessions or controls the member lifecycles.
+Period outcomes receive eligible series facts filtered for the target vow; the calculator does
+not sum results from shorter vows. An inherited Begin remains the existing first transition,
+not a new backdated action on the extension.

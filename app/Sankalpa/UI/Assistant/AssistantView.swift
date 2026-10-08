@@ -1,7 +1,10 @@
 import SwiftUI
 import SankalpaConversation
+import SankalpaCore
+import SankalpaStorage
 
 struct AssistantView: View {
+    @Environment(AppModel.self) private var model
     @State private var session: AssistantSession
     @State private var speech = SpeechComposer()
     private let close: @MainActor () -> Void
@@ -14,7 +17,8 @@ struct AssistantView: View {
         self.close = close
         self.edit = edit
         let token = appModel.apiToken
-        let client = AGUIClient(baseURL: appModel.serviceLocation.url, bearerToken: token)
+        let client = AGUIClient(baseURL: appModel.serviceLocation.url, bearerToken: token,
+                                linkedServiceInstance: appModel.supportsLinkedExtensions ? appModel.serviceInstanceId : nil)
         _session = State(initialValue: AssistantSession(client: client) { tool in
             switch tool.name {
             case "refresh_practice":
@@ -45,11 +49,11 @@ struct AssistantView: View {
                             ForEach(session.transcript) { message in bubble(message) }
                             if case .awaitingConfirmation(let proposal) = session.state {
                                 ProposalCard(proposal: proposal,
-                                    confirm: { Task { await session.confirm() } },
+                                    confirm: { Task { await confirm(proposal) } },
                                     cancel: { Task { await session.cancel() } },
                                     edit: {
                                         Task { if await session.cancel() { edit(proposal) } }
-                                    }, disabled: session.isBusy)
+                                    }, disabled: session.isBusy, sharedEffects: sharedEffects(proposal))
                             }
                             if let message = session.errorMessage {
                                 Label(message, systemImage: "exclamationmark.triangle")
@@ -80,6 +84,23 @@ struct AssistantView: View {
             .onChange(of: speech.transcript) { _, value in session.composer = value }
             .onDisappear { speech.stop() }
         }
+    }
+
+    private func sessionIdentity(_ proposal: AssistantProposal) -> (SankalpaId, SessionId)? {
+        guard case .string(let owner)? = proposal.metadata["sankalpaId"], let ownerId = UUID(uuidString: owner),
+              case .string(let id)? = proposal.metadata["sessionId"], let sessionId = UUID(uuidString: id) else { return nil }
+        return (SankalpaId(ownerId), SessionId(sessionId))
+    }
+    private func sharedEffects(_ proposal: AssistantProposal) -> String? {
+        guard let (owner, _) = sessionIdentity(proposal),
+              case .string(let text)? = proposal.metadata["occurredAt"], let at = WireFormat.moment(from: text) else { return nil }
+        return model.contributionPreview(owner: owner, at: at)
+    }
+    private func confirm(_ proposal: AssistantProposal) async {
+        if proposal.kind == .logSession {
+            guard let (owner, id) = sessionIdentity(proposal) else { return }
+            await model.confirmAssistantSession(owner: owner, sessionId: id) { await session.confirm() }
+        } else { await session.confirm() }
     }
 
     private var composer: some View {
@@ -123,6 +144,7 @@ private struct ProposalCard: View {
     let cancel: () -> Void
     let edit: () -> Void
     let disabled: Bool
+    var sharedEffects: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -130,6 +152,7 @@ private struct ProposalCard: View {
                   systemImage: "checkmark.shield")
                 .font(.headline)
             ForEach(rows, id: \.0) { key, value in LabeledContent(key, value: value) }
+            if let sharedEffects { Text(sharedEffects).font(.footnote) }
             HStack {
                 Button("Cancel", role: .cancel, action: cancel)
                 Button("Edit", action: edit)

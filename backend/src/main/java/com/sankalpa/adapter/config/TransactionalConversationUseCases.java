@@ -56,7 +56,15 @@ public final class TransactionalConversationUseCases implements ConversationUseC
 
     @Override
     public Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId) {
-        return inTransaction(() -> delegate.confirm(threadId, proposalId, confirmationId));
+        return PracticeTransactions.retry(() -> inTransaction(() -> delegate.confirm(threadId, proposalId, confirmationId)));
+    }
+
+    @Override public Proposal proposeSession(UUID threadId,UUID runId,SankalpaId id,LocalDateTime at,String summary,
+            List<SankalpaId> alternatives,com.sankalpa.application.PracticeContract contract) {
+        return inTransaction(()->delegate.proposeSession(threadId,runId,id,at,summary,alternatives,contract));
+    }
+    @Override public Resolution confirm(UUID threadId,UUID proposalId,UUID confirmationId,com.sankalpa.application.PracticeContract contract) {
+        return PracticeTransactions.retry(()->inTransaction(()->delegate.confirm(threadId,proposalId,confirmationId,contract)));
     }
 
     @Override

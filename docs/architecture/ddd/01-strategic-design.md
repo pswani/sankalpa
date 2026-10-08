@@ -21,7 +21,8 @@ These are not subdomains. They are just the parts of the model that deserve atte
 | Commitment | Turns "x times per y period for z duration" into concrete period windows. | Model as a value object with derived windows and end date. |
 | Lifecycle | Controls when a sankalpa can be acted on and supplies audit history. | Model as explicit states and a transition timeline. |
 | Session logging and correction | Records performed sessions, makes retries safe, and permanently removes incorrect records. | Let `Sankalpa` decide eligibility; let the application/persistence boundary own command identity and deletion ordering. |
-| Period outcomes | Determines whether closed periods were satisfied. | Derive on read from commitment and sessions. |
+| Period outcomes | Determines whether closed periods were satisfied. | Derive on read from commitment and contributing sessions. |
+| Linked extensions | Preserves separately completable vows while sharing the same practice. | Immutable series membership, independent timelines, and derived session contributions. |
 
 Calling these subdomains would imply more independence than they have. They change together and use
 the same concepts.
@@ -30,7 +31,7 @@ the same concepts.
 
 The requirements do not ask for these concepts, so the architecture does not include them:
 
-- Identity, accounts, ownership, sharing, coaching, or teams. The application is explicitly
+- Identity, accounts, user ownership, collaboration, coaching, or teams. The application is explicitly
   single-user.
 - Activity catalogues for Vipassana, Gym, Sudarshan Kriya, and similar examples.
 - Reminders, notifications, nudges, streaks, scoring, or recommendations.
@@ -51,3 +52,7 @@ Introduce a new context only when the language actually splits. Good triggers:
 
 Until one of those happens, a single context with ordinary package boundaries is the simpler and
 more honest design.
+
+Linked vows stay within this context. Session sharing is restricted to explicit extension links;
+it creates no activity catalogue or additional bounded context. Celebration uses each vow's
+completion fact, without an achievement subsystem. See [Linked extensions](11-linked-extensions.md).

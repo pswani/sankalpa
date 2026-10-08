@@ -12,7 +12,9 @@ Do not add `ZoneId` to the domain model until per-sankalpa or per-user time zone
 
 ## Q2 — Can A Sankalpa Be Changed Or Deleted?
 
-The requirements do not include editing or deleting a sankalpa.
+The requirements include creating a separate linked extension, not general editing or deletion
+of a sankalpa. Extension behavior is settled in
+[Linked Sankalpa Extensions](../../requirements/linked-sankalpa-extensions.md).
 
 Do not add `AmendSankalpa`, `ReviseSankalpa`, or `DeleteSankalpa` until those use cases are
 requirements.

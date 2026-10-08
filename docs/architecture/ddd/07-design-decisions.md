@@ -54,7 +54,8 @@ occurred while the sankalpa was In progress and whether an entire period window 
 
 ## DD-5 — Session Is Separate From Sankalpa
 
-**Decision.** Keep `Session` separate from the `Sankalpa` aggregate, referenced by `SankalpaId`.
+**Decision.** Keep `Session` separate from the `Sankalpa` aggregate. Its `SankalpaId` is the immutable
+logging owner; eligible vows in the same linked series derive contributions from the same fact.
 
 **Why.** Sessions can grow without limit, and no current invariant requires all sessions to be
 loaded to log one more. `Sankalpa` still decides whether logging is allowed because it owns the
@@ -260,7 +261,7 @@ idempotent.
 
 ## DD-23 — Repeat Confirmation Is An Interaction Rule
 
-**Decision.** The client asks for confirmation when another action for the same sankalpa begins
+**Decision.** The client asks for confirmation when another action in the same linked series begins
 within 60 seconds of an accepted or durably pending log. Confirmation creates a fresh identity.
 
 **Why.** The rule prevents accidental duplicate taps without making time proximity a domain
@@ -304,3 +305,70 @@ session mutation invalidates the older publication.
 **Why.** Swift actors are reentrant across network awaits. Undo or service relocation can happen
 before an older response returns; unconditional completion would erase the newer decision or
 publish data from the wrong service.
+
+
+---
+
+## DD-27 — Separate Vows, Immutable Series Membership
+
+**Decision.** Keep each linked vow as an independent `Sankalpa` aggregate. Use the original
+sankalpa ID as `seriesId` and an immutable immediate `extensionOf` link with one direct child.
+
+**Why.** The user wants separate completion wins. A series aggregate containing every vow and
+session would add unbounded state without controlling independent lifecycles.
+
+---
+
+## DD-28 — Derive Contributions Instead Of Copying Sessions
+
+**Decision.** Store one session under its logging owner. Derive eligible contributions from
+same-series membership, commitment coverage, and lifecycle at the performed time. Per-vow reads
+and counts use the same helper; combined totals use unique session IDs.
+
+**Why.** Existing and future facts then appear in new extensions without copying, fan-out writes,
+applicability rows, event handlers, or deletion synchronization. Identical-time sessions remain distinct.
+
+---
+
+## DD-29 — Copy Lifecycle Values With Provenance At Extension Creation
+
+**Decision.** The extension factory copies the source timeline and practice fields at creation,
+retaining each transition's original vow and timestamps. It bypasses only the declaration-specific
+one-year start limit. Later lifecycle changes affect their own vow only.
+
+**Why.** Inherited sessions require historical In progress and Paused intervals. Sharing a mutable
+timeline or creating a fresh Begin would change eligibility or couple otherwise independent vows.
+
+---
+
+## DD-30 — Series Root Orders Writes; Owner Still Orders Identity
+
+**Decision.** Extension, lifecycle, and new session commands share a series-root write guard;
+capture command time after acquiring it. Session create/delete keeps its global identity ledger.
+Deletion from any linked view is routed to the immutable logging owner. Enforce one child in storage.
+
+**Why.** Extension snapshots and session eligibility need a consistent lifecycle. Existing owner
+identity and delete-before-create guarantees remain valid without accepting cross-owner replays.
+
+---
+
+## DD-31 — Completion Facts Supply The Celebration
+
+**Decision.** Acknowledge each successful completion command and derive persistent achievements
+from each vow's own successful terminal transition.
+
+**Why.** The feature needs separately visible wins, not an achievement aggregate or event consumer.
+Session correction updates counts without changing the user's chosen completion outcome.
+
+---
+
+## DD-32 — Linked Reads And Client Overlays Are One Versioned Contract
+
+**Decision.** Advertise linked-extension support separately from session identity support. Gate
+multi-member mutations on that version; expose logging owners and links; apply global pending
+suppression before contribution filtering; scope repeat confirmation to the series root.
+
+**Why.** An older client can neither explain shared deletion nor calculate linked contributions.
+Partial rollout must not let owner-only semantics silently mutate a linked series.
+
+Details of these decisions are in [Linked extensions](11-linked-extensions.md).

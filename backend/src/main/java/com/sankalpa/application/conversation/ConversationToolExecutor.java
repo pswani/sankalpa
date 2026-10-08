@@ -8,6 +8,11 @@ public interface ConversationToolExecutor {
     Outcome execute(ConversationModel.ToolCall call, UUID threadId, UUID runId,
                     ConversationModel.Context context, List<String> clientTools);
 
+    default Outcome execute(ConversationModel.ToolCall call, UUID threadId, UUID runId,
+                    ConversationModel.Context context, List<String> clientTools, com.sankalpa.application.PracticeContract contract) {
+        return execute(call,threadId,runId,context,clientTools);
+    }
+
     sealed interface Outcome permits ReadResult, ProposalResult, FrontendEffect {}
     record ReadResult(String json) implements Outcome {}
     record ProposalResult(Proposal proposal) implements Outcome {}

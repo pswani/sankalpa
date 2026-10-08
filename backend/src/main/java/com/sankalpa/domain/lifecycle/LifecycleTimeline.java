@@ -34,19 +34,36 @@ public final class LifecycleTimeline {
         if (effectiveAt.toLocalDate().isBefore(startDate)) {
             throw new DomainException("TRANSITION_BEFORE_START", "Begin cannot be effective before the start date");
         }
-        transitionTo(LifecycleState.IN_PROGRESS, effectiveAt, recordedAt);
+        transitionTo(LifecycleState.IN_PROGRESS, effectiveAt, recordedAt, null);
     }
 
     public void transitionNow(LifecycleState target, LocalDateTime now) {
-        transitionTo(target, now, now);
+        transitionTo(target, now, now, null);
     }
 
-    private void transitionTo(LifecycleState target, LocalDateTime effectiveAt, LocalDateTime recordedAt) {
+    public void begin(LocalDate startDate, LocalDateTime effectiveAt, LocalDateTime recordedAt,
+                      com.sankalpa.domain.SankalpaId origin) {
+        if (effectiveAt.isAfter(recordedAt)) throw new DomainException("TRANSITION_IN_FUTURE", "Begin cannot be future-effective");
+        if (effectiveAt.toLocalDate().isBefore(startDate)) throw new DomainException("TRANSITION_BEFORE_START", "Begin cannot precede start");
+        transitionTo(LifecycleState.IN_PROGRESS, effectiveAt, recordedAt, origin);
+    }
+
+    public void transitionNow(LifecycleState target, LocalDateTime now, com.sankalpa.domain.SankalpaId origin) {
+        transitionTo(target, now, now, origin);
+    }
+
+    private void transitionTo(LifecycleState target, LocalDateTime effectiveAt, LocalDateTime recordedAt, com.sankalpa.domain.SankalpaId origin) {
         if (!current.canTransitionTo(target)) {
             throw new DomainException("INVALID_LIFECYCLE_TRANSITION",
                     "Cannot transition from " + current + " to " + target);
         }
-        transitions.add(new LifecycleTransition(current, target, effectiveAt, recordedAt));
+        if (!transitions.isEmpty()) {
+            var previous = transitions.getLast();
+            if (recordedAt.isBefore(previous.recordedAt()) || effectiveAt.isBefore(previous.effectiveAt())) {
+                throw new DomainException("TRANSITION_TIME_REGRESSION", "Lifecycle time cannot move backwards");
+            }
+        }
+        transitions.add(new LifecycleTransition(current, target, effectiveAt, recordedAt, origin));
         current = target;
     }
 

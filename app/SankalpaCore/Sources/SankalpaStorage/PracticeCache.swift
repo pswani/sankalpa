@@ -83,6 +83,8 @@ public struct PendingSessionDeletion: Codable, Hashable, Sendable, Identifiable 
 struct ServiceCapability: Codable, Hashable, Sendable {
     let sessionCommandIdentity: Int
     let serviceInstanceId: UUID
+    var linkedSankalpaExtensions: Int? = nil
+    var supportsLinkedExtensions: Bool { linkedSankalpaExtensions == 1 }
     var supportsReliableSessions: Bool { sessionCommandIdentity >= 1 }
 }
 
@@ -94,7 +96,7 @@ struct RecentSessionLog: Codable, Hashable, Sendable {
 }
 
 struct ReliabilityJournal: Codable, Sendable {
-    var schemaVersion = 2
+    var schemaVersion = 3
     var serviceLocation: String
     var capability: ServiceCapability?
     var creates: [PendingSession] = []
@@ -128,18 +130,25 @@ struct ReliabilityJournal: Codable, Sendable {
 /// Complete session history from the last successful refresh. Schema-1 counts remain decodable
 /// during rollout, but schema 2 derives every total from `sessions`.
 struct CachedPractice: Codable, Sendable {
-    var schemaVersion = 2
+    var schemaVersion = 3
     var serviceLocation: String
     var sankalpas: [Sankalpa]
     var sessions: [Session]
     var counts: [String: Int] = [:]
+    var serviceInstanceId: UUID?
+    var practiceRevision: String?
+    var completeSnapshot: Bool = true
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, serviceLocation, sankalpas, sessions, counts
+        case schemaVersion, serviceLocation, sankalpas, sessions, counts, serviceInstanceId, practiceRevision, completeSnapshot
     }
 
-    init(serviceLocation: String, sankalpas: [Sankalpa], sessions: [Session]) {
+    init(serviceLocation: String, sankalpas: [Sankalpa], sessions: [Session],
+         serviceInstanceId: UUID? = nil, practiceRevision: String? = nil, completeSnapshot: Bool = true) {
         self.serviceLocation = serviceLocation
+        self.serviceInstanceId = serviceInstanceId
+        self.practiceRevision = practiceRevision
+        self.completeSnapshot = completeSnapshot
         self.sankalpas = sankalpas
         self.sessions = sessions
     }
@@ -150,6 +159,9 @@ struct CachedPractice: Codable, Sendable {
         serviceLocation = try values.decode(String.self, forKey: .serviceLocation)
         sankalpas = try values.decode([Sankalpa].self, forKey: .sankalpas)
         sessions = try values.decode([Session].self, forKey: .sessions)
+        serviceInstanceId = try values.decodeIfPresent(UUID.self, forKey: .serviceInstanceId)
+        practiceRevision = try values.decodeIfPresent(String.self, forKey: .practiceRevision)
+        completeSnapshot = try values.decodeIfPresent(Bool.self, forKey: .completeSnapshot) ?? true
         counts = try values.decodeIfPresent([String: Int].self, forKey: .counts) ?? [:]
     }
 }
@@ -160,6 +172,7 @@ public final class PracticeCache {
     private let directory: URL
     private let writer: (Data, URL) throws -> Void
     public private(set) var outboxProblem: String?
+    public private(set) var extensionProblem: String?
 
     public init(
         directory: URL = PracticeCache.defaultDirectory(),
@@ -179,12 +192,13 @@ public final class PracticeCache {
     }
 
     private var cacheURL: URL { directory.appendingPathComponent("sankalpa-cache.json") }
+    private var extensionURL: URL { directory.appendingPathComponent("sankalpa-extension.json") }
     private var journalURL: URL { directory.appendingPathComponent("sankalpa-outbox.json") }
 
     func loadCache(for location: ServiceLocation) -> CachedPractice? {
         guard let data = try? Data(contentsOf: cacheURL),
               let cached = try? JSONDecoder().decode(CachedPractice.self, from: data),
-              cached.schemaVersion <= 2,
+              (1...3).contains(cached.schemaVersion),
               cached.serviceLocation == location.displayText
         else { return nil }
         return cached
@@ -203,8 +217,15 @@ public final class PracticeCache {
             preserveUnreadableJournal()
             return empty
         }
-        if let journal = try? JSONDecoder().decode(ReliabilityJournal.self, from: data),
-           journal.schemaVersion == 2, isValid(journal) {
+        if var journal = try? JSONDecoder().decode(ReliabilityJournal.self, from: data),
+           [2, 3].contains(journal.schemaVersion), isValid(journal) {
+            if journal.schemaVersion == 2 {
+                do {
+                    let backup = directory.appendingPathComponent("sankalpa-outbox.pre-linked.json")
+                    if !FileManager.default.fileExists(atPath: backup.path) { try writer(data, backup) }
+                    journal.schemaVersion = 3
+                } catch { preserveUnreadableJournal(message: "The session journal upgrade could not be saved. Existing changes were preserved.") }
+            }
             return journal
         }
         if (try? JSONDecoder().decode([PendingSession].self, from: data)) != nil {
@@ -221,6 +242,31 @@ public final class PracticeCache {
               let data = try? JSONEncoder().encode(journal)
         else { return false }
         do { try writer(data, journalURL); return true } catch { return false }
+    }
+
+    func loadExtensionAttempt() -> ExtensionAttempt? {
+        guard FileManager.default.fileExists(atPath: extensionURL.path) else { return nil }
+        guard let data = try? Data(contentsOf: extensionURL),
+              let attempt = try? JSONDecoder().decode(ExtensionAttempt.self, from: data),
+              attempt.schemaVersion == 1, (1...PeriodCount.maxValue).contains(attempt.totalPeriodCount),
+              attempt.sourceId != attempt.extensionId,
+              attempt.acceptedRevision == nil || attempt.acceptedRevision.flatMap(Int64.init).map({ $0 >= 0 }) == true,
+              attempt.state != .acceptedAwaitingCache || (attempt.acceptedResponse != nil && attempt.acceptedRevision != nil)
+        else { extensionProblem = "The submitted extension could not be read. It was preserved; recover it before creating another extension."; return nil }
+        return attempt
+    }
+
+    func saveExtensionAttempt(_ attempt: ExtensionAttempt) -> Bool {
+        guard extensionProblem == nil, let data = try? JSONEncoder().encode(attempt) else { return false }
+        do { try writer(data, extensionURL); return true } catch { return false }
+    }
+
+    func removeExtensionAttempt() -> Bool {
+        guard extensionProblem == nil else { return false }
+        do {
+            if FileManager.default.fileExists(atPath: extensionURL.path) { try FileManager.default.removeItem(at: extensionURL) }
+            return true
+        } catch { return false }
     }
 
     /// Compatibility helpers for code that only needs to inspect pending creates.
@@ -276,7 +322,7 @@ public final class PracticeCache {
     }
 
     public static func removeEverything(in directory: URL = PracticeCache.defaultDirectory()) {
-        for name in ["sankalpa-cache.json", "sankalpa-outbox.json"] {
+        for name in ["sankalpa-cache.json", "sankalpa-outbox.json", "sankalpa-extension.json", "sankalpa-outbox.pre-linked.json"] {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }

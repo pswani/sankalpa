@@ -12,6 +12,7 @@ Commands in current scope:
 | Command | Purpose |
 |---|---|
 | `DeclareSankalpa` | Create a sankalpa in Not started. |
+| `ExtendSankalpa` | Create or replay a longer linked vow, preserving the source and inherited history. |
 | `BeginSankalpa` | Move a sankalpa to In progress, optionally effective in the past. |
 | `PauseSankalpa` | Move a sankalpa to Paused now. |
 | `ResumeSankalpa` | Move a sankalpa back to In progress now. |
@@ -38,11 +39,14 @@ Queries return data and change nothing:
 |---|---|
 | `FindSankalpas` | Summaries for listing/filtering. |
 | `GetSankalpaDetail` | One sankalpa with derived end date and current state. |
-| `GetSessions` | Logged sessions for a sankalpa. |
+| `GetSessions` | Eligible contributing sessions for a vow, with logging owner and contributing vow IDs. |
+| `GetJournal` | Range-bounded unique session facts across vows. |
+| `GetLinkedSeries` | Source/child navigation, own progress, and separate successful vows. |
 | `GetLifecycleHistory` | Audit history for lifecycle transitions. |
 | `GetPeriodOutcomes` | Derived outcomes for period windows. |
 
-`GetPeriodOutcomes` is the only query that needs domain logic. It requires a `from` and `until`
+Contribution queries and counts use the domain performed-time eligibility predicate.
+`GetPeriodOutcomes` additionally needs period-calculation logic. It requires a `from` and `until`
 date and selects period windows whose start dates fall in that range. It then loads sessions from
 the first selected window's start through the last selected window's end and runs
 `PeriodOutcomeCalculator`. This bounds work for long-running commitments without undercounting a
@@ -55,6 +59,9 @@ public interface SankalpaRepository {
     Optional<Sankalpa> findById(SankalpaId id);
     Optional<Sankalpa> findByIdForUpdate(SankalpaId id);
     void save(Sankalpa sankalpa);
+    Optional<Sankalpa> findDirectExtension(SankalpaId sourceId);
+    List<Sankalpa> findSeriesMembers(SankalpaId seriesId);
+    void acquireSeriesWriteGuard(SankalpaId seriesId);
 }
 
 public interface SessionRepository {
@@ -64,14 +71,17 @@ public interface SessionRepository {
     Optional<Session> findById(SessionId sessionId);
     void save(Session session);
     void delete(SessionId sessionId);
-    List<Session> findForSankalpa(
-        SankalpaId sankalpaId, LocalDate from, LocalDate until);
+    List<Session> findSeriesCandidates(
+        SankalpaId seriesId, LocalDate from, LocalDate until);
+    // Journal reads page unique active facts; contribution pagination is applied after filtering.
 }
 
 public interface SankalpaReadPort {
     List<SankalpaSummaryRow> list(SankalpaFilter filter);
     Optional<SankalpaDetailRow> detail(SankalpaId id);
-    List<SessionRow> sessions(SankalpaId id, LocalDate from, LocalDate until);
+    // Session rows are assembled from candidates through the shared contribution helper.
+    List<SessionRow> journal(LocalDate from, LocalDate until, PageRequest page);
+    List<SankalpaDetailRow> linkedSeries(SankalpaId seriesId);
     List<LifecycleTransitionRow> lifecycleHistory(SankalpaId id);
 }
 
@@ -90,13 +100,13 @@ Example backdated Begin command:
 
 ```java
 public Result<Void, SankalpaCommandError> handle(BeginSankalpaCommand command) {
-    Sankalpa sankalpa = repository.findById(command.sankalpaId())
-        .orElse(null);
-
-    if (sankalpa == null) {
+    // Entire command runs in the adapter-managed transaction.
+    Sankalpa located = repository.findById(command.sankalpaId()).orElse(null);
+    if (located == null) {
         return Result.err(new SankalpaNotFound(command.sankalpaId()));
     }
-
+    repository.acquireSeriesWriteGuard(located.seriesId());
+    Sankalpa sankalpa = repository.findByIdForUpdate(command.sankalpaId()).orElseThrow();
     LocalDateTime recordedAt = clock.now();
     LocalDateTime effectiveAt = command.effectiveAt().orElse(recordedAt);
     BeginTiming timing = new BeginTiming(effectiveAt, recordedAt);
@@ -143,8 +153,11 @@ Use intention-revealing endpoints:
 | Method | Path | Use case |
 |---|---|---|
 | `POST` | `/sankalpas` | `DeclareSankalpa` |
+| `POST` | `/sankalpas/{id}/extensions` | `ExtendSankalpa` |
 | `GET` | `/sankalpas` | `FindSankalpas` |
 | `GET` | `/sankalpas/{id}` | `GetSankalpaDetail` |
+| `GET` | `/sankalpas/{id}/linked-series` | `GetLinkedSeries` |
+| `GET` | `/sessions?from=...&until=...` | `GetJournal` with cursor pagination |
 | `POST` | `/sankalpas/{id}/begin` | `BeginSankalpa` |
 | `POST` | `/sankalpas/{id}/pause` | `PauseSankalpa` |
 | `POST` | `/sankalpas/{id}/resume` | `ResumeSankalpa` |
@@ -158,18 +171,30 @@ Use intention-revealing endpoints:
 | `GET` | `/capabilities` | Advertise supported cross-version command contracts |
 
 Do not add `PATCH` or `PUT` for sessions: a performed fact is either present or permanently
-deleted. Do not add sankalpa mutation/deletion endpoints until those requirements are in scope.
+deleted. Beyond declaration, explicit extension creation, and lifecycle actions, do not add general
+sankalpa mutation/deletion endpoints until those requirements are in scope.
 
 Supported clients send the same UUID in `LogSessionRequest.id` and `Idempotency-Key`; a mismatch is
 invalid. First acceptance returns `201`; exact replay returns `200`; both bodies contain the
 identified session. Identity conflict returns `409`, and a create preempted by deletion returns
 `410`. DELETE is idempotent and returns `204` for both first and repeated success. The temporary
 legacy no-ID path and its removal are defined in the cross-system rollout design.
-The capability returns `sessionCommandIdentity: 1` and the persistent `serviceInstanceId` of the
-logical data store. The client requires both before sending these commands, so it cannot unknowingly
+The capability returns `sessionCommandIdentity: 1`, `linkedSankalpaExtensions: 1`, and the
+persistent `serviceInstanceId` of the logical data store. The client requires both before sending these commands, so it cannot unknowingly
 use the unsafe legacy behavior of an older server. Every identified POST/DELETE also carries that
 expected instance ID; the server rejects a mismatch before changing data, so address reuse cannot
 retarget pending work to another service.
 
-Only the Begin request body may contain `effectiveAt`. The response/read models expose both
-`effectiveAt` and `recordedAt` for each audit entry; they are equal for all other transitions.
+Only the Begin request body may contain `effectiveAt`. The response/read models expose
+`effectiveAt`, `recordedAt`, and `originSankalpaId` for each audit entry. Except for Begin, the
+timestamps are equal; inherited entries retain their original timestamps and origin.
+
+## Linked-Series Coordination
+
+[Linked extensions](11-linked-extensions.md) specifies extension identity/replay, root write
+ordering, candidate reads, owner-routed deletion, and the versioned linked-series contract.
+Session identity decisions still compare the original logging owner. Per-vow histories, counts,
+and outcomes use one contribution helper; combined totals use a union of session IDs. Clients
+route deletion from any contributing view to the immutable logging owner exposed on each row.
+The extension factory supplies creation rules; the application checks existing children and
+commits creation with inherited history. No command fans out session writes.

@@ -108,6 +108,12 @@ def parse_core(run: Path) -> dict | None:
             status = "skipped"
         elif real_issues:
             status = "failed"
+        elif test_id not in ended:
+            status = "failed"
+            real_issues.append({
+                "message": "The test did not finish; no completion result was recorded.",
+                "file": "", "line": None, "known_issue": False,
+            })
         else:
             status = "passed"
         duration = None
@@ -126,6 +132,23 @@ def parse_core(run: Path) -> dict | None:
                 "failures": real_issues,
             }
         )
+
+    # The conversation target uses XCTest, which is absent from Swift Testing's event stream.
+    log = run / "logs" / "core.log"
+    if log.exists():
+        for line in log.read_text(errors="replace").splitlines():
+            match = XCTEST_RESULT.match(line.strip())
+            if match:
+                tests.append({
+                    "suite": match.group("suite").split(".")[-1],
+                    "name": humanise(match.group("name")), "function": match.group("name"),
+                    "status": match.group("outcome"),
+                    "duration": float(match.group("seconds")) if match.group("seconds") else None,
+                    "file": "", "line": None,
+                    "failures": [] if match.group("outcome") == "passed" else [{
+                        "message": line.strip(), "file": "", "line": None,
+                    }],
+                })
 
     tests.sort(key=lambda t: (t["suite"], t["name"]))
     return {"name": "Core (domain, application, storage)", "tests": tests}
@@ -169,8 +192,11 @@ def parse_ui(run: Path) -> dict | None:
             continue
         merged.extend(suite["tests"])
         device = device or suite.get("device", "")
-    if unreadable and not merged:
-        return parse_ui_log(run)
+    if unreadable and log.exists():
+        # A readable first bundle must not hide failures in an interrupted second bundle.
+        recorded = {(t["suite"], t["function"].removesuffix("()")) for t in merged}
+        merged.extend(t for t in parse_ui_log(run)["tests"]
+                      if (t["suite"], t["function"].removesuffix("()")) not in recorded)
     merged.sort(key=lambda t: (t["suite"], t["name"]))
     return {
         "name": "UI (simulator journeys)",
@@ -408,9 +434,14 @@ UUID_SUFFIX = re.compile(r"_\d+_[0-9A-F-]{36}")
 
 def collect_screens(run: Path) -> list[dict]:
     source = run / "raw" / "attachments"
-    manifest = source / "manifest.json"
-    if not manifest.exists():
-        return []
+    screens = []
+    for manifest in sorted(source.rglob("manifest.json")):
+        screens.extend(collect_manifest_screens(run, manifest))
+    return sorted(screens, key=lambda s: s["file"])
+
+
+def collect_manifest_screens(run: Path, manifest: Path) -> list[dict]:
+    source = manifest.parent
 
     destination = run / "screens"
     destination.mkdir(exist_ok=True)
@@ -569,11 +600,15 @@ def main(run: Path) -> int:
     broken = [s for s in suites if s.get("did_not_run")]
     release_failed = release is not None and release["status"] == "failed"
     timed_out = environment.get("ui_timed_out") == "yes"
-    verdict = "failed" if (failed or broken or release_failed or timed_out) else "passed"
+    command_failures = {key: environment[key] for key in
+                        ("core_exit_status", "ui_exit_status", "release_exit_status")
+                        if environment.get(key, "0") != "0"}
+    verdict = "failed" if (failed or broken or release_failed or timed_out or command_failures) else "passed"
 
     results = {
         "verdict": verdict,
         "incomplete": timed_out,
+        "command_failures": command_failures,
         "environment": environment,
         "suites": suites,
         "release": release,
@@ -679,7 +714,13 @@ def render(results: dict, run: Path) -> str:
             f"{'**1**' if state == 'failed' else '0'} | 0 |")
     add("")
 
-    if not failed and not broken and not (results["release"] and results["release"]["status"] == "failed"):
+    if results.get("command_failures"):
+        add("Commands exited unsuccessfully: " + ", ".join(
+            f"`{key.removesuffix('_exit_status')}` (exit {value})"
+            for key, value in results["command_failures"].items()) + ". See the corresponding logs.")
+        add("")
+
+    if not failed and not broken and not results.get("command_failures") and not results.get("incomplete") and not (results["release"] and results["release"]["status"] == "failed"):
         add("Everything that ran, passed.")
         add("")
 

@@ -7,7 +7,9 @@ integration events, or a server outbox.
 So the design records facts directly:
 
 - `LifecycleTimeline` stores lifecycle transitions in order.
-- `Session` stores a logged performed session.
+- `Session` stores one logged performed session shared through derived contributions.
+- Extension metadata records the source and creation time. Copied lifecycle entries retain
+  their original vow in `originSankalpaId`. Successful terminal transitions supply achievements.
 - The server's session-identity ledger stores the minimum command fact needed for replay and
   permanent deletion.
 - The iOS operation journal stores unresolved client intent until the server decides it.
@@ -22,7 +24,8 @@ public record LifecycleTransition(
     LifecycleState from,
     LifecycleState to,
     LocalDateTime effectiveAt,
-    LocalDateTime recordedAt
+    LocalDateTime recordedAt,
+    SankalpaId originSankalpaId
 ) {}
 
 public record LifecycleTimeline(
@@ -78,3 +81,13 @@ Add domain or integration events only when there is a real consumer:
 | Period outcomes become too expensive to derive on read | Projection-updating events |
 
 Until then, event infrastructure would be ceremony.
+
+## Extension History and Completion
+
+Extension creation is recorded by `extensionOf` and `declaredAt`, separately from lifecycle
+transitions. Inherited entries retain both timestamps and their original origin even after
+multiple extensions. Later transitions belong to each vow independently. A successful completion
+is acknowledged from the completion command result and remains visible from the vow's terminal
+transition. Session correction recalculates counts but never rewrites this user-declared outcome.
+No session contribution facts or separate achievement records are stored. See
+[Linked extensions](11-linked-extensions.md) for retry and client behavior.

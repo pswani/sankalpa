@@ -95,12 +95,28 @@ run**, with its compiler errors, rather than as zero failures — "0 failed" abo
 never built is the most misleading line a test report can contain. And a run that was stopped
 part-way says so at the top, because tests that never reported are unknown, not passing.
 
+The core summary includes the conversation target's XCTest cases as well as Swift Testing
+results. An interrupted test or a failed command cannot produce a passing verdict. When a
+native result bundle is unreadable, its logged results are retained alongside readable bundles.
+Screenshot manifests are kept separately for each native suite so neither gallery replaces the other.
+
+The report has its own regression checks:
+
+```bash
+python3 -m unittest discover -s app/scripts -p test_report.py
+```
+
 ## When a run does not come back
 
 `xcodebuild` can hang after its tests have already finished. Every step therefore runs under a
 time limit (`UI_TIMEOUT`, `CORE_TIMEOUT`, `RELEASE_TIMEOUT` — seconds), and a step that exceeds
 it is killed and reported as a failure. Because a killed `xcodebuild` never finishes writing its
 result bundle, the report falls back to the console log, and says that it did.
+
+The runner disables automatic verbose simulator diagnostics with Xcode's
+`-collect-test-diagnostics never` option. Xcode 27 was observed waiting indefinitely in
+`collectSimulatorDiagnostics` after a completed suite; ordinary test results, logs, and screenshot
+attachments remain enabled.
 
 ## The simulator
 

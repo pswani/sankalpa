@@ -6,6 +6,8 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
     /// S3 — a sankalpa may start at most one year in the past.
     public static let maximumBackdatedStartInYears = 1
 
+    public let seriesId: SankalpaId
+    public let extensionOf: SankalpaId?
     public let id: SankalpaId
     public let declaredAt: CalendarMoment
     public private(set) var title: Title
@@ -21,8 +23,12 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
         description: SankalpaDescription,
         actionType: ActionType,
         commitment: Commitment,
-        lifecycle: LifecycleTimeline
+        lifecycle: LifecycleTimeline,
+        seriesId: SankalpaId? = nil,
+        extensionOf: SankalpaId? = nil
     ) {
+        self.seriesId = seriesId ?? id
+        self.extensionOf = extensionOf
         self.id = id
         self.declaredAt = declaredAt
         self.title = title
@@ -75,7 +81,9 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
         description: SankalpaDescription,
         actionType: ActionType,
         commitment: Commitment,
-        lifecycle: LifecycleTimeline
+        lifecycle: LifecycleTimeline,
+        seriesId: SankalpaId? = nil,
+        extensionOf: SankalpaId? = nil
     ) -> Sankalpa {
         Sankalpa(
             id: id,
@@ -84,8 +92,56 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
             description: description,
             actionType: actionType,
             commitment: commitment,
-            lifecycle: lifecycle
+            lifecycle: lifecycle, seriesId: seriesId, extensionOf: extensionOf
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, declaredAt, title, description, actionType, commitment, lifecycle, seriesId, extensionOf
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(SankalpaId.self, forKey: .id)
+        seriesId = try values.decodeIfPresent(SankalpaId.self, forKey: .seriesId) ?? id
+        extensionOf = try values.decodeIfPresent(SankalpaId.self, forKey: .extensionOf)
+        declaredAt = try values.decode(CalendarMoment.self, forKey: .declaredAt)
+        title = try values.decode(Title.self, forKey: .title)
+        description = try values.decode(SankalpaDescription.self, forKey: .description)
+        actionType = try values.decode(ActionType.self, forKey: .actionType)
+        commitment = try values.decode(Commitment.self, forKey: .commitment)
+        let ownerId = id
+        let old = try values.decode(LifecycleTimeline.self, forKey: .lifecycle)
+        lifecycle = LifecycleTimeline(current: old.current, transitions: old.transitions.map {
+            LifecycleTransition(from: $0.from, to: $0.to, effectiveAt: $0.effectiveAt,
+                                recordedAt: $0.recordedAt, originSankalpaId: $0.originSankalpaId ?? ownerId)
+        })
+    }
+
+    public func acceptsPerformedAt(_ at: CalendarMoment) -> Bool {
+        at.day >= startDate && (endDate == nil || at.day <= endDate!) && lifecycle.wasInProgress(at: at)
+    }
+
+    public var canExtend: Bool {
+        commitment.periodCount != nil && (state == .inProgress || state == .paused)
+    }
+
+    /// A total duration from the original start, with a value copy of the source's timeline.
+    public func extended(id: SankalpaId = SankalpaId(), totalPeriodCount: Int,
+                         now: CalendarMoment) throws -> Sankalpa {
+        guard canExtend else { throw ExtensionError.sourceNotExtendable }
+        guard id != self.id else { throw ExtensionError.invalidIdentity }
+        let count = try PeriodCount(totalPeriodCount)
+        guard count.value > commitment.periodCount!.value else { throw ExtensionError.durationNotGreater }
+        guard now >= declaredAt, lifecycle.transitions.allSatisfy({ $0.recordedAt <= now }) else {
+            throw ExtensionError.clockMovedBackwards
+        }
+        let longer = Commitment(startDate: startDate, periodUnit: commitment.periodUnit,
+                                timesPerPeriod: commitment.timesPerPeriod, periodCount: count)
+        guard longer.endDate! >= now.day else { throw ExtensionError.endsInPast }
+        return Sankalpa(id: id, declaredAt: now, title: title, description: description,
+                        actionType: actionType, commitment: longer, lifecycle: lifecycle,
+                        seriesId: seriesId, extensionOf: self.id)
     }
 
     // MARK: - Derived state
@@ -110,7 +166,7 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
             to: .inProgress,
             effectiveAt: timing.effectiveAt,
             recordedAt: timing.recordedAt,
-            commitmentStart: commitment.startDate
+            commitmentStart: commitment.startDate, originSankalpaId: id
         )
     }
 
@@ -145,7 +201,7 @@ public struct Sankalpa: Identifiable, Codable, Sendable, Hashable {
             to: target,
             effectiveAt: now,
             recordedAt: now,
-            commitmentStart: commitment.startDate
+            commitmentStart: commitment.startDate, originSankalpaId: id
         )
     }
 

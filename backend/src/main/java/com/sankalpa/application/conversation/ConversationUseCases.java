@@ -19,6 +19,9 @@ public interface ConversationUseCases {
                                 ActionType actionType, LocalDate startDate, PeriodUnit periodUnit,
                                 int timesPerPeriod, Integer periodCount, List<String> inferredFields);
     Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId);
+    Proposal proposeSession(UUID threadId, UUID runId, SankalpaId id, LocalDateTime at, String summary,
+            List<SankalpaId> alternatives, com.sankalpa.application.PracticeContract contract);
+    Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId, com.sankalpa.application.PracticeContract contract);
     Resolution cancel(UUID threadId, UUID proposalId);
     record Resolution(Proposal proposal, boolean replay) {}
 }

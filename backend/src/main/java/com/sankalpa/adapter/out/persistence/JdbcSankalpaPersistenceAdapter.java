@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 
 @Repository
+@org.springframework.context.annotation.DependsOn("linkedSchemaMigration")
 public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, SessionRepository {
     private final JdbcTemplate jdbc;
 
@@ -68,20 +69,54 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
     public void save(Sankalpa sankalpa) {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM sankalpa WHERE id = ?", Integer.class,
                 sankalpa.id().toString());
-        if (count != null && count > 0) update(sankalpa); else insert(sankalpa);
+        if (count != null && count > 0) update(sankalpa); else {
+            try { insert(sankalpa); } catch (DuplicateKeyException failure) {
+                if (sankalpa.extensionOf().isPresent()) throw new com.sankalpa.application.ExtensionClaimConflict(failure);
+                throw failure;
+            }
+        }
         appendTransitions(sankalpa);
+    }
+
+    @Override
+    public void saveNew(Sankalpa sankalpa) {
+        try { insert(sankalpa); }
+        catch (DuplicateKeyException failure) {
+            if (sankalpa.extensionOf().isPresent()) throw new com.sankalpa.application.ExtensionClaimConflict(failure);
+            throw failure;
+        }
+        appendTransitions(sankalpa);
+    }
+
+    @Override
+    public List<Sankalpa> findSeriesMembers(SankalpaId root) {
+        Map<String, List<LifecycleTransition>> histories = new HashMap<>();
+        jdbc.query("""
+                SELECT t.* FROM sankalpa_lifecycle_transition t
+                JOIN sankalpa s ON s.id = t.sankalpa_id
+                WHERE s.series_id = ? ORDER BY t.sankalpa_id, t.sequence_number
+                """, (RowCallbackHandler) rs -> histories.computeIfAbsent(rs.getString("sankalpa_id"),
+                        ignored -> new ArrayList<>()).add(mapTransition(rs)), root.toString());
+        return jdbc.query("SELECT * FROM sankalpa WHERE series_id = ? ORDER BY period_count, id",
+                (rs, rowNum) -> mapSankalpa(rs, histories.getOrDefault(rs.getString("id"), List.of())), root.toString());
+    }
+
+    @Override
+    public Optional<Sankalpa> findDirectExtension(SankalpaId source) {
+        return jdbc.query("SELECT id FROM sankalpa WHERE extension_of = ?", (rs, rowNum) -> rs.getString(1),
+                source.toString()).stream().findFirst().flatMap(id -> findById(SankalpaId.parse(id)));
     }
 
     private void insert(Sankalpa s) {
         jdbc.update("""
                 INSERT INTO sankalpa
                   (id, title, description, action_type, start_date, period_unit,
-                   times_per_period, period_count, current_state, declared_at, version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   times_per_period, period_count, current_state, declared_at, version, series_id, extension_of)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, s.id().toString(), s.title().value(), s.description().value(), s.actionType().name(),
                 s.commitment().startDate().toString(), s.commitment().periodUnit().name(),
                 s.commitment().timesPerPeriod(), s.commitment().periodCount(),
-                s.lifecycle().current().name(), format(s.declaredAt()), s.version());
+                s.lifecycle().current().name(), format(s.declaredAt()), s.version(), s.seriesId().toString(), s.extensionOf().map(Object::toString).orElse(null));
     }
 
     private void update(Sankalpa s) {
@@ -110,10 +145,10 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
             LifecycleTransition transition = current.get(sequence);
             jdbc.update("""
                     INSERT INTO sankalpa_lifecycle_transition
-                      (sankalpa_id, sequence_number, from_state, to_state, effective_at, recorded_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                      (sankalpa_id, sequence_number, from_state, to_state, effective_at, recorded_at, origin_sankalpa_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, s.id().toString(), sequence, transition.from().name(), transition.to().name(),
-                    format(transition.effectiveAt()), format(transition.recordedAt()));
+                    format(transition.effectiveAt()), format(transition.recordedAt()), transition.originSankalpaId().toString());
         }
     }
 
@@ -129,7 +164,7 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
                 LifecycleState.valueOf(rs.getString("from_state")),
                 LifecycleState.valueOf(rs.getString("to_state")),
                 parse(rs.getString("effective_at")),
-                parse(rs.getString("recorded_at")));
+                parse(rs.getString("recorded_at")), SankalpaId.parse(rs.getString("origin_sankalpa_id")));
     }
 
     private Sankalpa mapSankalpa(ResultSet rs, List<LifecycleTransition> transitions) throws SQLException {
@@ -147,7 +182,8 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
                         rs.getInt("times_per_period"), periodCount),
                 parse(rs.getString("declared_at")),
                 new LifecycleTimeline(current, transitions),
-                rs.getInt("version"));
+                rs.getInt("version"), SankalpaId.parse(rs.getString("series_id")),
+                rs.getString("extension_of") == null ? null : SankalpaId.parse(rs.getString("extension_of")));
     }
 
     @Override
@@ -250,12 +286,41 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
         return total == null ? 0 : total;
     }
 
+    @Override public long readRevision() {
+        String value = jdbc.queryForObject("SELECT metadata_value FROM service_metadata WHERE metadata_key='practice_revision'", String.class);
+        long revision = Long.parseLong(value);
+        if (revision < 0) throw new IllegalStateException("Invalid practice revision");
+        return revision;
+    }
+    @Override public void incrementRevision() {
+        jdbc.update("UPDATE service_metadata SET metadata_value=metadata_value WHERE metadata_key='practice_revision'");
+        long next = Math.addExact(readRevision(), 1);
+        jdbc.update("UPDATE service_metadata SET metadata_value=? WHERE metadata_key='practice_revision'", Long.toString(next));
+    }
+    @Override public List<Session> scanCandidates(List<SankalpaId> owners, LocalDate from, LocalDate until,
+            com.sankalpa.application.SessionBoundary after, int limit) {
+        if (owners.isEmpty()) return List.of();
+        String sql = "SELECT p.* FROM practice_session p WHERE p.sankalpa_id IN ("
+                + String.join(",", java.util.Collections.nCopies(owners.size(), "?")) + ")";
+        List<Object> args = new ArrayList<>(owners.stream().map(Object::toString).toList());
+        if (from != null) {
+            sql += " AND p.occurred_at >= ? AND p.occurred_at <= ?";
+            args.add(format(from.atStartOfDay())); args.add(format(until.atTime(LocalTime.MAX)));
+        }
+        if (after != null) {
+            sql += " AND (p.occurred_at < ? OR (p.occurred_at = ? AND p.id < ?))";
+            args.add(format(after.occurredAt())); args.add(format(after.occurredAt())); args.add(after.id().toString());
+        }
+        sql += " ORDER BY p.occurred_at DESC, p.id DESC LIMIT ?"; args.add(limit);
+        return jdbc.query(sql, (rs,n) -> mapSession(rs), args.toArray());
+    }
+
     private Session mapSession(ResultSet rs) throws SQLException {
         return new Session(SessionId.parse(rs.getString("id")),
                 SankalpaId.parse(rs.getString("sankalpa_id")),
                 parse(rs.getString("occurred_at")), parse(rs.getString("logged_at")));
     }
 
-    private static String format(LocalDateTime value) { return value.toString(); }
+    private static String format(LocalDateTime value) { return LinkedSchemaMigration.TIMESTAMP.format(value); }
     private static LocalDateTime parse(String value) { return LocalDateTime.parse(value); }
 }

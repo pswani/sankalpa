@@ -44,6 +44,16 @@ public final class ApiModels {
             Integer periodCount
     ) {}
 
+    public record ExtendRequest(@NotNull UUID id, @Min(1) @Max(3650) int totalPeriodCount) {
+        @com.fasterxml.jackson.annotation.JsonAnySetter
+        public void rejectUnknownField(String name, Object value) {
+            throw new IllegalArgumentException("Unsupported extension field: " + name);
+        }
+    }
+    public record VowSnapshot(SankalpaResponse sankalpa, List<LifecycleTransitionResponse> lifecycleHistory) {}
+    public record ExtensionResponse(boolean created, SankalpaResponse sankalpa, List<VowSnapshot> series) {}
+    public record CursorSessionPageResponse(List<SessionResponse> content, String nextCursor, boolean hasMore) {}
+
     public record BeginRequest(
             @Schema(example = "2026-06-01T08:00:00", types = {"string", "null"}, format = "date-time",
                     description = "Optional past effective time, interpreted in the configured application timezone")
@@ -59,7 +69,7 @@ public final class ApiModels {
                     description = "Past occurrence time, interpreted in the configured application timezone")
             LocalDateTime occurredAt) {}
 
-    public record CapabilitiesResponse(int sessionCommandIdentity, UUID serviceInstanceId,
+    public record CapabilitiesResponse(int sessionCommandIdentity, int linkedSankalpaExtensions, UUID serviceInstanceId,
                                        AssistantCapability assistant) {}
     public record AssistantCapability(boolean enabled, String aguiProfile,
                                       int maxMessages, int maxEventBytes,
@@ -80,14 +90,16 @@ public final class ApiModels {
                     description = "Duration in period units; null for an indefinite commitment")
             Integer periodCount,
             LifecycleState lifecycleState,
-            LocalDateTime declaredAt
+            LocalDateTime declaredAt,
+            UUID seriesId, UUID extensionOf, UUID directExtensionId, long totalSessionCount
     ) {
         public static SankalpaResponse from(Sankalpa value) {
             return new SankalpaResponse(value.id().value(), value.title().value(),
                     value.description().value(), value.actionType(), value.commitment().startDate(),
                     value.commitment().endDate().orElse(null), value.commitment().periodUnit(),
                     value.commitment().timesPerPeriod(), value.commitment().periodCount(),
-                    value.lifecycle().current(), value.declaredAt());
+                    value.lifecycle().current(), value.declaredAt(), value.seriesId().value(),
+                    value.extensionOf().map(id -> id.value()).orElse(null), null, 0);
         }
     }
 
@@ -95,10 +107,10 @@ public final class ApiModels {
                                   @Schema(description = "Interpreted in the configured application timezone")
                                   LocalDateTime occurredAt,
                                   @Schema(description = "Server time in the configured application timezone")
-                                  LocalDateTime loggedAt) {
+                                  LocalDateTime loggedAt, UUID loggingSankalpaId, List<UUID> contributingSankalpaIds) {
         public static SessionResponse from(Session value) {
             return new SessionResponse(value.id().value(), value.sankalpaId().value(),
-                    value.occurredAt(), value.loggedAt());
+                    value.occurredAt(), value.loggedAt(), value.sankalpaId().value(), List.of(value.sankalpaId().value()));
         }
     }
 
@@ -119,11 +131,11 @@ public final class ApiModels {
             LifecycleState from,
             LifecycleState to,
             LocalDateTime effectiveAt,
-            LocalDateTime recordedAt
+            LocalDateTime recordedAt, UUID originSankalpaId, int sequenceNumber
     ) {
         public static LifecycleTransitionResponse from(LifecycleTransition value) {
             return new LifecycleTransitionResponse(value.from(), value.to(),
-                    value.effectiveAt(), value.recordedAt());
+                    value.effectiveAt(), value.recordedAt(), value.originSankalpaId() == null ? null : value.originSankalpaId().value(), 0);
         }
     }
 

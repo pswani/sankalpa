@@ -35,7 +35,7 @@ enum API {
 
     // MARK: - Responses
 
-    struct SankalpaResponse: Decodable, Sendable {
+    struct SankalpaResponse: Codable, Sendable, Equatable {
         let id: UUID
         let title: String
         let description: String
@@ -47,6 +47,10 @@ enum API {
         let periodCount: Int?
         let lifecycleState: String
         let declaredAt: String
+        var seriesId: UUID? = nil
+        var extensionOf: UUID? = nil
+        var directExtensionId: UUID? = nil
+        var totalSessionCount: Int? = nil
     }
 
     struct SessionResponse: Decodable, Sendable {
@@ -54,10 +58,13 @@ enum API {
         let sankalpaId: UUID
         let occurredAt: String
         let loggedAt: String
+        var loggingSankalpaId: UUID? = nil
+        var contributingSankalpaIds: [UUID]? = nil
     }
 
     struct CapabilitiesResponse: Decodable, Sendable {
         let sessionCommandIdentity: Int
+        var linkedSankalpaExtensions: Int? = nil
         let serviceInstanceId: UUID
         let assistant: AssistantCapability?
     }
@@ -79,11 +86,29 @@ enum API {
         let totalPages: Int
     }
 
-    struct LifecycleTransitionResponse: Decodable, Sendable {
+    struct LifecycleTransitionResponse: Codable, Sendable {
         let from: String
         let to: String
         let effectiveAt: String
         let recordedAt: String
+        var originSankalpaId: UUID? = nil
+        var sequenceNumber: Int? = nil
+    }
+
+    struct ExtendRequest: Encodable, Sendable { let id: UUID; let totalPeriodCount: Int }
+    struct VowSnapshot: Codable, Sendable {
+        let sankalpa: SankalpaResponse
+        let lifecycleHistory: [LifecycleTransitionResponse]
+    }
+    struct ExtensionResponse: Codable, Sendable {
+        let created: Bool
+        let sankalpa: SankalpaResponse
+        let series: [VowSnapshot]
+    }
+    struct CursorSessionPageResponse: Decodable, Sendable {
+        let content: [SessionResponse]
+        let nextCursor: String?
+        let hasMore: Bool
     }
 
     /// RFC 9457 problem details. `code` is the stable application code the service documents; the

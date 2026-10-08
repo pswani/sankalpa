@@ -10,6 +10,8 @@ import java.time.LocalDateTime;
 
 public final class Sankalpa {
     private final SankalpaId id;
+    private final SankalpaId seriesId;
+    private final SankalpaId extensionOf;
     private final Title title;
     private final Description description;
     private final ActionType actionType;
@@ -19,7 +21,8 @@ public final class Sankalpa {
     private int version;
 
     private Sankalpa(SankalpaId id, Title title, Description description, ActionType actionType,
-                     Commitment commitment, LocalDateTime declaredAt, LifecycleTimeline lifecycle, int version) {
+                     Commitment commitment, LocalDateTime declaredAt, LifecycleTimeline lifecycle, int version,
+                     SankalpaId seriesId, SankalpaId extensionOf) {
         if (id == null || title == null || description == null || actionType == null
                 || commitment == null || declaredAt == null || lifecycle == null) {
             throw new DomainException("INVALID_SANKALPA", "All sankalpa fields are required");
@@ -28,6 +31,8 @@ public final class Sankalpa {
             throw new DomainException("INVALID_SANKALPA", "Version cannot be negative");
         }
         this.id = id;
+        this.seriesId = java.util.Objects.requireNonNull(seriesId);
+        this.extensionOf = extensionOf;
         this.title = title;
         this.description = description;
         this.actionType = actionType;
@@ -51,13 +56,47 @@ public final class Sankalpa {
                     "Start date cannot be more than one year in the past");
         }
         return new Sankalpa(id, title, description, actionType, commitment,
-                declaredAt, new LifecycleTimeline(), 0);
+                declaredAt, new LifecycleTimeline(), 0, id, null);
     }
 
     public static Sankalpa reconstitute(SankalpaId id, Title title, Description description,
                                         ActionType actionType, Commitment commitment,
                                         LocalDateTime declaredAt, LifecycleTimeline lifecycle, int version) {
-        return new Sankalpa(id, title, description, actionType, commitment, declaredAt, lifecycle, version);
+        return reconstitute(id, title, description, actionType, commitment, declaredAt, lifecycle, version, id, null);
+    }
+
+    public static Sankalpa reconstitute(SankalpaId id, Title title, Description description,
+            ActionType actionType, Commitment commitment, LocalDateTime declaredAt,
+            LifecycleTimeline lifecycle, int version, SankalpaId seriesId, SankalpaId extensionOf) {
+        return new Sankalpa(id, title, description, actionType, commitment, declaredAt,
+                lifecycle, version, seriesId, extensionOf);
+    }
+
+    public Sankalpa extend(SankalpaId newId, int totalPeriodCount, LocalDateTime now) {
+        if (commitment.periodCount() == null || (lifecycle.current() != LifecycleState.IN_PROGRESS
+                && lifecycle.current() != LifecycleState.PAUSED)) {
+            throw new DomainException("SOURCE_NOT_EXTENDABLE", "Only an ongoing finite vow can be extended");
+        }
+        if (newId == null || newId.equals(id) || now == null) {
+            throw new DomainException("INVALID_EXTENSION_REQUEST", "A distinct extension identity and creation time are required");
+        }
+        if (now.isBefore(declaredAt) || lifecycle.transitions().stream().anyMatch(t -> t.recordedAt().isAfter(now))) {
+            throw new DomainException("TRANSITION_TIME_REGRESSION", "Extension time cannot precede source history");
+        }
+        Commitment longer = new Commitment(commitment.startDate(), commitment.periodUnit(),
+                commitment.timesPerPeriod(), totalPeriodCount);
+        if (totalPeriodCount <= commitment.periodCount()) {
+            throw new DomainException("DURATION_NOT_GREATER", "Choose a greater total duration");
+        }
+        if (longer.endDate().orElseThrow().isBefore(now.toLocalDate())) {
+            throw new DomainException("EXTENSION_ENDS_IN_PAST", "The extended end date must be today or later");
+        }
+        return new Sankalpa(newId, title, description, actionType, longer, now,
+                new LifecycleTimeline(lifecycle.current(), lifecycle.transitions()), 0, seriesId, id);
+    }
+
+    public boolean acceptsPerformedAt(LocalDateTime at) {
+        return at != null && commitment.covers(at.toLocalDate()) && lifecycle.wasInProgressAt(at);
     }
 
     public void begin(LocalDateTime effectiveAt, LocalDateTime recordedAt) {
@@ -68,7 +107,8 @@ public final class Sankalpa {
             throw new DomainException("INVALID_LIFECYCLE_TRANSITION",
                     "Cannot begin from " + lifecycle.current());
         }
-        lifecycle.begin(commitment.startDate(), effectiveAt, recordedAt);
+        requireAuditTime(recordedAt);
+        lifecycle.begin(commitment.startDate(), effectiveAt, recordedAt, id);
     }
     public void pause(LocalDateTime now) { transitionNow(LifecycleState.PAUSED, now); }
     public void resume(LocalDateTime now) {
@@ -91,7 +131,14 @@ public final class Sankalpa {
         if (now == null) {
             throw new DomainException("INVALID_LIFECYCLE_TRANSITION", "Transition time is required");
         }
-        lifecycle.transitionNow(target, now);
+        requireAuditTime(now);
+        lifecycle.transitionNow(target, now, id);
+    }
+
+    private void requireAuditTime(LocalDateTime recordedAt) {
+        if (recordedAt.isBefore(declaredAt)) {
+            throw new DomainException("TRANSITION_TIME_REGRESSION", "An action cannot precede this vow's creation");
+        }
     }
 
     public Session logSession(SessionId sessionId, LocalDateTime occurredAt, LocalDateTime now) {
@@ -121,6 +168,8 @@ public final class Sankalpa {
     }
 
     public SankalpaId id() { return id; }
+    public SankalpaId seriesId() { return seriesId; }
+    public java.util.Optional<SankalpaId> extensionOf() { return java.util.Optional.ofNullable(extensionOf); }
     public Title title() { return title; }
     public Description description() { return description; }
     public ActionType actionType() { return actionType; }

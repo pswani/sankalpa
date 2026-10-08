@@ -20,7 +20,7 @@ enum APIMapping {
 
     static func sankalpa(
         _ dto: API.SankalpaResponse,
-        transitions: [API.LifecycleTransitionResponse]
+        transitions: [API.LifecycleTransitionResponse], linked: Bool = false
     ) throws -> Sankalpa {
         guard let actionType = APIEnum.actionType(dto.actionType) else {
             throw WireDecodingError(field: "action type", value: dto.actionType)
@@ -54,7 +54,17 @@ enum APIMapping {
             }
         }
 
-        return Sankalpa.rehydrate(
+        if linked {
+            guard dto.seriesId != nil, dto.totalSessionCount != nil,
+                  transitions.enumerated().allSatisfy({ $0.element.originSankalpaId != nil && $0.element.sequenceNumber == $0.offset })
+            else { throw WireDecodingError(field: "linked history", value: dto.id.uuidString) }
+        }
+        let mapped = try transitions.map { entry in
+            let t = try transition(entry)
+            return LifecycleTransition(from: t.from, to: t.to, effectiveAt: t.effectiveAt, recordedAt: t.recordedAt,
+                                       originSankalpaId: t.originSankalpaId ?? SankalpaId(dto.id))
+        }
+        let vow = Sankalpa.rehydrate(
             id: SankalpaId(dto.id),
             declaredAt: declaredAt,
             title: try title(dto.title),
@@ -68,9 +78,13 @@ enum APIMapping {
             ),
             lifecycle: LifecycleTimeline(
                 current: state,
-                transitions: try transitions.map(transition)
-            )
+                transitions: mapped
+            ), seriesId: dto.seriesId.map(SankalpaId.init), extensionOf: dto.extensionOf.map(SankalpaId.init)
         )
+        if linked, dto.endDate != vow.endDate.map(WireFormat.text) {
+            throw WireDecodingError(field: "commitment end date", value: dto.endDate ?? "null")
+        }
+        return vow
     }
 
     /// The service allows a longer title than this app's own limit, which is a deliberate
@@ -101,10 +115,13 @@ enum APIMapping {
         guard let recordedAt = WireFormat.moment(from: dto.recordedAt) else {
             throw WireDecodingError(field: "transition time", value: dto.recordedAt)
         }
-        return LifecycleTransition(from: from, to: to, effectiveAt: effectiveAt, recordedAt: recordedAt)
+        return LifecycleTransition(from: from, to: to, effectiveAt: effectiveAt, recordedAt: recordedAt, originSankalpaId: dto.originSankalpaId.map(SankalpaId.init))
     }
 
     static func session(_ dto: API.SessionResponse) throws -> Session {
+        guard dto.loggingSankalpaId == nil || dto.loggingSankalpaId == dto.sankalpaId else {
+            throw WireDecodingError(field: "session owner", value: dto.id.uuidString)
+        }
         guard let occurredAt = WireFormat.moment(from: dto.occurredAt) else {
             throw WireDecodingError(field: "session time", value: dto.occurredAt)
         }

@@ -74,11 +74,13 @@ struct RootView: View {
             // user has no way to know whether their practice is actually recorded anywhere but
             // this phone.
             if model.isShowingCachedPractice || model.pendingSessionCount > 0
-                || model.reliabilityProblem != nil {
+                || model.reliabilityProblem != nil || model.hasExtensionAttempt {
                 OfflineNotice(
                     isCached: model.isShowingCachedPractice,
+                    isServiceReachable: model.isServiceReachable,
                     pendingCount: model.pendingSessionCount,
                     hasRecoveryProblem: model.reliabilityProblem != nil,
+                    hasExtensionAttempt: model.hasExtensionAttempt,
                     open: { showingPendingChanges = true }
                 )
             }
@@ -218,21 +220,25 @@ private extension Dictionary where Key == String, Value == JSONValue {
 /// the service is away, and an alert that kept coming back would be worse than useless.
 private struct OfflineNotice: View {
     let isCached: Bool
+    let isServiceReachable: Bool
     let pendingCount: Int
     let hasRecoveryProblem: Bool
+    let hasExtensionAttempt: Bool
     let open: () -> Void
 
     private var text: String {
         if hasRecoveryProblem {
             return "Preserved session changes need attention"
         }
+        if hasExtensionAttempt { return "A submitted extension needs attention" }
         switch (isCached, pendingCount) {
         case (_, let waiting) where waiting > 0 && isCached:
             return "Showing this phone's copy · \(waiting) session change\(waiting == 1 ? "" : "s") pending"
         case (false, let waiting) where waiting > 0:
             return "\(waiting) session change\(waiting == 1 ? "" : "s") pending"
         default:
-            return "Showing this phone's copy — the service could not be reached"
+            return isServiceReachable ? "Showing this phone's copy · updating practice"
+                : "Showing this phone's copy — the service could not be reached"
         }
     }
 
@@ -280,6 +286,18 @@ private struct PendingChangesView: View {
                 }
             }
 
+            if model.hasExtensionAttempt {
+                Section("Submitted extension") {
+                    Text(model.extensionNotice ?? "The submitted extension is awaiting its result. Its original request is preserved.")
+                    if model.canRetryExtension {
+                        Button("Check submitted extension") { Task { _ = await model.retryExtension() } }
+                    }
+                    if model.canAcknowledgeExtensionNotice {
+                        Button("Acknowledge extension notice") { model.acknowledgeExtensionNotice() }
+                    }
+                }
+            }
+
             if !model.pendingCreates.isEmpty {
                 Section("Sessions waiting to send") {
                     ForEach(model.pendingCreates) { operation in
@@ -307,7 +325,7 @@ private struct PendingChangesView: View {
                 }
             }
 
-            if model.reliabilityProblem == nil && model.pendingSessionCount == 0 {
+            if model.reliabilityProblem == nil && model.pendingSessionCount == 0 && !model.hasExtensionAttempt {
                 ContentUnavailableView(
                     "No pending changes", systemImage: "checkmark.circle",
                     description: Text("Session changes are up to date.")

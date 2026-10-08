@@ -114,6 +114,7 @@ if [ "$run_core" = 1 ]; then
         --event-stream-version 0 \
         > "$RUN/logs/core.log" 2>&1
     status=$?
+    printf 'core_exit_status=%s\n' "$status" >> "$RUN/environment.txt"
     if [ "$status" -ne 0 ]; then
         worst=1
         [ "$status" -ge 128 ] \
@@ -213,7 +214,7 @@ run_ui_class() {
     if [ -n "$only_test" ]; then
         case "$only_test" in
             "$class"|"$class"/*) only_args=(-only-testing:"SankalpaUITests/$only_test") ;;
-            */*) return 0 ;;
+            ScreenTour|JourneyTests|*/*) return 0 ;;
             # A bare test name could belong to either class; -only-testing simply matches nothing
             # in the one it is not in, which xcodebuild reports rather than passing silently.
             *) only_args=(-only-testing:"SankalpaUITests/$class/$only_test") ;;
@@ -233,6 +234,7 @@ run_ui_class() {
         -derivedDataPath "$DERIVED" \
         -resultBundlePath "$RUN/raw/$class.xcresult" \
         -parallel-testing-enabled NO \
+        -collect-test-diagnostics never \
         "${only_args[@]}" \
         CODE_SIGNING_ALLOWED=NO \
         >> "$RUN/logs/ui.log" 2>&1
@@ -243,6 +245,7 @@ if [ "$run_ui" = 1 ]; then
     status=0
     run_ui_class ScreenTour "$TOUR_PORT" || status=$?
     run_ui_class JourneyTests "$JOURNEY_PORT" || status=$?
+    printf 'ui_exit_status=%s\n' "$status" >> "$RUN/environment.txt"
     if [ "$status" -ne 0 ]; then
         worst=1
         if [ "$status" -ge 128 ]; then
@@ -259,7 +262,7 @@ if [ "$run_ui" = 1 ]; then
         [ -f "$bundle/Info.plist" ] || continue
         xcrun xcresulttool export attachments \
             --path "$bundle" \
-            --output-path "$RUN/raw/attachments" \
+            --output-path "$RUN/raw/attachments/$(basename "$bundle" .xcresult)" \
             >> "$RUN/logs/attachments.log" 2>&1
     done
 fi
@@ -282,6 +285,7 @@ if [ "$run_release" = 1 ]; then
         CODE_SIGNING_ALLOWED=NO \
         > "$RUN/logs/release.log" 2>&1
     status=$?
+    printf 'release_exit_status=%s\n' "$status" >> "$RUN/environment.txt"
     [ "$status" -ne 0 ] && { worst=1; fail "release build failed (see logs/release.log)"; }
 fi
 

@@ -22,6 +22,11 @@ import java.time.Duration;
 @Configuration
 public class ApplicationConfiguration {
     @Bean
+    org.springframework.boot.autoconfigure.jackson.Jackson2ObjectMapperBuilderCustomizer wholeNumberRequests() {
+        return builder -> builder.featuresToDisable(com.fasterxml.jackson.databind.DeserializationFeature.ACCEPT_FLOAT_AS_INT);
+    }
+
+    @Bean
     SankalpaClock sankalpaClock(@Value("${sankalpa.timezone}") String timezone) {
         return new SystemSankalpaClock(Clock.system(ZoneId.of(timezone)));
     }

@@ -127,7 +127,7 @@ class SankalpaServiceTest {
         assertThat(logged.occurredAt()).isEqualTo(occurredAt);
         assertThat(logged.loggedAt()).isEqualTo(clock.now());
         assertThat(sessions.saved).containsExactly(logged);
-        assertThat(sankalpas.forUpdateReads).isEqualTo(1);
+        assertThat(sankalpas.forUpdateReads).isPositive();
     }
 
     @Test

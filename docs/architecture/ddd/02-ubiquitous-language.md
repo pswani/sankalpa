@@ -17,13 +17,19 @@ do not give it a name.
 | Duration | Requirement | Optional count of periods. | `PeriodCount` |
 | End date | Requirement | Inclusive last date covered by a finite commitment; absent without duration. | `Commitment.endDate()` |
 | Session | Requirement | One occasion on which the intended action was performed. | `Session` |
+| Linked series | Requirement | An original vow and its progressively longer explicit extensions. | Immutable `seriesId` on `Sankalpa` |
+| Extension | Requirement | A new, longer vow preserving its source as a separate commitment. | `Sankalpa.extend`, `extensionOf` |
+| Logging owner | Design term | The vow through which a session was originally logged; retained for command identity and deletion. | `Session.sankalpaId` |
+| Contribution | Design term | A session counting toward a same-series vow eligible at the performed time. | Series membership plus `acceptsPerformedAt` |
+| Inherited transition | Requirement/design term | A copied lifecycle transition retaining its original vow and timestamps. | `LifecycleTransition.originSankalpaId` |
+| Completion achievement | Requirement | A separately visible vow marked Completed - Successfully by the user. | Derived from that vow's terminal transition |
 | Logging action | Requirement | One user intention to record one session; all delivery attempts for it share one identity. | `LogSession` command identified by `SessionId` |
 | Session identity | Design term | Stable UUID that identifies both the logging action and resulting session. | `SessionId` |
 | Replay | Design term | Repeating the same logging command identity and values after an uncertain result. | `SessionLogResult.created == false` |
 | Pending operation | Requirement/design term | A create or delete durably retained on the device until the service decision is safely reflected locally. | `PendingSession` or `PendingSessionDeletion` |
 | Undo | Requirement | Immediate deletion of the exact session just logged. | `DeleteSession` with a `SessionReceipt` |
 | Delete | Requirement | Permanently remove a logged session and prevent its identity from reappearing. | `DeleteSession` |
-| Repeat confirmation | Requirement | Confirmation required before another logging action for the same sankalpa within one minute. | Client interaction policy |
+| Repeat confirmation | Requirement | Confirmation required before another logging action in the same linked series within one minute. | Client interaction policy |
 | Lifecycle state | Requirement | Not started, In progress, Paused, Completed Successfully, Completed Unsuccessfully, Stopped. | `LifecycleState` |
 | Lifecycle transition | Requirement | A user-performed state change recorded for audit. Begin may be backdated; every other transition takes effect when performed. | `LifecycleTransition` |
 | Begin timing | Design term | Effective and recorded timestamps for the transition from Not started to In progress. | `BeginTiming` |
@@ -38,6 +44,7 @@ do not give it a name.
 | Verb | Meaning | Use case |
 |---|---|---|
 | Declare | Create a sankalpa in Not started. | `DeclareSankalpa` |
+| Extend | Create a longer, linked vow with inherited history and its source's current state. | `ExtendSankalpa` |
 | Begin | Move Not started to In progress at a supplied effective time. | `BeginSankalpa` |
 | Pause | Move In progress to Paused now. | `PauseSankalpa` |
 | Resume | Move Paused to In progress now. | `ResumeSankalpa` |
@@ -50,7 +57,8 @@ do not give it a name.
 A session is eligible only when its `occurredAt` is covered by the commitment and the lifecycle
 state at that time is In progress.
 
-Eligibility is evaluated only when a new identity is created. An exact replay returns the already
+Logging eligibility is validated when a new identity is created. Contribution reads also use
+performed-time eligibility for each target vow, without creating another session. An exact replay returns the already
 accepted session even if the sankalpa's lifecycle has since changed. Two sessions may have the same
 `occurredAt`; identity, not time proximity, distinguishes them.
 
@@ -61,7 +69,8 @@ different allowed transitions.
 
 These words should stay out of the domain model until the requirements introduce them:
 
-- `UserId`, `Owner`, `Account`, `Practitioner` (the application is single-user)
+- `UserId`, `UserOwner`, `Account`, `Practitioner` (the application is single-user;
+  a session's logging owner identifies a vow, not a person)
 - `Activity`, `Practice`, `PracticeCatalog`
 - `Reminder`, `Notification`, `Nudge`
 - `Streak`, `Score`, `ProgressPercentage`

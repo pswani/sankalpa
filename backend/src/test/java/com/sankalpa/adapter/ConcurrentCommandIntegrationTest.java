@@ -56,8 +56,8 @@ class ConcurrentCommandIntegrationTest {
         Sankalpa declared = useCases.declare("Walk", "", ActionType.PHYSICAL_ACTIVITY,
                 clock.today(), PeriodUnit.DAY, 1, null);
         useCases.begin(declared.id(), clock.today().atStartOfDay());
-        LocalDateTime pauseAt = clock.now().minusSeconds(2);
-        LocalDateTime sessionAt = pauseAt.plusSeconds(1);
+        LocalDateTime pauseAt = clock.now();
+        LocalDateTime sessionAt = pauseAt;
         CountDownLatch pauseWritten = new CountDownLatch(1);
         CountDownLatch releasePause = new CountDownLatch(1);
         CountDownLatch sessionStarted = new CountDownLatch(1);

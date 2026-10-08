@@ -13,9 +13,10 @@ public final class ServiceInstanceIdentity {
     private static final String KEY = "service_instance_id";
 
     private final JdbcTemplate jdbc;
+    private final JdbcSankalpaPersistenceAdapter practice;
     private volatile UUID value;
 
-    public ServiceInstanceIdentity(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public ServiceInstanceIdentity(JdbcTemplate jdbc, JdbcSankalpaPersistenceAdapter practice) { this.jdbc = jdbc; this.practice = practice; }
 
     @PostConstruct
     void initializeAndVerify() {
@@ -38,7 +39,10 @@ public final class ServiceInstanceIdentity {
             throw new IllegalStateException("Exactly one service instance identity is required");
         }
         value = UUID.fromString(stored.getFirst());
-        verifyLedger();
+        verifyLedger(jdbc);
+        var vows=practice.findAll();
+        com.sankalpa.application.PracticeValidation.validate(vows, practice.scanCandidates(vows.stream().map(v->v.id()).toList(),null,null,null,Integer.MAX_VALUE));
+        practice.readRevision();
     }
 
     public UUID value() { return value; }
@@ -49,13 +53,24 @@ public final class ServiceInstanceIdentity {
         }
     }
 
-    private void verifyLedger() {
+    static void verifyLedger(JdbcTemplate jdbc) {
+        Integer invalidSequences = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM (
+                    SELECT sankalpa_id FROM sankalpa_lifecycle_transition
+                    GROUP BY sankalpa_id
+                    HAVING MIN(sequence_number) <> 0 OR MAX(sequence_number) <> COUNT(*) - 1
+                ) invalid_sequences
+                """, Integer.class);
+        if (invalidSequences == null || invalidSequences != 0) {
+            throw new IllegalStateException("Lifecycle audit sequence is inconsistent");
+        }
         Integer inconsistent = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM (
                     SELECT i.session_id
                     FROM session_identity i
                     LEFT JOIN practice_session p ON p.id = i.session_id
-                    WHERE (i.identity_state = 'ACTIVE' AND
+                    LEFT JOIN sankalpa s ON s.id = i.sankalpa_id
+                    WHERE s.id IS NULL OR (i.identity_state = 'ACTIVE' AND
                            (p.id IS NULL OR p.sankalpa_id <> i.sankalpa_id))
                        OR (i.identity_state = 'DELETED' AND p.id IS NOT NULL)
                     UNION ALL

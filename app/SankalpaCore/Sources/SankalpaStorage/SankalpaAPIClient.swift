@@ -51,18 +51,53 @@ public struct SankalpaAPIClient: Sendable {
     private let baseURL: URL
     private let bearerToken: String?
     private let transport: APITransport
+    private let linkedInstance: UUID?
+    private let expectedRevision: String?
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
     public init(baseURL: URL, bearerToken: String? = nil,
-                transport: APITransport = URLSessionTransport()) {
+                transport: APITransport = URLSessionTransport(), linkedInstance: UUID? = nil, expectedRevision: String? = nil) {
+        self.linkedInstance = linkedInstance
+        self.expectedRevision = expectedRevision
         self.baseURL = baseURL
         self.bearerToken = bearerToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.transport = transport
+        encoder.outputFormatting = [.sortedKeys]
     }
 
     /// `http://localhost:8080`, the service's default, for a simulator talking to a Mac.
     public static let defaultBaseURL = URL(string: "http://localhost:8080")!
+
+    func linked(to instance: UUID, revision: String? = nil) -> Self {
+        Self(baseURL: baseURL, bearerToken: bearerToken, transport: transport,
+             linkedInstance: instance, expectedRevision: revision)
+    }
+
+    struct SnapshotResponse<Value: Sendable>: Sendable {
+        let value: Value
+        let revision: String
+        let instance: UUID
+    }
+
+    func linkedList() async throws -> SnapshotResponse<[API.SankalpaResponse]> {
+        try await sendSnapshot("GET", "/api/v1/sankalpas", body: Empty?.none, as: [API.SankalpaResponse].self)
+    }
+    func canonicalSessions(cursor: String?) async throws -> SnapshotResponse<API.CursorSessionPageResponse> {
+        var components = URLComponents()
+        components.path = "/api/v1/sessions"
+        components.queryItems = [URLQueryItem(name: "size", value: "200")]
+        if let cursor { components.queryItems!.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await sendSnapshot("GET", components.string!, body: Empty?.none, as: API.CursorSessionPageResponse.self)
+    }
+    func extend(_ source: SankalpaId, id: SankalpaId, totalPeriodCount: Int) async throws -> SnapshotResponse<API.ExtensionResponse> {
+        try await sendSnapshot("POST", "/api/v1/sankalpas/\(source.value.uuidString)/extensions",
+                body: API.ExtendRequest(id: id.value, totalPeriodCount: totalPeriodCount),
+                headers: ["Idempotency-Key": id.value.uuidString.lowercased()], as: API.ExtensionResponse.self)
+    }
+    func linkedSeries(_ id: SankalpaId) async throws -> SnapshotResponse<[API.VowSnapshot]> {
+        try await sendSnapshot("GET", "/api/v1/sankalpas/\(id.value.uuidString)/linked-series", body: Empty?.none, as: [API.VowSnapshot].self)
+    }
 
     // MARK: - Commands
 
@@ -134,7 +169,8 @@ public struct SankalpaAPIClient: Sendable {
     // MARK: - Queries
 
     func capabilities() async throws -> API.CapabilitiesResponse {
-        try await send("GET", "/api/v1/capabilities", body: Empty?.none,
+        try await Self(baseURL: baseURL, bearerToken: bearerToken, transport: transport)
+            .send("GET", "/api/v1/capabilities", body: Empty?.none,
                        as: API.CapabilitiesResponse.self)
     }
 
@@ -164,13 +200,19 @@ public struct SankalpaAPIClient: Sendable {
 
     private struct Empty: Encodable {}
 
-    private func send<Body: Encodable, Response: Decodable>(
+    private func send<Body: Encodable, Response: Decodable & Sendable>(
+        _ method: String, _ path: String, body: Body?, headers: [String: String] = [:], as type: Response.Type
+    ) async throws -> Response {
+        try await sendSnapshot(method, path, body: body, headers: headers, as: type).value
+    }
+
+    private func sendSnapshot<Body: Encodable, Response: Decodable & Sendable>(
         _ method: String,
         _ path: String,
         body: Body?,
         headers: [String: String] = [:],
         as type: Response.Type
-    ) async throws -> Response {
+    ) async throws -> SnapshotResponse<Response> {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw APIFailure.unreachable("The service address is not usable.")
         }
@@ -199,11 +241,32 @@ public struct SankalpaAPIClient: Sendable {
         }
 
         guard (200...299).contains(response.statusCode) else {
+            if let problem = try? decoder.decode(API.Problem.self, from: data),
+               problem.code == "EXTENSION_ALREADY_EXISTS", response.statusCode == 409,
+               let raw = problem.errors?["extensionId"], let id = UUID(uuidString: raw) {
+                throw ExistingExtensionConflict(id: SankalpaId(id))
+            }
             throw refusal(from: data, status: response.statusCode)
         }
         do {
-            return try decoder.decode(Response.self, from: data)
+            let value = try decoder.decode(Response.self, from: data)
+            if let extensionResponse = value as? API.ExtensionResponse,
+               extensionResponse.created != (response.statusCode == 201) {
+                throw WireDecodingError(field: "extension outcome", value: "status and created flag disagree")
+            }
+            let revision = response.value(forHTTPHeaderField: "Sankalpa-Practice-Revision") ?? (linkedInstance == nil ? "0" : "")
+            let instance = response.value(forHTTPHeaderField: "Sankalpa-Service-Instance").flatMap(UUID.init(uuidString:))
+            if let linkedInstance {
+                guard instance == linkedInstance, !revision.isEmpty,
+                      revision.allSatisfy({ $0.isASCII && $0.isNumber }), Int64(revision).map({ $0 >= 0 }) == true,
+                      expectedRevision == nil || expectedRevision == revision else {
+                    throw WireDecodingError(field: "practice snapshot", value: "incompatible service or revision")
+                }
+            }
+            return SnapshotResponse(value: value, revision: revision, instance: instance ?? UUID())
+        } catch let failure as WireDecodingError { throw failure
         } catch {
+            if linkedInstance != nil { throw WireDecodingError(field: "linked response", value: "malformed JSON") }
             throw APIFailure.unreachable(
                 "The service sent a response this version of the app could not read."
             )
@@ -233,6 +296,14 @@ public struct SankalpaAPIClient: Sendable {
         guard (200...299).contains(response.statusCode) else {
             throw refusal(from: data, status: response.statusCode)
         }
+        if let linkedInstance {
+            let instance = response.value(forHTTPHeaderField: "Sankalpa-Service-Instance").flatMap(UUID.init(uuidString:))
+            let revision = response.value(forHTTPHeaderField: "Sankalpa-Practice-Revision") ?? ""
+            guard instance == linkedInstance, !revision.isEmpty,
+                  revision.allSatisfy({ $0.isASCII && $0.isNumber }), Int64(revision).map({ $0 >= 0 }) == true else {
+                throw WireDecodingError(field: "deletion receipt", value: "incompatible service or revision")
+            }
+        }
     }
 
     /// A non-2xx is expected to be problem+json with a stable `code`. When it is not — a proxy
@@ -248,6 +319,11 @@ public struct SankalpaAPIClient: Sendable {
     }
 
     private func authorize(_ request: inout URLRequest) {
+        if let linkedInstance {
+            request.setValue("1", forHTTPHeaderField: "Linked-Sankalpa-Version")
+            request.setValue(linkedInstance.uuidString, forHTTPHeaderField: "Sankalpa-Service-Instance")
+            if let expectedRevision { request.setValue(expectedRevision, forHTTPHeaderField: "Sankalpa-Practice-Revision") }
+        }
         if let bearerToken, !bearerToken.isEmpty {
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         }
@@ -267,3 +343,5 @@ public struct SankalpaAPIClient: Sendable {
         }
     }
 }
+
+struct ExistingExtensionConflict: Error { let id: SankalpaId }

@@ -38,8 +38,17 @@ public class ApiExceptionHandler {
         };
         return problem(status, exception.code(), exception.getMessage(), null);
     }
+    @ExceptionHandler(com.sankalpa.application.PracticeException.class)
+    ResponseEntity<ProblemDetail> practice(com.sankalpa.application.PracticeException exception) {
+        HttpStatus status = switch(exception.code()) {
+            case "INVALID_EXTENSION_REQUEST", "INVALID_SESSION_CURSOR" -> HttpStatus.BAD_REQUEST;
+            case "PRACTICE_WRITE_CONTENDED" -> HttpStatus.SERVICE_UNAVAILABLE;
+            default -> HttpStatus.CONFLICT;
+        };
+        return problem(status,exception.code(),exception.getMessage(),exception.errors());
+    }
     private static final Set<String> REQUEST_ERROR_CODES = Set.of(
-            "INVALID_DATE_RANGE", "INVALID_PAGINATION", "PERIOD_RANGE_TOO_LARGE");
+            "INVALID_DATE_RANGE", "INVALID_PAGINATION", "PERIOD_RANGE_TOO_LARGE", "INVALID_EXTENSION_REQUEST");
 
     @ExceptionHandler(NotFoundException.class)
     ResponseEntity<ProblemDetail> notFound(NotFoundException exception) {
@@ -78,14 +87,21 @@ public class ApiExceptionHandler {
         Map<String, String> errors = exception.getBindingResult().getFieldErrors().stream()
                 .collect(Collectors.toMap(error -> error.getField(), error -> error.getDefaultMessage(),
                         (first, ignored) -> first));
-        return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request validation failed", errors);
+        return problem(HttpStatus.BAD_REQUEST, requestCode(), "Request validation failed", errors);
     }
 
     @ExceptionHandler({IllegalArgumentException.class, HttpMessageNotReadableException.class,
             MethodArgumentTypeMismatchException.class, MissingServletRequestParameterException.class,
             ConstraintViolationException.class, HandlerMethodValidationException.class})
     ResponseEntity<ProblemDetail> badRequest(Exception exception) {
-        return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request could not be parsed", null);
+        return problem(HttpStatus.BAD_REQUEST, requestCode(), "Request could not be parsed", null);
+    }
+
+    private String requestCode() {
+        var attributes = RequestContextHolder.getRequestAttributes();
+        if (attributes instanceof org.springframework.web.context.request.ServletRequestAttributes request
+                && request.getRequest().getRequestURI().endsWith("/extensions")) return "INVALID_EXTENSION_REQUEST";
+        return "INVALID_REQUEST";
     }
 
     private ResponseEntity<ProblemDetail> problem(HttpStatus status, String code, String detail,

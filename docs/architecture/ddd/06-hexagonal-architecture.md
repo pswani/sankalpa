@@ -49,6 +49,7 @@ src/main/java/com/sankalpa/
     stop/
     logsession/
     deletesession/
+    extend/
     query/
     port/
 
@@ -91,8 +92,8 @@ Sketch:
 
 | Table | Holds |
 |---|---|
-| `sankalpa` | id, title, description, action type, start date, period unit, times per period, period count, current state, declared at |
-| `sankalpa_lifecycle_transition` | sankalpa id, sequence, from state, to state, effective at, recorded at |
+| `sankalpa` | id, series id, optional unique extension-of, title, description, action type, start date, period unit, times per period, period count, current state, declared at |
+| `sankalpa_lifecycle_transition` | sankalpa id, sequence, from state, to state, effective at, recorded at, origin sankalpa id |
 | `session_identity` | globally unique session id, owning sankalpa id, `ACTIVE` or `DELETED` state |
 | `practice_session` | id, sankalpa id, occurred at, logged at; only active facts |
 | `service_metadata` | persistent service instance identity used for safe client capability binding |
@@ -108,7 +109,9 @@ until the requirements call for them.
 
 ## Read Side
 
-Simple list/detail/session/history queries can use flat read rows through `SankalpaReadPort`.
+List/detail/history queries can use flat read rows through `SankalpaReadPort`. Session
+histories and counts filter series candidates through the shared domain eligibility predicate;
+flat owner-only session reads no longer supply a linked vow's contributing set.
 
 `GetPeriodOutcomes` should select windows from the requested `from`/`until` range, query sessions
 from the first selected window's start through the last selected window's end, and use the domain
@@ -120,8 +123,10 @@ for current scale; no projection table is needed.
 - Controllers map request data to commands and domain errors to HTTP responses.
 - Persistence adapters map rows to domain objects and back.
 - Persistence uses ordinary optimistic concurrency on `Sankalpa` lifecycle changes. While logging
-  a session, the adapter locks the parent sankalpa row before loading and validating its lifecycle
-  snapshot, or performs an equivalent atomic version check. This only orders overlapping commands;
+  a session or creating an extension, the adapter acquires the series-root write guard before
+  loading and validating the relevant lifecycle snapshot. Lifecycle writes take the same guard.
+  Capture command time after acquiring it. A one-member series uses its own row. This only
+  orders overlapping commands;
   it does not query session history or support backdated lifecycle changes. Without that ordering,
   an uncommitted Pause can have an effective time before a session's `occurredAt` while the session
   command still reads the old In progress state.
@@ -151,8 +156,20 @@ The client snapshot is a read model, not a second authority:
 visible = (last server snapshot + pending creates by ID) - pending deletes by ID
 ```
 
-All client totals and period calculations use this visible set. Server-accepted mutations are
+All client totals and period calculations use this visible set, projected through series
+membership and each target vow's performed-time eligibility. Combined totals deduplicate by ID.
+Server-accepted mutations are
 persisted into the base snapshot before the corresponding operation is removed, preventing a
 failed refresh or relaunch from reversing accepted state. The complete session collection, rather
 than a separately cached count, supplies every total. Operation revisions ensure a late response
 cannot remove a newer Undo/delete operation.
+
+## Linked-Series Adapters
+
+[Linked extensions](11-linked-extensions.md) defines constraints, schema/back-up migration,
+series candidate indexes, transaction ordering, and capability negotiation. Existing records
+become one-member series without changing session or service identities. Persistence validates
+links and inherited provenance on load/restore. Local-file adapters enforce the same invariants
+and atomic creation as relational adapters. Client overlays suppress a deleted ID across all
+linked views; processing and recent-repeat gates use the stable series root. Neither adapter
+persists session-copy jobs or contribution projections.

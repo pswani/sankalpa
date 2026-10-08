@@ -36,6 +36,13 @@ public final class SankalpaApplicationService {
         until: CalendarDay
     ) -> [Session] {
         guard from <= until else { return [] }
+        guard let target = sankalpas.find(id) else { return [] }
+        let members = sankalpas.all()
+        if members.contains(where: { $0.seriesId == target.seriesId && $0.id != target.id }) {
+            return sessions.sessions(from: from, until: until).filter {
+                SessionContributions.contributes($0, to: target, members: members)
+            }
+        }
         return sessions.sessions(for: id, from: from, until: until)
     }
 
@@ -47,7 +54,11 @@ public final class SankalpaApplicationService {
     /// `GetSankalpaDetail` reports a lifetime count, which is a single stored aggregate rather than
     /// a history scan.
     public func totalSessionCount(_ id: SankalpaId) -> Int {
-        sessions.totalCount(for: id)
+        guard let target = sankalpas.find(id) else { return 0 }
+        if sankalpas.all().contains(where: { $0.seriesId == target.seriesId && $0.id != target.id }) {
+            return sessionsInRange(id, from: target.startDate, until: today()).count
+        }
+        return sessions.totalCount(for: id)
     }
 
     // MARK: - Commands

@@ -30,7 +30,7 @@ public final class CapabilityController {
     @Operation(summary = "Advertise cross-version command capabilities")
     @ApiResponse(responseCode = "200", description = "Capabilities and persistent service identity returned")
     public CapabilitiesResponse capabilities() {
-        return new CapabilitiesResponse(1, identity.value(), new ApiModels.AssistantCapability(
+        return new CapabilitiesResponse(1, 1, identity.value(), new ApiModels.AssistantCapability(
                 assistantEnabled, "ag-ui-sankalpa/1", 20, 65_536, 262_144,
                 authenticationRequired));
     }

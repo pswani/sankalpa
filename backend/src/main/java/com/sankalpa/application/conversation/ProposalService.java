@@ -65,6 +65,10 @@ public final class ProposalService implements ConversationUseCases {
     public Proposal proposeSession(UUID threadId, UUID runId, SankalpaId sankalpaId,
                                    LocalDateTime occurredAt, String summary,
                                    List<SankalpaId> alternatives) {
+        return proposeSession(threadId,runId,sankalpaId,occurredAt,summary,alternatives,com.sankalpa.application.PracticeContract.SINGLE_VOW_V1);
+    }
+    @Override public Proposal proposeSession(UUID threadId, UUID runId, SankalpaId sankalpaId,
+            LocalDateTime occurredAt, String summary, List<SankalpaId> alternatives, com.sankalpa.application.PracticeContract contract) {
         Proposal replay = proposals.findBySourceRunId(runId).orElse(null);
         if (replay != null) return replay;
         rejectPending(threadId);
@@ -75,7 +79,7 @@ public final class ProposalService implements ConversationUseCases {
         if (summary == null || summary.isBlank() || summary.length() > MAX_SUMMARY) {
             throw new ConversationFailure("ASSISTANT_COULD_NOT_INTERPRET", "Invalid session summary");
         }
-        Sankalpa target = sankalpas.detail(sankalpaId);
+        Sankalpa target = sankalpas.detail(sankalpaId,contract);
         SessionId sessionId = SessionId.newId();
         target.validateSessionAt(sessionId, occurredAt, clock.now());
         LocalDateTime now = clock.now();
@@ -120,6 +124,9 @@ public final class ProposalService implements ConversationUseCases {
 
     @Override
     public Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId) {
+        return confirm(threadId,proposalId,confirmationId,com.sankalpa.application.PracticeContract.SINGLE_VOW_V1);
+    }
+    @Override public Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId, com.sankalpa.application.PracticeContract contract) {
         Proposal proposal = lockedOwned(threadId, proposalId);
         if (proposal.status() == Proposal.Status.EXECUTED
                 && confirmationId.equals(proposal.confirmationId())) return new Resolution(proposal, true);
@@ -135,7 +142,7 @@ public final class ProposalService implements ConversationUseCases {
             UUID result;
             if (proposal.payload() instanceof Proposal.LogSessionPayload payload) {
                 result = sankalpas.logSession(payload.sankalpaId(), payload.sessionId(),
-                        payload.occurredAt()).session().id().value();
+                        payload.occurredAt(),contract).session().id().value();
             } else if (proposal.payload() instanceof Proposal.DeclareSankalpaPayload payload) {
                 result = sankalpas.declare(payload.title(), payload.description(), payload.actionType(),
                         payload.startDate(), payload.periodUnit(), payload.timesPerPeriod(),

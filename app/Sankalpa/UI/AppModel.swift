@@ -37,6 +37,11 @@ final class AppModel {
     /// The satisfied/missed count for each sankalpa, over the whole reported history.
     private(set) var tallies: [SankalpaId: PeriodTally] = [:]
     private(set) var today: CalendarDay
+    private(set) var supportsLinkedExtensions = false
+    private(set) var extensionNotice: String?
+    private(set) var hasExtensionAttempt = false
+    private(set) var canAcknowledgeExtensionNotice = false
+    private(set) var canRetryExtension = false
     /// Bumped on every refresh.
     ///
     /// Most screens read `summaries`, so observation reaches them for free. The history screens
@@ -137,6 +142,7 @@ final class AppModel {
 
     /// Where the service is, as the app is currently configured.
     var serviceLocation: ServiceLocation { remote.serviceLocation }
+    var serviceInstanceId: UUID? { remote.serviceInstanceId }
     var assistantCapability: AssistantCapability? { remote.assistantCapability }
     var reliabilityProblem: String? { remote.reliabilityProblem }
     var pendingCreates: [PendingSession] { remote.pending }
@@ -216,6 +222,11 @@ final class AppModel {
     func rebuild() {
         revision += 1
         today = remote.today()
+        supportsLinkedExtensions = remote.supportsLinkedExtensions
+        extensionNotice = remote.extensionNotice
+        hasExtensionAttempt = remote.hasExtensionAttempt
+        canAcknowledgeExtensionNotice = remote.canAcknowledgeExtensionNotice
+        canRetryExtension = remote.canRetryExtension
         pendingSessionCount = remote.pendingChangeCount
         isShowingCachedPractice = remote.isShowingCachedPractice
         isServiceReachable = remote.isServiceReachable
@@ -284,7 +295,7 @@ final class AppModel {
         remote.allSessions(for: id)
     }
 
-    func isProcessingSession(for id: SankalpaId) -> Bool { processingSankalpas.contains(id) }
+    func isProcessingSession(for id: SankalpaId) -> Bool { processingSankalpas.contains(remote.seriesId(for: id) ?? id) }
 
     func performedCount(_ id: SankalpaId, in window: PeriodWindow) -> Int {
         remote.queries.performedCount(id, in: window)
@@ -302,6 +313,64 @@ final class AppModel {
 
     func now() -> CalendarMoment { remote.now() }
 
+    func linkedSeries(_ id: SankalpaId) -> [Sankalpa] {
+        _ = revision
+        return remote.linkedSeries(id)
+    }
+    func canExtend(_ id: SankalpaId) -> Bool {
+        supportsLinkedExtensions && summary(id)?.sankalpa.canExtend == true
+            && !linkedSeries(id).contains(where: { $0.extensionOf == id }) && !hasExtensionAttempt
+    }
+    func sharedSessionExplanation(_ session: Session) -> String {
+        let vows = remote.contributors(session)
+        guard vows.count > 1 else { return "This permanently removes it from history, totals, and period results." }
+        return "This one session counts toward " + vows.map { $0.commitment.durationValueText }.joined(separator: ", ")
+            + ". Deleting it removes it from all those vows. Completed wins remain."
+    }
+    func contributionPreview(owner: SankalpaId, at: CalendarMoment) -> String? {
+        guard let vow = summary(owner)?.sankalpa, vow.acceptsPerformedAt(at) else { return nil }
+        let members = linkedSeries(owner).filter { $0.acceptsPerformedAt(at) }
+        guard members.count > 1 else { return nil }
+        return "One session will count toward " + members.map { $0.commitment.durationValueText }.joined(separator: ", ") + "."
+    }
+    func confirmAssistantSession(owner: SankalpaId, sessionId: SessionId, action: () async -> Void) async {
+        guard let root = remote.seriesId(for: owner), !processingSankalpas.contains(root) else {
+            report(.storage(.unavailable("A session for this linked practice is already being processed."))); return
+        }
+        processingSankalpas.insert(root)
+        defer { processingSankalpas.remove(root) }
+        if remote.shouldConfirmRepeat(for: owner, excluding: sessionId) {
+            guard repeatContinuation == nil else { return }
+            let confirmed = await withCheckedContinuation { continuation in
+                repeatContinuation = continuation
+                repeatLogProposal = RepeatLogProposal(sankalpaTitle: summary(owner)?.title ?? "this practice")
+            }
+            guard confirmed else { return }
+        }
+        guard remote.prepareAssistantConfirmation(owner: owner, sessionId: sessionId) else {
+            report(.storage(.writeFailed)); return
+        }
+        await action()
+        rebuild()
+    }
+
+    func extend(_ id: SankalpaId, totalPeriodCount: Int) async -> ExtensionDisposition {
+        let result = await remote.extend(id, totalPeriodCount: totalPeriodCount)
+        rebuild()
+        if case .accepted(_, let existing) = result {
+            succeed(existing ? "Existing extension opened" : "Sankalpa extended")
+            Task { await self.refresh() }
+        }
+        return result
+    }
+    func retryExtension() async -> ExtensionDisposition {
+        let result = await remote.retryExtension()
+        rebuild()
+        if case .accepted = result { Task { await self.refresh() } }
+        return result
+    }
+    func acknowledgeExtensionNotice() { _ = remote.acknowledgeExtensionNotice(); rebuild() }
+
     // MARK: - Commands with inline error reporting
 
     /// Returns `nil` on success, or the refusal for the form to show next to the field it concerns.
@@ -312,9 +381,12 @@ final class AppModel {
     }
 
     func logSession(_ id: SankalpaId, occurredAt: CalendarMoment) async -> SankalpaCommandError? {
-        guard !processingSankalpas.contains(id) else { return nil }
-        processingSankalpas.insert(id)
-        defer { processingSankalpas.remove(id) }
+        let root = remote.seriesId(for: id) ?? id
+        guard !processingSankalpas.contains(root) else {
+            return .storage(.unavailable("A session for this linked practice is already being processed."))
+        }
+        processingSankalpas.insert(root)
+        defer { processingSankalpas.remove(root) }
 
         if remote.shouldConfirmRepeat(for: id) {
             guard repeatContinuation == nil else {
@@ -394,7 +466,7 @@ final class AppModel {
 
     func complete(_ id: SankalpaId, outcome: CompletionOutcome) {
         let confirmation = outcome == .successfully
-            ? "Completed successfully"
+            ? "Well done — \(summary(id)?.commitment.durationValueText ?? "this vow") completed successfully!"
             : "Completed unsuccessfully"
         perform(confirmation) { await self.remote.complete(id, outcome: outcome) }
     }

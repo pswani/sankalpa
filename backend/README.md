@@ -94,6 +94,9 @@ endpoint cannot disappear unnoticed.
 | POST | `/api/v1/sankalpas/{id}/resume` | Resume now |
 | POST | `/api/v1/sankalpas/{id}/complete` | Complete now |
 | POST | `/api/v1/sankalpas/{id}/stop` | Stop now |
+| POST | `/api/v1/sankalpas/{id}/extensions` | Create a longer, independently completable linked vow |
+| GET | `/api/v1/sankalpas/{id}/linked-series` | Ordered vows with their lifecycle histories |
+| GET | `/api/v1/sessions` | Unique session facts with revision-bound cursor pagination |
 | POST | `/api/v1/sankalpas/{id}/sessions` | Log a past session |
 | GET | `/api/v1/sankalpas/{id}/sessions?page=0&size=50` | Paginated session history, newest first |
 | GET | `/api/v1/sankalpas/{id}/lifecycle-history` | Lifecycle audit |
@@ -109,9 +112,46 @@ zero-based, the default size is 50, and the maximum size is 200. Optional `from`
 must be supplied together. Offset-free timestamps are interpreted in `SANKALPA_TIMEZONE`.
 Period-outcome queries may select at most 3,650 windows.
 
+## Linked extensions
+
+The backend advertises `linkedSankalpaExtensions: 1`. Linked requests send
+`Linked-Sankalpa-Version: 1` and the verified `Sankalpa-Service-Instance` UUID.
+An extension body contains only `id` and `totalPeriodCount`; `Idempotency-Key` must match `id`.
+The duration is the new total number of periods from the inherited start. Creation returns `201`;
+an exact retry returns the same vow with `200` and `created: false`.
+
+Sessions remain one fact with their original logging owner. Eligible members of the same series
+share contributions; each vow retains its own lifecycle and completion. Delete through the
+`loggingSankalpaId` returned with the fact. Unrelated vows retain the legacy contract. A legacy
+client reading or changing linked vows receives `LINKED_SANKALPA_UPGRADE_REQUIRED`; exact session
+identity replay and repeated deletion remain safe.
+
+Linked session reads use `content`, `nextCursor`, and `hasMore`, with default size 100 and maximum
+200. Both the canonical journal and per-vow cursor history accept optional paired date filters.
+Responses carry `Sankalpa-Practice-Revision` as a decimal string. Send that revision on subsequent
+refresh reads; a changed revision returns `READ_SNAPSHOT_CHANGED` and requires restarting the read.
+Cursor continuation also checks revision, service instance, range, and target.
+
+The backend and connected iOS client under `app/` implement linked extensions, shared session
+contributions, and independent completion. Local-file support under `app2/` remains separate work. The full contract is in
+[the linked extension design](../docs/design/linked-sankalpa-extensions/contracts.md).
+
 ## Persistence
 
-The normalized schema is in `src/main/resources/schema.sql`:
+`src/main/resources/schema.sql` retains the original idempotent bootstrap schema.
+`LinkedSchemaMigration` upgrades fresh and existing databases before repositories serve requests:
+
+- Schema version `linked_extensions_schema=1` and the practice revision live in `service_metadata`.
+- SQLite upgrades rebuild the tables in a transaction, backfill self-root IDs and transition
+  origins, validate the collection and identity ledger, check foreign keys, then commit.
+- Before upgrading a populated file database, a consistent SQLite backup is saved beside it as
+  `<database>.pre-linked-<UUID>.db`. Retain it for recovery; no live practice database is used by tests.
+- Unknown versions and unmarked partial upgrades fail startup. H2 uses its DDL upgrade path for
+  tests; its DDL is not rollback-atomic. A failed partial H2 upgrade also fails startup.
+- Keep compatible code after creating linked records. Data rollback requires an explicit restore
+  of the pre-upgrade backup; the backend never flattens linked vows automatically.
+
+The normalized tables are:
 
 - `sankalpa` stores declaration, commitment, current lifecycle state, and optimistic version.
 - `sankalpa_lifecycle_transition` stores ordered lifecycle audit facts using append-only writes.

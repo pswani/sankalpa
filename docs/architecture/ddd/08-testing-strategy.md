@@ -82,7 +82,8 @@ Keep these narrow:
   production SQLite as well as H2; overlapping races use at least two real connections rather than
   passing through pool serialization.
 - Schema assertion that `endDate` is not stored if the design keeps it derived.
-- Read adapter returns flat rows without constructing aggregates.
+- List/detail/audit read adapters return flat rows; contribution queries use the shared domain
+  eligibility predicate rather than duplicating it in SQL.
 - Persistence concurrency test starts an uncommitted Pause, then attempts to log a session whose
   `occurredAt` follows the Pause's effective time. It proves the session waits for or conflicts with
   the lifecycle write and is not committed against the old In progress snapshot. The test uses at
@@ -125,7 +126,8 @@ Use deterministic transport and clock fakes. Verify:
 - connectivity restoration and scheduled active-app retry resume pending commands automatically;
 - complete history reads every validated page and can delete a session beyond the former ten-page
   cap;
-- the repeat guard is per sankalpa, persists, expires at 60 seconds, and confirmation creates a new
+- the repeat guard is per linked series (self for unrelated vows), persists, expires at 60 seconds,
+  and confirmation creates a new
   identity;
 - all logging entry points share one processing gate;
 - all totals derive from the overlaid complete session set rather than an independent cached count.
@@ -208,7 +210,7 @@ Scenario: A lost logging response does not duplicate a session
 
 Scenario: A confirmed rapid repeat is a real second session
   Given a session was just accepted
-  When the user attempts another log for the same sankalpa within one minute
+  When the user attempts another log within the same linked series within one minute
   And confirms the repeat
   Then both sessions exist even if their performed-at times are identical
 
@@ -227,3 +229,70 @@ Scenario: Deleting a past session revises derived results
 
 Do not use Cucumber unless readable business scenarios are worth the added tool. Plain integration
 tests are fine.
+
+
+## Linked Extension Verification
+
+These are implementation acceptance checks, not a claim that implementation tests already exist.
+Use the same calendar, clock, transport, and repository fakes plus real persistence race tests.
+
+### Domain and application
+
+- A 40-day vow extended to 90 days retains practice fields, original start, and history; the
+  source remains unchanged. Paused sources produce Paused extensions.
+- Reject indefinite, Not started, Completed, or Stopped sources; reject equal/shorter duration,
+  non-whole periods, and a new end date before today. Accept a new end date of today.
+- An inherited start older than one year is accepted only through extension, not declaration.
+- Multi-step extensions preserve original transition timestamps and origins. Their own later
+  transitions are independent, including a Pause or terminal action on a shorter vow.
+- Existing sessions, late backfills, and sessions logged through either end of a series contribute
+  to every eligible vow. Unrelated vows with identical practice fields never share sessions.
+- A target that was Paused at the performed time excludes the contribution; logging through an
+  ineligible owner is refused even if another member would accept it.
+- Sessions after a shorter end date count only toward eligible longer vows. Terminal vows accept
+  eligible past contributions without reopening or changing their chosen completion outcome.
+- Each fact counts once per vow and once in combined totals; distinct same-time facts count twice.
+- Per-vow history, lifetime counts, session contributor lists, and outcomes use the same predicate.
+- Range expansion includes complete period windows. Filtered pagination cannot truncate history.
+- Successful completion acknowledges only that vow and records a distinct achievement; refreshing
+  or deleting a session does not repeat the completion action or alter terminal state.
+
+### Persistence, identity, and races
+
+- Two different extension requests for one source result in one child. An exact retry replays
+  after the source changes state; a reused child ID with changed input conflicts.
+- A failed creation leaves no child or copied history. Extension racing Pause/Resume/Complete
+  sees one committed source state; command time is captured after the write guard is acquired.
+- Session/lifecycle ordering remains correct when the commands address different series members.
+  Identity races across unrelated series still resolve globally, including delete-before-create.
+- Deleting a shared session from a non-owner view sends the immutable owner and changes every
+  contributing count/history/outcome. Sending another owner directly still conflicts.
+- A deletion racing extension creation cannot resurrect a fact or retain an independent copy.
+- Existing data migrates to one-member series with unchanged session/ledger/service identities.
+  Backups preserve links and provenance; invalid branches, cycles, foreign-series parents,
+  incompatible practice fields, or malformed inherited history fail validation.
+- Run schema and transaction checks against SQLite and the test database, plus local-file
+  save/restore failure cases. Use genuine overlapping transactions for races.
+
+### Clients and compatibility
+
+- Pending create/delete affects every eligible cached vow; suppression and reversal use session
+  identity globally. Relaunch, rejected operations, late responses, and cache-write failure retain
+  the existing durability and Undo guarantees across the series.
+- Logging through another linked vow while an action is processing cannot bypass the gate.
+  Within one minute, switching vows requires repeat confirmation; unrelated roots do not.
+- Recent guards survive extension, migration, and relaunch. Missing membership/timeline data
+  disables linked offline logging until refreshed rather than guessing contributions.
+- Lost extension responses retry the same persisted ID and request after relaunch, publish one
+  child, and never retarget a different service. No speculative or partial vow appears.
+- Linked capability, owner-bearing rows, and series-aware counts are negotiated together. An old
+  server disables extension; an old mutation contract cannot write into a multi-member series.
+  An upgrade-required response keeps pending work; negotiating the header never changes identity,
+  owner, performed time, or service binding. A pending log racing extension creation is not lost.
+- Partial refreshes with missing owners/members cannot replace the valid cached contribution view.
+  Owner aliases remain compatible; old read contracts never present linked counts as owner counts.
+- Restore validates inherited source prefixes, not equality to a source timeline that has diverged;
+  equal-time transitions preserve sequence and provenance.
+- Journey: log 30 days of a 40-day vow, extend to 90, finish the 40-day vow successfully, log through
+  the extension after day 40, and later complete it successfully. Show two separate wins and a
+  journal containing each performed session once.

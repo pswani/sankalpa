@@ -24,7 +24,8 @@ public struct LifecycleTimeline: Hashable, Codable, Sendable {
         to target: LifecycleState,
         effectiveAt: CalendarMoment,
         recordedAt: CalendarMoment,
-        commitmentStart: CalendarDay
+        commitmentStart: CalendarDay,
+        originSankalpaId: SankalpaId? = nil
     ) throws(LifecycleTransitionError) {
         guard current.canTransition(to: target) else {
             throw .invalidLifecycleTransition(from: current, to: target)
@@ -47,7 +48,7 @@ public struct LifecycleTimeline: Hashable, Codable, Sendable {
         // the user's choice to correct; for every other transition it means the device clock now
         // reads earlier than it did — travelling west, or the hour daylight saving gives back —
         // so it is reported as the clock problem it is rather than as an illegal transition.
-        if let last = transitions.last, effectiveAt < last.effectiveAt {
+        if let last = transitions.last, effectiveAt < last.effectiveAt || recordedAt < last.recordedAt {
             throw .transitionOutOfOrder(lastRecorded: last.effectiveAt)
         }
 
@@ -56,7 +57,7 @@ public struct LifecycleTimeline: Hashable, Codable, Sendable {
                 from: current,
                 to: target,
                 effectiveAt: effectiveAt,
-                recordedAt: recordedAt
+                recordedAt: recordedAt, originSankalpaId: originSankalpaId
             )
         )
         current = target

@@ -12,4 +12,15 @@ public interface SankalpaRepository {
     Optional<Sankalpa> findByIdForUpdate(SankalpaId id);
     List<Sankalpa> findAll();
     void save(Sankalpa sankalpa);
+    /** Insert-only identity claim; a racing create must never update an existing vow. */
+    default void saveNew(Sankalpa sankalpa) { save(sankalpa); }
+    default List<Sankalpa> findSeriesMembers(SankalpaId root) {
+        return findAll().stream().filter(s -> s.seriesId().equals(root)).toList();
+    }
+    default Optional<Sankalpa> findDirectExtension(SankalpaId source) {
+        return findAll().stream().filter(s -> s.extensionOf().filter(source::equals).isPresent()).findFirst();
+    }
+    default void acquireSeriesWriteGuard(SankalpaId root) { findByIdForUpdate(root).orElseThrow(); }
+    default long readRevision() { return 0; }
+    default void incrementRevision() {}
 }

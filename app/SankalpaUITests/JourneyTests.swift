@@ -115,6 +115,102 @@ final class JourneyTests: UITestCase {
         app.buttons["Cancel"].tap()
     }
 
+    func testLinkedExtensionsKeepSharedSessionsAndIndependentWins() throws {
+        try linkedExtensionJourney()
+    }
+
+    func testLinkedExtensionsInDarkModeWithAccessibilityText() throws {
+        try linkedExtensionJourney(dark: true, contentSize: "UICTContentSizeCategoryAccessibilityM")
+    }
+
+    private func linkedExtensionJourney(dark: Bool = false, contentSize: String? = nil) throws {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let start = Calendar.current.date(byAdding: .day, value: -39, to: Date())!
+        let startText = formatter.string(from: start)
+        let title = "Linked vow " + String(UUID().uuidString.prefix(6))
+        let declared = try linkedRequest("POST", "/api/v1/sankalpas", body: [
+            "title": title, "description": "Linked acceptance journey", "actionType": "MEDITATION",
+            "startDate": startText, "periodUnit": "DAY", "timesPerPeriod": 1, "periodCount": 40
+        ])
+        let root = try XCTUnwrap(declared["id"] as? String)
+        _ = try linkedRequest("POST", "/api/v1/sankalpas/\(root)/begin", body: ["effectiveAt": startText + "T06:00:00"])
+        let capabilities = try linkedRequest("GET", "/api/v1/capabilities")
+        let instance = try XCTUnwrap(capabilities["serviceInstanceId"] as? String)
+        for day in 1...30 {
+            let at = formatter.string(from: Calendar.current.date(byAdding: .day, value: day, to: start)!) + "T08:00:00"
+            let id = UUID().uuidString.lowercased()
+            _ = try linkedRequest("POST", "/api/v1/sankalpas/\(root)/sessions", body: ["id": id, "occurredAt": at],
+                                  headers: ["Idempotency-Key": id, "Sankalpa-Service-Instance": instance])
+        }
+        launch(dark: dark, contentSize: contentSize)
+        dismissIntroduction(timeout: 5)
+        openTab("Sankalpas")
+        openDetail(String(title))
+        tap(app.buttons["extendSankalpa"], "the finite vow did not offer Extend")
+        let field = app.textFields["extensionTotalDuration"]
+        tap(field, "the total duration field was missing")
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 6) + "90")
+        if app.buttons["Done"].exists { app.buttons["Done"].tap() }
+        expect(text(containing: "New total"), "the total-duration preview was missing")
+        capture(dark ? "53-extension-preview-dark-accessibility" : "50-extension-preview")
+        tap(app.buttons["submitExtension"], "the extension could not be submitted")
+        expect(text(containing: "90 days"), "the longer vow did not open")
+        tap(app.buttons["All 30 sessions"], "the inherited history was not present in the extension")
+        tap(app.buttons["Delete session"].firstMatch, "inherited sessions could not be corrected")
+        expect(text(containing: "40 days, 90 days"), "shared deletion effects were not explained")
+        tap(app.alerts.buttons["Delete"], "shared deletion could not be confirmed")
+        goBack()
+        tap(app.buttons["All 29 sessions"], "shared deletion did not update the longer vow")
+        goBack()
+        for _ in 0..<(contentSize == nil ? 4 : 8) { app.swipeDown() }
+        tap(app.buttons["Log a session"], "a session could not be logged through the extension")
+        tap(app.buttons["All 30 sessions"], "logging through the extension did not update its history")
+        goBack()
+        // Linked navigation identifies the original by its duration, even though the titles match.
+        for _ in 0..<(contentSize == nil ? 2 : 8) { app.swipeDown() }
+        tap(app.buttons.containing(NSPredicate(format: "label CONTAINS '40 days ·'")).firstMatch,
+            "the original vow was not linked by duration")
+        tap(app.buttons["All 30 sessions"], "the extension's session did not contribute to the original")
+        goBack()
+        tap(app.buttons["Complete…"], "the original could not be completed separately")
+        tap(app.buttons["Completed successfully"], "completion outcome was not available")
+        expectState(State.completedSuccessfully, "the original win was not retained")
+        capture(dark ? "54-original-win-dark-accessibility" : "51-original-win")
+        goBack()
+        expectState(State.inProgress, "completing the original ended its extension")
+        for _ in 0..<(contentSize == nil ? 2 : 8) { app.swipeDown() }
+        expect(app.descendants(matching: .any)["linkedWins"].firstMatch, "the completed shorter vow was not shown as a win")
+        capture(dark ? "55-linked-win-dark-accessibility" : "52-linked-win-and-ongoing-extension")
+        relaunch()
+        dismissIntroduction(timeout: 2)
+        openTab("Sankalpas")
+        openDetail(String(title))
+        expect(text(containing: "90 days"), "the linked extension did not survive relaunch")
+    }
+
+    private func linkedRequest(_ method: String, _ path: String, body: [String: Any]? = nil,
+                               headers: [String: String] = [:]) throws -> [String: Any] {
+        final class Result: @unchecked Sendable { var data: Data?; var response: URLResponse?; var error: Error? }
+        var request = URLRequest(url: URL(string: path, relativeTo: URL(string: UITestCase.serviceURL())!)!)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        let result = Result(); let finished = expectation(description: method + path)
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            result.data = data; result.response = response; result.error = error; finished.fulfill()
+        }.resume()
+        wait(for: [finished], timeout: 15)
+        if let error = result.error { throw error }
+        let http = try XCTUnwrap(result.response as? HTTPURLResponse)
+        XCTAssertTrue((200...299).contains(http.statusCode), "fixture API request failed: \(http.statusCode)")
+        guard let data = result.data, !data.isEmpty else { return [:] }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
     // MARK: - Lifecycle
 
     /// Pause and Resume are the two transitions a practice actually goes through, and Resume is

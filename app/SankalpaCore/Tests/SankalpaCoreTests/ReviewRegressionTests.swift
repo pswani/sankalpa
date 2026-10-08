@@ -76,7 +76,7 @@ struct ReviewRegressionTests {
 
     @Test("The newest eligible moment stops at a pause, and at midnight belongs to the day before")
     func latestEligibleMomentRespectsPauses() throws {
-        let environment = TestEnvironment(today: moment(2026, 9, 25, 9))
+        let environment = TestEnvironment(today: moment(2026, 9, 21, 9))
         let sankalpa = try environment.service.declareSankalpa(
             Declaration(title: "Sahaj", actionType: .meditation, startDate: day(2026, 9, 21),
                         periodUnit: .day, timesPerPeriod: 1)

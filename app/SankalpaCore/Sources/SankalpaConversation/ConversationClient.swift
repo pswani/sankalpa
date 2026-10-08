@@ -5,11 +5,13 @@ import FoundationNetworking
 
 public struct AGUIClient: Sendable {
     private let baseURL: URL
+    private let linkedServiceInstance: UUID?
     private let bearerToken: String?
     private let session: URLSession
     private let encoder = JSONEncoder()
 
-    public init(baseURL: URL, bearerToken: String? = nil, session: URLSession = .shared) {
+    public init(baseURL: URL, bearerToken: String? = nil, session: URLSession = .shared, linkedServiceInstance: UUID? = nil) {
+        self.linkedServiceInstance = linkedServiceInstance
         self.baseURL = baseURL; self.bearerToken = bearerToken; self.session = session
     }
 
@@ -24,6 +26,10 @@ public struct AGUIClient: Sendable {
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     if let bearerToken, !bearerToken.isEmpty {
                         request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+                    }
+                    if let linkedServiceInstance {
+                        request.setValue("1", forHTTPHeaderField: "Linked-Sankalpa-Version")
+                        request.setValue(linkedServiceInstance.uuidString, forHTTPHeaderField: "Sankalpa-Service-Instance")
                     }
                     request.httpBody = try encoder.encode(input)
                     let (bytes, response) = try await session.bytes(for: request)

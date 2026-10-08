@@ -174,8 +174,8 @@ struct SessionHistoryView: View {
                 sessionToDelete = nil
                 Task { await model.deleteSession(session) }
             }
-        } message: { _ in
-            Text("This permanently removes it from history, totals, and period results.")
+        } message: { session in
+            Text(model.sharedSessionExplanation(session))
         }
     }
 }
@@ -200,7 +200,7 @@ struct LifecycleHistoryView: View {
                 List {
                     Section {
                         ForEach(Array(transitions.enumerated()), id: \.offset) { _, transition in
-                            TransitionRow(transition: transition, today: model.today)
+                            TransitionRow(transition: transition, today: model.today, inherited: transition.originSankalpaId != summary.id)
                         }
                     } footer: {
                         Text("Beginning can be backdated, so its effective time may differ from when it was recorded. Every other change takes effect when it is made.")
@@ -216,6 +216,7 @@ struct LifecycleHistoryView: View {
 private struct TransitionRow: View {
     let transition: LifecycleTransition
     let today: CalendarDay
+    var inherited = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -231,6 +232,7 @@ private struct TransitionRow: View {
                     .foregroundStyle(transition.to.tint)
             }
 
+            if inherited { Text("Inherited from an earlier linked vow").font(.caption).foregroundStyle(.secondary) }
             LabeledContent("Took effect") {
                 Text(momentText(transition.effectiveAt))
             }

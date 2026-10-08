@@ -18,6 +18,8 @@ final class StubTransport: APITransport, @unchecked Sendable {
     private var recorded: [String] = []
     private var recordedRequests: [URLRequest] = []
     private var failure: URLError?
+    private var responseHeaders: [String: String] = [:]
+    func useResponseHeaders(_ headers: [String: String]) { lock.withLock { responseHeaders = headers } }
 
     var requests: [String] {
         lock.lock(); defer { lock.unlock() }
@@ -61,7 +63,7 @@ final class StubTransport: APITransport, @unchecked Sendable {
             + (request.url?.query.map { "?\($0)" } ?? "")
         let key = "\(request.httpMethod ?? "GET") \(path)"
 
-        let (failure, handler, asyncHandler) = lock.withLock {
+        let (failure, handler, asyncHandler, headers) = lock.withLock {
             recorded.append(key)
             recordedRequests.append(request)
             // A query string is part of the identity of a session page, but a test that does not
@@ -70,7 +72,7 @@ final class StubTransport: APITransport, @unchecked Sendable {
             return (
                 self.failure,
                 routes[key] ?? routes[fallback],
-                asyncRoutes[key] ?? asyncRoutes[fallback]
+                asyncRoutes[key] ?? asyncRoutes[fallback], responseHeaders
             )
         }
 
@@ -86,7 +88,7 @@ final class StubTransport: APITransport, @unchecked Sendable {
         }
         let response = HTTPURLResponse(
             url: request.url!, statusCode: match.status,
-            httpVersion: nil, headerFields: ["Content-Type": "application/json"]
+            httpVersion: nil, headerFields: headers.merging(["Content-Type": "application/json"], uniquingKeysWith: { _, value in value })
         )!
         return (Data(match.body.utf8), response)
     }

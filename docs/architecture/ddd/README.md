@@ -1,7 +1,9 @@
 # Sankalpa — Domain-Driven Architecture
 
 This folder describes a lean domain model and ports-and-adapters architecture for
-[docs/requirements/sankalpa.md](../../requirements/sankalpa.md).
+[Sankalpa](../../requirements/sankalpa.md) and
+[Linked Sankalpa Extensions](../../requirements/linked-sankalpa-extensions.md).
+These documents describe the target architecture; code may still implement earlier contracts.
 
 The reference material in `/Users/prashantwani/wrk/computer-setup/ai/reference/ddd-hexagonal/`
 is used as guidance, not as a rulebook. Patterns are included only when they pay for themselves in
@@ -9,8 +11,8 @@ this project.
 
 ## Domain Vision
 
-Sankalpa helps a user record a declared intent, track sessions against that commitment, and see
-whether each period was satisfied.
+Sankalpa helps a user record a declared intent, track sessions against that commitment,
+see whether each period was satisfied, and celebrate separately completed vows in a linked series.
 
 The value is in the commitment arithmetic and lifecycle rules, not in elaborate architecture.
 
@@ -28,6 +30,8 @@ The value is in the commitment arithmetic and lifecycle rules, not in elaborate 
 | 08 | [Testing strategy](08-testing-strategy.md) | Tests proportional to the model |
 | 09 | [Open questions](09-open-questions.md) | Unresolved requirement gaps intentionally left outside the design |
 | 10 | [Possible requirement amendments](10-requirement-amendments.md) | Optional clarifications before expanding scope |
+| 11 | [Linked extensions](11-linked-extensions.md) | Series membership, shared sessions, extension transactions, client compatibility |
+| 12 | [Linked extension review](12-linked-extension-review.md) | Review findings, fixes, and final architecture assessment |
 
 ## Architecture At A Glance
 
@@ -42,6 +46,7 @@ flowchart TB
     UC[Use cases]
     PORTS[Repository, read, and clock ports]
     REL[Session identity decisions]
+    SHARE[Series contribution helper]
   end
 
   subgraph DOM["Domain layer"]
@@ -65,6 +70,9 @@ flowchart TB
   UC --> SE
   UC --> O
   UC --> REL
+  UC --> SHARE
+  SHARE --> S
+  SHARE --> SE
   S --> C
   S --> L
   UC --> PORTS
@@ -82,6 +90,8 @@ Included because the requirements need it:
 - A `Sankalpa` aggregate for commitment and lifecycle rules.
 - A separate `Session` record/aggregate so session history can grow without bloating `Sankalpa`.
 - Stable session identities, replay-safe logging, and permanent session deletion.
+- Explicit linked extensions with independent lifecycles and completion achievements.
+- One recorded session with derived contributions to eligible vows in its series.
 - Value objects only for values with rules: commitment, period unit/count, number of times, title,
   description, period windows, lifecycle timeline.
 - A period-outcome calculator because the result spans commitment, lifecycle, and sessions.
@@ -109,14 +119,19 @@ Deliberately not included yet:
 | More than the number of times still satisfies | `PeriodOutcomeCalculator` compares performed count with a minimum |
 | Performed session date/time | `Session` |
 | Log only past sessions within commitment coverage and while In progress | `Sankalpa.logSession`, `Commitment`, `LifecycleTimeline` |
+| Linked duration extension preserves each vow | `Sankalpa.extend`, immutable series/source links, unique direct child |
+| History inheritance includes old start dates and pauses | Extension factory and copied timeline with transition origin |
+| Existing and future sessions count toward eligible linked vows | Series contribution helper using `acceptsPerformedAt` |
+| Shared sessions count once in the journal | Union of unique `SessionId` facts |
+| Separate completion and celebration | Independent terminal transitions and derived successful-vow list |
 | One logging action records at most once across retries | Client-generated `SessionId` plus server session-identity ledger |
-| Rapid repeat requires confirmation but remains a legitimate session | Client interaction coordinator; each confirmed action receives a new `SessionId` |
+| Rapid repeat requires confirmation but remains a legitimate session | Series-scoped client interaction coordinator; each confirmed action receives a new `SessionId` |
 | Immediate Undo and permanent later deletion | `DeleteSession` using the exact session identity |
 | Deleted sessions change all history and outcome calculations | Physical session removal; every calculation reads active sessions only |
 | Pending create/delete remains durable and visible | iOS operation journal and snapshot overlay |
 | Pending refusal corrects state and informs the user | Durable reconciliation notice plus overlay removal |
 | Pending work never crosses service data stores | Capability negotiation plus persistent service instance identity |
-| Start date can be up to one year in the past | `Sankalpa.declare` |
+| Start date can be up to one year in the past | `Sankalpa.declare`; extensions preserve the inherited date |
 | No duration means tracked until stopped | `Commitment` plus terminal lifecycle state |
 | Lifecycle states and allowed transitions | `LifecycleState` transition table |
 | Lifecycle transitions audit logged | `LifecycleTimeline` |
@@ -134,3 +149,6 @@ Deliberately not included yet:
 
 The cross-system mechanics behind these rows are specified in
 [Session Reliability And Correction Design](../../design/session-reliability/README.md).
+
+Linked-series changes to the earlier per-owner read and client assumptions are specified in
+[Linked extensions](11-linked-extensions.md).

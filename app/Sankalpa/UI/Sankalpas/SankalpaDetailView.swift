@@ -6,6 +6,9 @@ struct SankalpaDetailView: View {
     @Environment(AppModel.self) private var model
     let sankalpaId: SankalpaId
 
+    @State private var extending = false
+    @State private var extendedId: SankalpaId?
+    @State private var showingExtension = false
     @State private var loggingSession = false
     @State private var beginningWithDate = false
     @State private var confirmingComplete = false
@@ -42,6 +45,16 @@ struct SankalpaDetailView: View {
                 }
             }
         }
+        .navigationDestination(isPresented: $showingExtension) {
+            if let extendedId { SankalpaDetailView(sankalpaId: extendedId) }
+        }
+        .sheet(isPresented: $extending) {
+            if let summary {
+                ExtendSankalpaView(source: summary.sankalpa) { id in
+                    extendedId = id; showingExtension = true
+                }
+            }
+        }
         .sheet(isPresented: $loggingSession) {
             if let summary { LogSessionView(summary: summary) }
         }
@@ -59,6 +72,7 @@ struct SankalpaDetailView: View {
                     currentPeriodCard(summary, period)
                 }
 
+                linkedCommitments(summary)
                 commitmentCard(summary)
                 periodsSection(summary)
                 sessionsSection(summary)
@@ -66,6 +80,54 @@ struct SankalpaDetailView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+        }
+    }
+
+    @ViewBuilder
+    private func linkedCommitments(_ summary: SankalpaSummary) -> some View {
+        let members = model.linkedSeries(summary.id)
+        if members.count > 1 || summary.sankalpa.canExtend || model.hasExtensionAttempt {
+            Card {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Linked commitments").font(.headline)
+                    ForEach(members.filter { $0.id != summary.id }) { vow in
+                        NavigationLink {
+                            SankalpaDetailView(sankalpaId: vow.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(vow.commitment.durationValueText + " · " + (vow.endDate?.longDisplayText ?? "Ongoing"))
+                                Text(vow.state.displayName).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    let wins = members.filter { $0.state == .completedSuccessfully }
+                    if !wins.isEmpty {
+                        Label("Completed: " + wins.map { $0.commitment.durationValueText }.joined(separator: ", "), systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(Palette.satisfied)
+                            .accessibilityIdentifier("linkedWins")
+                    }
+                    if model.canExtend(summary.id) {
+                        Button("Extend this sankalpa") { extending = true }.accessibilityIdentifier("extendSankalpa")
+                    } else if summary.sankalpa.canExtend && !model.supportsLinkedExtensions {
+                        Text("Update the connected service to enable extensions.").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if model.hasExtensionAttempt {
+                        Text(model.extensionNotice ?? "A submitted extension is awaiting its result.").font(.footnote)
+                        if model.canRetryExtension {
+                            Button("Check submitted extension") {
+                                Task {
+                                    if case .accepted(let id, _) = await model.retryExtension() {
+                                        extendedId = id; showingExtension = true
+                                    }
+                                }
+                            }
+                        }
+                        if model.canAcknowledgeExtensionNotice {
+                            Button("Acknowledge extension notice") { model.acknowledgeExtensionNotice() }
+                        }
+                    }
+                }
+            }
         }
     }
 

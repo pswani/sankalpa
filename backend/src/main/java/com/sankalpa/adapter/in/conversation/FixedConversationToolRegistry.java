@@ -64,8 +64,12 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
     @Override
     public Outcome execute(ConversationModel.ToolCall call, UUID threadId, UUID runId,
                            ConversationModel.Context context, List<String> clientTools) {
+        return execute(call,threadId,runId,context,clientTools,com.sankalpa.application.PracticeContract.SINGLE_VOW_V1);
+    }
+    @Override public Outcome execute(ConversationModel.ToolCall call,UUID threadId,UUID runId,
+            ConversationModel.Context context,List<String> clientTools,com.sankalpa.application.PracticeContract contract) {
         try {
-            return executeValidated(call, threadId, runId, context, clientTools);
+            return executeValidated(call, threadId, runId, context, clientTools,contract);
         } catch (ConversationFailure failure) {
             throw failure;
         } catch (DomainException | IllegalArgumentException failure) {
@@ -77,7 +81,7 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
     }
 
     private Outcome executeValidated(ConversationModel.ToolCall call, UUID threadId, UUID runId,
-                                     ConversationModel.Context context, List<String> clientTools) {
+                                     ConversationModel.Context context, List<String> clientTools,com.sankalpa.application.PracticeContract contract) {
         if (call == null || call.name() == null || call.id() == null) invalid("Malformed tool request");
         JsonNode args = parseObject(call.argumentsJson());
         if (FRONTEND_TOOLS.contains(call.name())) {
@@ -95,22 +99,24 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
         }
         if (!SERVER_TOOLS.contains(call.name())) invalid("Unknown tool");
         return switch (call.name()) {
-            case "get_sankalpa" -> readSankalpa(args);
-            case "get_recent_sessions" -> recentSessions(args);
-            case "get_period_summary" -> periodSummary(args);
-            case "propose_log_session" -> proposeSession(args, threadId, runId, context);
+            case "get_sankalpa" -> readSankalpa(args,contract);
+            case "get_recent_sessions" -> recentSessions(args,contract);
+            case "get_period_summary" -> periodSummary(args,contract);
+            case "propose_log_session" -> proposeSession(args, threadId, runId, context,contract);
             case "propose_declare_sankalpa" -> proposeDeclaration(args, threadId, runId);
             default -> throw new AssertionError(call.name());
         };
     }
 
-    private Outcome readSankalpa(JsonNode args) {
+    private Outcome readSankalpa(JsonNode args,com.sankalpa.application.PracticeContract contract) {
         exact(args, Set.of("sankalpaId"));
-        var s = sankalpas.detail(SankalpaId.parse(requiredText(args, "sankalpaId")));
+        var s = sankalpas.detail(SankalpaId.parse(requiredText(args, "sankalpaId")),contract);
         String description = s.description().value();
         boolean truncated = description.length() > 2_000;
         if (truncated) description = description.substring(0, 2_000);
         Map<String, Object> result = new LinkedHashMap<>();
+        result.put("seriesId",s.seriesId().toString()); result.put("extensionOf",s.extensionOf().map(Object::toString).orElse(null));
+        result.put("periodCount",s.commitment().periodCount());
         result.put("id", s.id().toString()); result.put("title", s.title().value());
         result.put("description", description); result.put("descriptionTruncated", truncated);
         result.put("actionType", s.actionType().name());
@@ -122,17 +128,20 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
         return new ReadResult(write(result));
     }
 
-    private Outcome recentSessions(JsonNode args) {
+    private Outcome recentSessions(JsonNode args,com.sankalpa.application.PracticeContract contract) {
         Range range = range(args);
-        var page = sankalpas.sessions(range.id, range.from, range.until, 0, range.limit);
-        var items = page.content().stream().map(s -> Map.of(
+        var page = contract==com.sankalpa.application.PracticeContract.LINKED_V1
+                ? sankalpas.cursorSessions(range.id,range.from,range.until,null,range.limit,contract) : null;
+        var legacy=page==null?sankalpas.sessions(range.id,range.from,range.until,0,range.limit):null;
+        var content=page==null?legacy.content():page.content();
+        var items = content.stream().map(s -> Map.of(
                 "sessionId", s.id().toString(), "occurredAt", s.occurredAt().toString())).toList();
-        return new ReadResult(write(Map.of("items", items, "truncated", page.totalElements() > items.size())));
+        return new ReadResult(write(Map.of("items", items, "truncated", page==null?legacy.totalElements()>items.size():page.hasMore())));
     }
 
-    private Outcome periodSummary(JsonNode args) {
+    private Outcome periodSummary(JsonNode args,com.sankalpa.application.PracticeContract contract) {
         Range range = range(args);
-        var all = sankalpas.periodOutcomes(range.id, range.from, range.until);
+        var all = sankalpas.periodOutcomes(range.id, range.from, range.until,contract);
         boolean truncated = all.size() > range.limit;
         var items = all.stream().limit(range.limit).map(p -> Map.of(
                 "start", p.window().start().toString(), "end", p.window().end().toString(),
@@ -142,7 +151,7 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
     }
 
     private Outcome proposeSession(JsonNode args, UUID threadId, UUID runId,
-                                   ConversationModel.Context context) {
+                                   ConversationModel.Context context,com.sankalpa.application.PracticeContract contract) {
         exact(args, Set.of("sankalpaId", "occurredAt", "userSummary", "alternativeSankalpaIds"));
         SankalpaId id = SankalpaId.parse(requiredText(args, "sankalpaId"));
         if (context.sankalpas().stream().noneMatch(s -> s.id().equals(id.toString()))) invalid("Unknown Sankalpa id");
@@ -152,7 +161,7 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
         alternatives.forEach(value -> alternativeIds.add(SankalpaId.parse(value.asText())));
         return new ProposalResult(proposals.proposeSession(threadId, runId, id,
                 localDateTime(requiredText(args, "occurredAt")),
-                requiredText(args, "userSummary"), alternativeIds));
+                requiredText(args, "userSummary"), alternativeIds,contract));
     }
 
     private Outcome proposeDeclaration(JsonNode args, UUID threadId, UUID runId) {

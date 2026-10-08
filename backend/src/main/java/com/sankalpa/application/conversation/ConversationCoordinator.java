@@ -35,16 +35,17 @@ public final class ConversationCoordinator {
         try {
             if (input.resume() != null) return resume(input);
             Proposal replay = proposals.findBySourceRunId(input.runId());
-            if (replay != null) return proposalResult(input, replay);
+            if (replay != null) { contexts.requireReadable(replay,input.contract()); return proposalResult(input, replay); }
             Proposal pending = proposals.findPendingByThread(input.threadId());
             if (pending != null) {
+                contexts.requireReadable(pending,input.contract());
                 // The client may have lost the run that created it. Presenting it again lets the
                 // user confirm or cancel instead of leaving the thread blocked.
                 return new RunResult(List.of(new Message(UUID.randomUUID(),
                         "Please confirm or cancel this first. " + summary(pending))),
                         List.of(), pending, pending.id(), null);
             }
-            ConversationModel.Context context = contexts.load();
+            ConversationModel.Context context = contexts.load(input.contract());
             List<ConversationModel.ToolResult> results = new ArrayList<>();
             int calls = 0;
             boolean repairUsed = false;
@@ -70,7 +71,7 @@ public final class ConversationCoordinator {
                 ConversationToolExecutor.Outcome outcome;
                 try {
                     outcome = tools.execute(call, input.threadId(), input.runId(), context,
-                            input.clientTools());
+                            input.clientTools(),input.contract());
                 } catch (ConversationFailure failure) {
                     if (repairUsed || !"ASSISTANT_COULD_NOT_INTERPRET".equals(failure.code())) {
                         throw failure;
@@ -106,7 +107,7 @@ public final class ConversationCoordinator {
                     "Cancelled. Nothing was changed.")), List.of(), null, null, null);
         }
         if (resume.confirmationId() == null) invalid();
-        resolution = proposals.confirm(input.threadId(), resume.interruptId(), resume.confirmationId());
+        resolution = proposals.confirm(input.threadId(), resume.interruptId(), resume.confirmationId(),input.contract());
         Proposal p = resolution.proposal();
         if (p.status() == Proposal.Status.EXPIRED) {
             throw new ConversationFailure("PROPOSAL_EXPIRED",
@@ -160,7 +161,10 @@ public final class ConversationCoordinator {
     }
 
     public record RunInput(UUID threadId, UUID runId, List<ConversationModel.Message> messages,
-                           List<String> clientTools, Resume resume) {
+                           List<String> clientTools, Resume resume, com.sankalpa.application.PracticeContract contract) {
+        public RunInput(UUID threadId,UUID runId,List<ConversationModel.Message> messages,List<String> clientTools,Resume resume) {
+            this(threadId,runId,messages,clientTools,resume,com.sankalpa.application.PracticeContract.SINGLE_VOW_V1);
+        }
         public RunInput {
             messages = List.copyOf(messages);
             clientTools = List.copyOf(clientTools);

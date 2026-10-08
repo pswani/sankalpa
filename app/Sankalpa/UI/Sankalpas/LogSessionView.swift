@@ -74,6 +74,9 @@ struct LogSessionView: View {
                     Text(footerText)
                 }
 
+                if let shared = model.contributionPreview(owner: summary.id, at: AppTime.moment(from: occurredAt)) {
+                    Section("Shared practice") { Text(shared).font(.footnote) }
+                }
                 if let landing = landingPeriod {
                     Section("This would count toward") {
                         LabeledContent(

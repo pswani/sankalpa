@@ -1,7 +1,8 @@
 # 10 — Possible Requirement Amendments
 
 This file contains only possible future clarifications that are not already stated in
-[docs/requirements/sankalpa.md](../../requirements/sankalpa.md). Once an amendment is accepted and
+[Sankalpa](../../requirements/sankalpa.md) or
+[Linked Sankalpa Extensions](../../requirements/linked-sankalpa-extensions.md). Once an amendment is accepted and
 added to the requirements, remove it from this file.
 
 ## A1 — Activity Examples Are Not Data

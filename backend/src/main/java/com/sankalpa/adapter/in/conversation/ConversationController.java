@@ -27,25 +27,28 @@ public final class ConversationController {
     private static final Logger log = LoggerFactory.getLogger(ConversationController.class);
     public static final String AGUI_PROFILE = "ag-ui-sankalpa/1";
     private final ConversationCoordinator coordinator;
+    private final com.sankalpa.adapter.in.web.PracticeHttp practiceHttp;
     private final ThreadPoolTaskExecutor executor;
     private final boolean enabled;
     private final ZoneId zone;
 
-    public ConversationController(ConversationCoordinator coordinator,
+    public ConversationController(ConversationCoordinator coordinator, com.sankalpa.adapter.in.web.PracticeHttp practiceHttp,
             @Qualifier("assistantExecutor") ThreadPoolTaskExecutor executor,
             @Value("${sankalpa.assistant.enabled:false}") boolean enabled,
             @Value("${sankalpa.timezone}") String timezone) {
-        this.coordinator = coordinator;
+        this.coordinator = coordinator;this.practiceHttp=practiceHttp;
         this.executor = executor;
         this.enabled = enabled;
         this.zone = ZoneId.of(timezone);
     }
 
+    @com.sankalpa.adapter.in.web.LinkedPracticeHeaders
     @PostMapping(value = "/runs", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public ResponseEntity<SseEmitter> run(@RequestBody RunAgentInput wire) {
+    public ResponseEntity<SseEmitter> run(@RequestBody RunAgentInput wire,@org.springframework.web.bind.annotation.RequestHeader org.springframework.http.HttpHeaders headers) {
         if (!enabled) throw new ConversationFailure("ASSISTANT_DISABLED", "Assistant is disabled");
-        ConversationCoordinator.RunInput input = validate(wire);
+        var parsed=validate(wire);
+        var input=new ConversationCoordinator.RunInput(parsed.threadId(),parsed.runId(),parsed.messages(),parsed.clientTools(),parsed.resume(),practiceHttp.contract(headers));
         SseEmitter emitter = new SseEmitter(35_000L);
         executor.execute(() -> stream(input, emitter));
         return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(emitter);
@@ -63,6 +66,10 @@ public final class ConversationController {
             emitter.complete();
             log.info("Assistant run {} on thread {} finished: {}", input.runId(), input.threadId(),
                     outcomeLabel(input, result));
+        } catch (com.sankalpa.application.PracticeException failure) {
+            try { send(emitter,event("RUN_ERROR",input,Map.of("code",failure.code(),"message",failure.getMessage()))); }
+            catch(IOException ignored) { }
+            emitter.complete();
         } catch (ConversationFailure failure) {
             log.info("Assistant run {} on thread {} ended with {}: {}", input.runId(),
                     input.threadId(), failure.code(), failure.getMessage());

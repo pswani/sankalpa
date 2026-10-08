@@ -3,6 +3,7 @@ import Foundation
 /// One audit entry. `effectiveAt` drives domain behaviour; `recordedAt` preserves when the user
 /// actually performed it. S14 — only Begin may have the two differ.
 public struct LifecycleTransition: Hashable, Codable, Sendable {
+    public let originSankalpaId: SankalpaId?
     public let from: LifecycleState
     public let to: LifecycleState
     public let effectiveAt: CalendarMoment
@@ -12,8 +13,10 @@ public struct LifecycleTransition: Hashable, Codable, Sendable {
         from: LifecycleState,
         to: LifecycleState,
         effectiveAt: CalendarMoment,
-        recordedAt: CalendarMoment
+        recordedAt: CalendarMoment,
+        originSankalpaId: SankalpaId? = nil
     ) {
+        self.originSankalpaId = originSankalpaId
         self.from = from
         self.to = to
         self.effectiveAt = effectiveAt

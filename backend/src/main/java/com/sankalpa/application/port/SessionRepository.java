@@ -20,4 +20,14 @@ public interface SessionRepository {
     List<Session> findPageForSankalpa(
             SankalpaId id, LocalDate from, LocalDate until, long offset, int limit);
     long countForSankalpa(SankalpaId id, LocalDate from, LocalDate until);
+    default List<Session> scanCandidates(List<SankalpaId> owners, LocalDate from, LocalDate until,
+            com.sankalpa.application.SessionBoundary after, int limit) {
+        var comparator = java.util.Comparator.comparing(Session::occurredAt)
+                .thenComparing(s -> s.id().toString()).reversed();
+        return owners.stream().flatMap(id -> findForSankalpa(id,
+                    from == null ? LocalDate.MIN : from, until == null ? LocalDate.MAX : until).stream())
+                .filter(s -> after == null || s.occurredAt().isBefore(after.occurredAt())
+                    || (s.occurredAt().equals(after.occurredAt()) && s.id().toString().compareTo(after.id().toString()) < 0))
+                .sorted(comparator).limit(limit).toList();
+    }
 }
