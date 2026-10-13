@@ -12,6 +12,7 @@ import java.util.*;
 /** Versioned, atomic upgrade of the bootstrap schema. Never runs against an unknown version. */
 @Component
 @DependsOnDatabaseInitialization
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="sankalpa.persistence", havingValue="sqlite", matchIfMissing=true)
 public final class LinkedSchemaMigration {
     static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSSSSS");
     private final DataSource dataSource;

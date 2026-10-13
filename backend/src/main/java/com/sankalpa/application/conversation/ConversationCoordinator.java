@@ -18,6 +18,7 @@ public final class ConversationCoordinator {
     private final ConversationContextLoader contexts;
     private final ConversationToolExecutor tools;
     private final ConversationUseCases proposals;
+    private ConversationRunGuard guard;
     private final Set<UUID> activeThreads = ConcurrentHashMap.newKeySet();
 
     public ConversationCoordinator(ConversationModel model, ConversationContextLoader contexts,
@@ -28,7 +29,14 @@ public final class ConversationCoordinator {
         this.proposals = proposals;
     }
 
+    public ConversationCoordinator(ConversationModel model, ConversationContextLoader contexts,
+            ConversationToolExecutor tools, ConversationUseCases proposals, ConversationRunGuard guard) {
+        this(model, contexts, tools, proposals); this.guard = guard;
+    }
     public RunResult run(RunInput input) {
+        return guard == null ? runOwned(input) : guard.run(input, () -> runOwned(input));
+    }
+    private RunResult runOwned(RunInput input) {
         if (!activeThreads.add(input.threadId())) {
             throw new ConversationFailure("ASSISTANT_BUSY", "Another run is active for this conversation");
         }
@@ -50,6 +58,7 @@ public final class ConversationCoordinator {
             int calls = 0;
             boolean repairUsed = false;
             for (int round = 0; round < MAX_ROUNDS; round++) {
+                if (guard != null) guard.beforeModel();
                 ConversationModel.ModelTurn turn = model.respond(new ConversationModel.ModelRequest(
                         input.messages(), context, tools.definitions(input.clientTools()), List.copyOf(results),
                         MAX_TOOL_CALLS - calls));

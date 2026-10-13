@@ -199,7 +199,7 @@ public final class PracticeCache {
         guard let data = try? Data(contentsOf: cacheURL),
               let cached = try? JSONDecoder().decode(CachedPractice.self, from: data),
               (1...3).contains(cached.schemaVersion),
-              cached.serviceLocation == location.displayText
+              location.matchesStoredAddress(cached.serviceLocation)
         else { return nil }
         return cached
     }
@@ -226,6 +226,7 @@ public final class PracticeCache {
                     journal.schemaVersion = 3
                 } catch { preserveUnreadableJournal(message: "The session journal upgrade could not be saved. Existing changes were preserved.") }
             }
+            if location.matchesStoredAddress(journal.serviceLocation) { journal.serviceLocation = location.displayText }
             return journal
         }
         if (try? JSONDecoder().decode([PendingSession].self, from: data)) != nil {

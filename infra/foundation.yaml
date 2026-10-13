@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Sankalpa retained data, image repository, runtime role and logs
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Default: sankalpa
+    AllowedPattern: '^sankalpa(-[a-z][a-z0-9-]{0,20})?$'
+  Environment:
+    Type: String
+    AllowedValues: [prod, staging]
+  RestoredTableName:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^sankalpa(-[a-z0-9-]+)?-(prod|staging)-restore-[A-Za-z0-9_.-]+$'
+Conditions:
+  CreatePractice: !Equals [!Ref RestoredTableName, '']
+Resources:
+  Practice:
+    Condition: CreatePractice
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub ${ResourcePrefix}-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      TableClass: STANDARD
+      AttributeDefinitions:
+        - {AttributeName: PK, AttributeType: S}
+        - {AttributeName: SK, AttributeType: S}
+      KeySchema:
+        - {AttributeName: PK, KeyType: HASH}
+        - {AttributeName: SK, KeyType: RANGE}
+      DeletionProtectionEnabled: true
+      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+      TimeToLiveSpecification: {AttributeName: ttlEpoch, Enabled: true}
+      Tags:
+        - {Key: Project, Value: Sankalpa}
+        - {Key: Environment, Value: !Ref Environment}
+        - {Key: ManagedBy, Value: CloudFormation}
+  Images:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Sub ${ResourcePrefix}-${Environment}
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: false}
+      EncryptionConfiguration: {EncryptionType: AES256}
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: LambdaImageRetrieval
+            Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer]
+            Condition:
+              StringLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ResourcePrefix}-${Environment}*
+      Tags:
+        - {Key: Project, Value: Sankalpa}
+        - {Key: Environment, Value: !Ref Environment}
+        - {Key: ManagedBy, Value: CloudFormation}
+  Logs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ResourcePrefix}-${Environment}
+      RetentionInDays: 14
+      Tags:
+        - {Key: Project, Value: Sankalpa}
+        - {Key: Environment, Value: !Ref Environment}
+  Runtime:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ResourcePrefix}-${Environment}-runtime
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PracticeAndLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:DescribeTable, dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:ConditionCheckItem]
+                Resource: !If [CreatePractice, !GetAtt Practice.Arn, !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${RestoredTableName}"]
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt Logs.Arn
+      Tags:
+        - {Key: Project, Value: Sankalpa}
+        - {Key: Environment, Value: !Ref Environment}
+Outputs:
+  TableName: {Value: !If [CreatePractice, !Ref Practice, !Ref RestoredTableName]}
+  RepositoryUri: {Value: !GetAtt Images.RepositoryUri}
+  RuntimeRoleArn: {Value: !GetAtt Runtime.Arn}
+  LogGroupName: {Value: !Ref Logs}

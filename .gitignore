@@ -9,3 +9,13 @@ __pycache__/
 
 # Local backend credentials and model configuration
 backend/.env
+
+# Deployment secrets, local tooling and release state
+.env*
+!.env*.example
+backend/.venv/
+backend/.tools/
+backend/.aws-state/
+backend/.m2/
+backend/target/
+backend/dynamodb-local-metadata.json

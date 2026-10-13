@@ -159,3 +159,15 @@ The normalized tables are:
 
 The derived end date and period outcomes are deliberately not stored. Production uses SQLite;
 tests use an isolated in-memory H2 relational database plus domain/application fakes where suitable.
+
+## Low-cost local and AWS deployment
+
+The backend also supports DynamoDB persistence and a Lambda-compatible container image.
+See [operator scripts](scripts/README-aws.md) for local build/deploy/test/stop and automated
+AWS setup, staged release, rollback, cleanup, and data migration.
+The [AWS design and Console guide](../docs/design/aws/README.md) describe the infrastructure.
+
+Run `./scripts/bootstrap-tools.sh` once, then `./scripts/verify-aws-local.sh` to verify the
+DynamoDB implementation against an isolated local server. AWS operations are explicit
+(`--target aws`) and require your configured account/profile and ignored environment file.
+`--plan` prints a secret-free plan without contacting AWS or Docker.

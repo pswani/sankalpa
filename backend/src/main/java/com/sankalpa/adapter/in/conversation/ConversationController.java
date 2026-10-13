@@ -50,7 +50,10 @@ public final class ConversationController {
         var parsed=validate(wire);
         var input=new ConversationCoordinator.RunInput(parsed.threadId(),parsed.runId(),parsed.messages(),parsed.clientTools(),parsed.resume(),practiceHttp.contract(headers));
         SseEmitter emitter = new SseEmitter(35_000L);
-        executor.execute(() -> stream(input, emitter));
+        var task = executor.submit(() -> stream(input, emitter));
+        emitter.onTimeout(() -> task.cancel(true));
+        emitter.onError(failure -> task.cancel(true));
+        emitter.onCompletion(() -> task.cancel(true));
         return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(emitter);
     }
 

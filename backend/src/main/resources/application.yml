@@ -1,6 +1,8 @@
 spring:
   application:
     name: sankalpa-backend
+  profiles:
+    include: ${SANKALPA_PERSISTENCE:sqlite}
   config:
     import: "optional:file:.env[.properties]"
   datasource:
@@ -22,6 +24,8 @@ server:
   tomcat:
     max-http-form-post-size: 256KB
 sankalpa:
+  persistence: ${SANKALPA_PERSISTENCE:sqlite}
+  deployment: ${SANKALPA_DEPLOYMENT:local}
   timezone: ${SANKALPA_TIMEZONE}
   assistant:
     enabled: ${SANKALPA_ASSISTANT_ENABLED:false}

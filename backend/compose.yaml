@@ -1,0 +1,33 @@
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:2.6.1
+    command: -jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data
+    ports:
+      - "127.0.0.1:${LOCAL_DB_PORT:-8000}:8000"
+    volumes:
+      - practice:/home/dynamodblocal/data
+    user: "0:0"
+  backend:
+    image: ${SANKALPA_IMAGE:-sankalpa-backend:local}
+    ports:
+      - "${LOCAL_BIND_HOST:-127.0.0.1}:${LOCAL_API_PORT:-8080}:8080"
+    environment:
+      PORT: "8080"
+      SANKALPA_PERSISTENCE: dynamodb
+      SANKALPA_DEPLOYMENT: local
+      SANKALPA_DYNAMODB_TABLE: ${SANKALPA_DYNAMODB_TABLE:-sankalpa-local}
+      SANKALPA_DYNAMODB_ENDPOINT: http://dynamodb:8000
+      SANKALPA_TIMEZONE: ${SANKALPA_TIMEZONE:-America/Chicago}
+      SANKALPA_API_TOKEN: ${SANKALPA_API_TOKEN:?Configure a local bearer token}
+      SANKALPA_ASSISTANT_ENABLED: ${SANKALPA_ASSISTANT_ENABLED:-false}
+      SANKALPA_LLM_PROVIDER: ${SANKALPA_LLM_PROVIDER:-fake}
+      SANKALPA_LLM_API_KEY: ${SANKALPA_LLM_API_KEY:-}
+      SANKALPA_LLM_MODEL: ${SANKALPA_LLM_MODEL:-gpt-6-luna}
+      SANKALPA_LLM_REASONING_EFFORT: ${SANKALPA_LLM_REASONING_EFFORT:-none}
+      SANKALPA_LLM_TIMEOUT: ${SANKALPA_LLM_TIMEOUT:-PT20S}
+      SANKALPA_ASSISTANT_RUNS_PER_MINUTE: ${SANKALPA_ASSISTANT_RUNS_PER_MINUTE:-2}
+      SANKALPA_ASSISTANT_RUNS_PER_DAY: ${SANKALPA_ASSISTANT_RUNS_PER_DAY:-20}
+    depends_on:
+      - dynamodb
+volumes:
+  practice:

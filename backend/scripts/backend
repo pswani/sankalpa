@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -x "$root/.venv/bin/python" ]; then python="$root/.venv/bin/python"; else python=python3; fi
+exec "$python" "$root/scripts/aws_backend.py" "$@"

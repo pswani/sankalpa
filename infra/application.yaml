@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Sankalpa versioned Lambda application with stable production and candidate URLs
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Default: sankalpa
+    AllowedPattern: '^sankalpa(-[a-z][a-z0-9-]{0,20})?$'
+  Environment: {Type: String, AllowedValues: [prod, staging]}
+  TableName: {Type: String}
+  RuntimeRoleArn: {Type: String}
+  ImageUri: {Type: String}
+  ReleaseId: {Type: String}
+  ProductionVersion: {Type: String, Default: ''}
+  RollbackVersion: {Type: String, Default: ''}
+  Architecture: {Type: String, Default: arm64, AllowedValues: [arm64, x86_64]}
+  MemorySize: {Type: Number, Default: 1024, MinValue: 512, MaxValue: 3072}
+  TimeoutSeconds: {Type: Number, Default: 90, MinValue: 45, MaxValue: 120}
+  ReservedConcurrency: {Type: Number, Default: 2, MinValue: 0, MaxValue: 10}
+  PracticeTimezone: {Type: String, Default: America/Chicago}
+  ApiToken: {Type: String, NoEcho: true, MinLength: 32}
+  AssistantEnabled: {Type: String, Default: 'false', AllowedValues: ['true', 'false']}
+  LlmProvider: {Type: String, Default: fake, AllowedValues: [fake, openai]}
+  LlmApiKey: {Type: String, Default: '', NoEcho: true}
+  LlmModel: {Type: String, Default: gpt-6-luna}
+  LlmReasoningEffort: {Type: String, Default: none}
+  LlmTimeout: {Type: String, Default: PT20S}
+  RunsPerMinute: {Type: Number, Default: 2, MinValue: 1}
+  RunsPerDay: {Type: Number, Default: 20, MinValue: 1}
+Conditions:
+  HaveProduction: !Not [!Equals [!Ref ProductionVersion, '']]
+  HaveRollback: !Not [!Equals [!Ref RollbackVersion, '']]
+Resources:
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ResourcePrefix}-${Environment}
+      Description: !Ref ReleaseId
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Role: !Ref RuntimeRoleArn
+      Architectures: [!Ref Architecture]
+      MemorySize: !Ref MemorySize
+      Timeout: !Ref TimeoutSeconds
+      EphemeralStorage: {Size: 512}
+      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      Environment:
+        Variables:
+          SANKALPA_PERSISTENCE: dynamodb
+          SANKALPA_DEPLOYMENT: !Ref Environment
+          SANKALPA_DYNAMODB_TABLE: !Ref TableName
+          SANKALPA_TIMEZONE: !Ref PracticeTimezone
+          SANKALPA_API_TOKEN: !Ref ApiToken
+          SANKALPA_ASSISTANT_ENABLED: !Ref AssistantEnabled
+          SANKALPA_LLM_PROVIDER: !Ref LlmProvider
+          SANKALPA_LLM_API_KEY: !Ref LlmApiKey
+          SANKALPA_LLM_MODEL: !Ref LlmModel
+          SANKALPA_LLM_REASONING_EFFORT: !Ref LlmReasoningEffort
+          SANKALPA_LLM_TIMEOUT: !Ref LlmTimeout
+          SANKALPA_ASSISTANT_RUNS_PER_MINUTE: !Ref RunsPerMinute
+          SANKALPA_ASSISTANT_RUNS_PER_DAY: !Ref RunsPerDay
+          AWS_LWA_PORT: '8080'
+          AWS_LWA_READINESS_CHECK_PATH: /health/ready
+          AWS_LWA_READINESS_CHECK_HEALTHY_STATUS: '200'
+          AWS_LWA_ASYNC_INIT: 'true'
+          AWS_LWA_INVOKE_MODE: response_stream
+          SPRINGDOC_API_DOCS_ENABLED: 'false'
+          SPRINGDOC_SWAGGER_UI_ENABLED: 'false'
+      Tags:
+        - {Key: Project, Value: Sankalpa}
+        - {Key: Environment, Value: !Ref Environment}
+        - {Key: ManagedBy, Value: CloudFormation}
+  ReleaseVersion:
+    Type: AWS::Lambda::Version
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      FunctionName: !Ref Function
+      Description: !Ref ReleaseId
+  Production:
+    Type: AWS::Lambda::Alias
+    Properties:
+      Name: prod
+      FunctionName: !Ref Function
+      FunctionVersion: !If [HaveProduction, !Ref ProductionVersion, !GetAtt ReleaseVersion.Version]
+  Candidate:
+    Type: AWS::Lambda::Alias
+    Properties:
+      Name: candidate
+      FunctionName: !Ref Function
+      FunctionVersion: !GetAtt ReleaseVersion.Version
+  Previous:
+    Type: AWS::Lambda::Alias
+    Properties:
+      Name: rollback
+      FunctionName: !Ref Function
+      FunctionVersion: !If [HaveRollback, !Ref RollbackVersion, !GetAtt ReleaseVersion.Version]
+  ProductionUrl:
+    Type: AWS::Lambda::Url
+    Properties: {TargetFunctionArn: !Ref Production, AuthType: NONE, InvokeMode: RESPONSE_STREAM}
+  CandidateUrl:
+    Type: AWS::Lambda::Url
+    Properties: {TargetFunctionArn: !Ref Candidate, AuthType: NONE, InvokeMode: RESPONSE_STREAM}
+  ProductionUrlAccess:
+    Type: AWS::Lambda::Permission
+    Properties: {FunctionName: !Ref Production, Action: 'lambda:InvokeFunctionUrl', Principal: '*', FunctionUrlAuthType: NONE}
+  ProductionInvokeAccess:
+    Type: AWS::Lambda::Permission
+    Properties: {FunctionName: !Ref Production, Action: 'lambda:InvokeFunction', Principal: '*', InvokedViaFunctionUrl: true}
+  CandidateUrlAccess:
+    Type: AWS::Lambda::Permission
+    Properties: {FunctionName: !Ref Candidate, Action: 'lambda:InvokeFunctionUrl', Principal: '*', FunctionUrlAuthType: NONE}
+  CandidateInvokeAccess:
+    Type: AWS::Lambda::Permission
+    Properties: {FunctionName: !Ref Candidate, Action: 'lambda:InvokeFunction', Principal: '*', InvokedViaFunctionUrl: true}
+Outputs:
+  ProductionUrl: {Value: !GetAtt ProductionUrl.FunctionUrl}
+  CandidateUrl: {Value: !GetAtt CandidateUrl.FunctionUrl}
+  CandidateVersion: {Value: !GetAtt ReleaseVersion.Version}
