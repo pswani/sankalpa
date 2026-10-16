@@ -105,8 +105,45 @@ If the template uses `ttlEpoch` for operational records, verify TTL is configure
 attribute. Identity/tombstone/proposal replay records must not carry TTL values.
 [Recovery configuration](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/PointInTimeRecovery_Howitworks.html)
 
-Now use the provided local tool to initialize a new empty practice or import the consistent
-SQLite backup. Run full validation. This is a local operation between Console steps.
+The tool is the repository's [`backend/scripts/backend`](../../../backend/scripts/backend)
+command-line script, implemented by `aws_backend.py`. Run it in a terminal on your computer from
+the `backend/` directory between Console steps. With `--target aws`, it reads `.env.prod`, uses
+the selected AWS credential profile, and writes to the **AWS DynamoDB table**; this is not an
+offline operation or a tool inside the AWS Console.
+
+Prepare its Python dependencies once:
+
+```sh
+cd backend
+./scripts/bootstrap-tools.sh
+```
+
+Choose **one** of the following data operations. To migrate your existing SQLite practice, stop
+writes to the old backend, keep a consistent backup, and run this before creating the application
+stack. Replace the source path with your backup's actual location:
+
+```sh
+./scripts/backend db import --target aws --environment prod \
+  --sqlite /absolute/path/to/consistent-backup.db
+```
+
+For a completely new practice with no existing data to migrate, use this instead:
+
+```sh
+./scripts/backend db init --target aws --environment prod
+```
+
+Do not run `db init` before importing: import requires an empty target. Then validate the chosen
+operation's result:
+
+```sh
+./scripts/backend db validate --target aws --environment prod
+```
+
+Validation checks the imported structure and the backend's domain rules. The importer preserves
+the original service identity and marks the practice READY only after its checks succeed. See the
+[operator guide](../../../backend/scripts/README-aws.md#aws-setup-and-data-preparation) for prerequisites
+and recovery from an interrupted import.
 
 Creating a table does not initialize its practice metadata. Do not manually invent a service UUID
 when importing an existing practice, and do not set an incomplete import to READY in the Console.

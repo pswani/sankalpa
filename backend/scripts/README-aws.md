@@ -69,9 +69,12 @@ its recorded process only when its identity and listening port match this backen
 
 ## AWS setup and data preparation
 
+Create or edit `.env.prod` using the [configuration reference](../README.md#aws-deployment-settings),
+including the account/profile, time zone, API token, and assistant settings. Keep an existing
+configured file rather than replacing it. Configuration values are case-sensitive: use `true`,
+`false`, and `openai`/`fake`. For `gpt-6-luna`, this backend requires reasoning effort `none`.
+
 ```sh
-cp .env.prod.example .env.prod
-# Fill in DEPLOY_ACCOUNT_ID, the AWS profile, time zone, and a random token.
 ./scripts/backend setup --target aws --environment prod --plan
 ./scripts/backend setup --target aws --environment prod
 ```

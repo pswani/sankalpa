@@ -157,8 +157,9 @@ The normalized tables are:
 - `sankalpa_lifecycle_transition` stores ordered lifecycle audit facts using append-only writes.
 - `practice_session` stores performed-session facts.
 
-The derived end date and period outcomes are deliberately not stored. Production uses SQLite;
-tests use an isolated in-memory H2 relational database plus domain/application fakes where suitable.
+The derived end date and period outcomes are deliberately not stored. The original local JVM
+workflow uses SQLite; AWS Lambda uses DynamoDB. Tests cover both persistence adapters, with an
+isolated H2 relational database and DynamoDB Local plus domain/application fakes where suitable.
 
 ## Low-cost local and AWS deployment
 
@@ -171,3 +172,129 @@ Run `./scripts/bootstrap-tools.sh` once, then `./scripts/verify-aws-local.sh` to
 DynamoDB implementation against an isolated local server. AWS operations are explicit
 (`--target aws`) and require your configured account/profile and ignored environment file.
 `--plan` prints a secret-free plan without contacting AWS or Docker.
+
+### Environment files and precedence
+
+Run the following commands from `backend/`. Choose the file for the workflow you are using:
+
+| Workflow | Configuration file | How it is loaded |
+|---|---|---|
+| Local JVM / SQLite (`mvn spring-boot:run`) | `.env` | Spring imports the file from its working directory. Start with `.env.example`. |
+| Local container / DynamoDB (`scripts/backend --target local`) | `.env.local` | The operator script selects it. Start with `.env.local.example`. |
+| AWS production (`scripts/backend --target aws --environment prod`) | `.env.prod` | The operator script selects it and passes runtime settings through CloudFormation into Lambda environment variables. |
+| AWS staging (`scripts/backend --target aws --environment staging`) | `.env.staging` | The operator script selects it. Start with `.env.staging.example`. |
+
+The operator script does not read `~/.env` or the local JVM `.env`. Copy a provider key into the
+selected file when needed. `--env-file /absolute/path/to/file` selects another file. Supported
+process environment variables override file values; explicit command options and nonsecret
+`--set KEY=VALUE` overrides take precedence. Do not pass tokens or provider keys through `--set`.
+
+Use `KEY=value` assignments, lowercase `true`/`false`, and lowercase `openai`/`fake`.
+Full-line `#` comments and matching surrounding quotes are supported. The operator parser does
+not execute shell commands, expand `${VARIABLE}` references, or accept `export KEY=value`.
+Put comments on their own lines rather than after values. These files are ignored by Git and are
+deployment inputs; they are not bundled into the container image. No Secrets Manager is required.
+
+### AWS deployment settings
+
+Create or edit `.env.prod` with these settings. The values below are examples/defaults, not a copy
+of any operator's credentials or personal configuration.
+
+| Variable | Example / default | Purpose |
+|---|---|---|
+| `DEPLOY_ENVIRONMENT` | `prod` | Selects production; use `staging` in the staging file and command. |
+| `DEPLOY_RESOURCE_PREFIX` | `sankalpa` | Owned resource namespace; the default production resources use `sankalpa-prod`. |
+| `DEPLOY_REGION` | `us-east-1` | AWS Region for the stacks and data. |
+| `DEPLOY_ACCOUNT_ID` | Your 12-digit account ID | The operator checks the authenticated AWS account before cloud operations. |
+| `DEPLOY_AWS_PROFILE` | `default` | Local AWS credential profile. Keep AWS access keys in the AWS credential provider, not this file. |
+| `DEPLOY_MEMORY` | `1024` | Lambda memory in MB; supported range 512–3072. |
+| `DEPLOY_TIMEOUT` | `90` | Lambda invocation timeout in seconds; supported range 45–120. |
+| `DEPLOY_CONCURRENCY` | `2` | Reserved concurrent Lambda invocations; supported range 1–10. |
+| `DEPLOY_ARCHITECTURE` | `arm64` | Image and Lambda architecture; `x86_64` is also supported. |
+| `SANKALPA_TIMEZONE` | `America/Chicago` | Practice time zone; must match the iOS client. |
+| `DEPLOY_BUDGET_EMAIL` | Empty | Optional opt-in to account-wide monthly $5 budget alerts. This is not a spending cap. |
+
+The selected AWS profile must exist on the machine running the script. Install the AWS CLI if
+needed using the [official installation instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+For an existing access-key
+deployment identity, configure it interactively with the AWS CLI, using the same profile name as
+`DEPLOY_AWS_PROFILE` (for example, `default`):
+
+```sh
+aws configure --profile default
+```
+
+Enter that identity's access key, secret key, and Region in the prompts. For an IAM Identity Center
+identity, use `aws configure sso --profile default`, then `aws sso login --profile default` instead.
+You can also select an already configured profile by updating `DEPLOY_AWS_PROFILE`. These are
+local credential setup steps; they do not grant permissions. The identity still needs the deployment
+permissions described in the [operator prerequisites](scripts/README-aws.md#prerequisites).
+
+### API authentication and assistant settings
+
+| Variable | Suggested initial value | Where it is used |
+|---|---|---|
+| `SANKALPA_API_TOKEN` | A private random token, at least 32 characters | The backend checks `Authorization: Bearer <token>` on `/api/v1/` requests. AWS deployment rejects missing or placeholder tokens. |
+| `SANKALPA_ASSISTANT_ENABLED` | `false` until AI is needed | Enables `POST /api/v1/assistant/runs`; ordinary REST operations remain available when disabled. |
+| `SANKALPA_LLM_PROVIDER` | `openai` for real AI; `fake` for scripted development | Selects the model adapter when the assistant is enabled. |
+| `SANKALPA_LLM_API_KEY` | Your provider key | Used server-side to authenticate OpenAI model requests. Keep the copied key; do not put it in the iOS app. |
+| `SANKALPA_LLM_MODEL` | `gpt-6-luna` | Model ID passed to OpenAI when using the OpenAI adapter. |
+| `SANKALPA_LLM_REASONING_EFFORT` | `none` for `gpt-6-luna` | Reasoning setting sent with each model request. This pairing is required for this adapter's Chat Completions tool calls. |
+| `SANKALPA_LLM_TIMEOUT` | `PT20S` | ISO-8601 timeout per model request: 20 seconds. This is separate from the Lambda invocation timeout. |
+| `SANKALPA_ASSISTANT_RUNS_PER_MINUTE` | `2` | DynamoDB-backed deployments share a fixed-window assistant model-run limit across instances. |
+| `SANKALPA_ASSISTANT_RUNS_PER_DAY` | `20` | Shared model-run limit in DynamoDB-backed deployments; the day resets at midnight UTC. The SQLite workflow does not enforce this daily limit. |
+
+Generate a backend token on your own machine with `openssl rand -hex 32`, then paste its output as
+the value of `SANKALPA_API_TOKEN`. In the iOS app's service settings, enter that same token under
+**Authentication → Bearer token**. The app stores it in the device Keychain. This token protects
+your own API; the separate `SANKALPA_LLM_API_KEY` authenticates the backend's requests to OpenAI.
+
+To enable the real assistant, set the following while preserving your existing token and key:
+
+```dotenv
+SANKALPA_ASSISTANT_ENABLED=true
+SANKALPA_LLM_PROVIDER=openai
+SANKALPA_LLM_MODEL=gpt-6-luna
+SANKALPA_LLM_REASONING_EFFORT=none
+SANKALPA_LLM_TIMEOUT=PT20S
+SANKALPA_ASSISTANT_RUNS_PER_MINUTE=2
+SANKALPA_ASSISTANT_RUNS_PER_DAY=20
+```
+
+OpenAI documents that GPT-6 Luna supports function calling through Chat Completions only with
+`reasoning_effort=none`; see the [official model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna).
+Do not change the effort to `low` for this model with the current adapter. Changing models requires
+checking their tool-calling and reasoning compatibility and verifying access with your account.
+
+These quotas limit assistant runs that reach the model, not ordinary REST requests. In the
+DynamoDB workflow, confirmation, cancellation, and persisted-result recovery do not consume a
+model-run allowance. One run can make multiple model requests, so the quotas are not a hard token
+or dollar limit. OpenAI provider usage is billed separately from AWS usage.
+
+### Check and apply configuration
+
+Preview the selected deployment without contacting AWS or Docker or printing secrets:
+
+```sh
+./scripts/backend deploy --target aws --environment prod --plan
+```
+
+The plan parses configuration and checks basic deployment settings. It does not verify the token,
+authenticate AWS/OpenAI credentials, test model access, or check live AWS quotas. Actual deployment
+also validates the backend token and requires an OpenAI key when the OpenAI assistant is enabled.
+
+After the foundation exists and the practice has been imported or initialized, apply configuration:
+
+```sh
+./scripts/backend deploy --target aws --environment prod
+./scripts/backend test --target aws --environment prod
+```
+
+Saving `.env.prod` does not update a running Lambda. Deployment publishes the new runtime settings
+with a release. Stop/start preserve the deployed settings; they do not apply edited credentials.
+The smoke test checks readiness, authentication, and practice reads; it does not make a paid model
+request. Test the assistant separately after enabling it.
+
+For an existing SQLite practice, follow the [migration instructions](scripts/README-aws.md#aws-setup-and-data-preparation)
+before the first application deployment. Import requires an empty target; do not run `db init`
+before `db import`.
