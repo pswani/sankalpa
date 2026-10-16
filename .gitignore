@@ -12,6 +12,7 @@ backend/.env
 
 # Deployment secrets, local tooling and release state
 .env*
+**/.env*
 !.env*.example
 backend/.venv/
 backend/.tools/
