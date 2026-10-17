@@ -1,5 +1,8 @@
 /target/
 /.m2/
+/.tools/
+/.env.prod
+/dynamodb-local-metadata.json
 /data/*.db
 /data/*.db-*
 /logs/*.log
