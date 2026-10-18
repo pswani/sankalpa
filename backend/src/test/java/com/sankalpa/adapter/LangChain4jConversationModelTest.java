@@ -39,6 +39,19 @@ class LangChain4jConversationModelTest {
         assertThat(replayed).containsExactly(arguments, "{}");
     }
 
+    @Test void batchUnionSchemaSurvivesTheLangChainAdapterAndBudgetIsExplained() {
+        var registry=new com.sankalpa.adapter.in.conversation.FixedConversationToolRegistry(new ObjectMapper(),null,null);
+        var definition=registry.definitions(List.of("batch_sessions_v1")).stream().filter(t->t.name().equals("propose_log_sessions")).findFirst().orElseThrow();
+        AtomicReference<ChatRequest> sent=new AtomicReference<>();
+        ChatModel chat=new ChatModel(){@Override public ChatResponse doChat(ChatRequest request){sent.set(request);return ChatResponse.builder().aiMessage(AiMessage.from("Choose a time")).build();}};
+        var request=new ConversationModel.ModelRequest(List.of(new ConversationModel.Message("user","Record daily")),
+                new ConversationModel.Context("2026-10-17T18:00","America/Chicago",List.of()),List.of(definition),List.of(),2);
+        new LangChain4jConversationModel(chat,new ObjectMapper()).respond(request);
+        assertThat(sent.get().toolSpecifications()).hasSize(1);
+        assertThat(sent.get().toolSpecifications().getFirst().name()).isEqualTo("propose_log_sessions");
+        assertThat(sent.get().messages().getFirst().toString()).contains("Remaining tool calls: 2", "exact daily");
+    }
+
     private static ConversationModel.ModelRequest request(List<ConversationModel.ToolResult> results) {
         return new ConversationModel.ModelRequest(
                 List.of(new ConversationModel.Message("user", "How is my practice?")),

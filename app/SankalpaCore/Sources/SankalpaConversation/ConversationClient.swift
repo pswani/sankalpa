@@ -7,31 +7,41 @@ public struct AGUIClient: Sendable {
     private let baseURL: URL
     private let linkedServiceInstance: UUID?
     private let bearerToken: String?
+    private let batchSessions: Bool
     private let session: URLSession
     private let encoder = JSONEncoder()
 
-    public init(baseURL: URL, bearerToken: String? = nil, session: URLSession = .shared, linkedServiceInstance: UUID? = nil) {
+    public init(baseURL: URL, bearerToken: String? = nil, session: URLSession = .shared, linkedServiceInstance: UUID? = nil, batchSessions: Bool = false) {
+        self.batchSessions = batchSessions
         self.linkedServiceInstance = linkedServiceInstance
         self.baseURL = baseURL; self.bearerToken = bearerToken; self.session = session
+    }
+
+    func makeRequest(_ input: AGUI.RunAgentInput) throws -> URLRequest {
+        let url = baseURL.appending(path: "/api/v1/assistant/runs")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let bearerToken, !bearerToken.isEmpty {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
+        if let linkedServiceInstance {
+            request.setValue("1", forHTTPHeaderField: "Linked-Sankalpa-Version")
+            request.setValue(linkedServiceInstance.uuidString, forHTTPHeaderField: "Sankalpa-Service-Instance")
+        }
+        if batchSessions, linkedServiceInstance != nil {
+            request.setValue("1", forHTTPHeaderField: "X-Sankalpa-Assistant-Batch-Sessions")
+        }
+        request.httpBody = try encoder.encode(input)
+        return request
     }
 
     public func run(_ input: AGUI.RunAgentInput) -> AsyncThrowingStream<AGUI.Event, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let url = baseURL.appending(path: "/api/v1/assistant/runs")
-                    var request = URLRequest(url: url)
-                    request.httpMethod = "POST"
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    if let bearerToken, !bearerToken.isEmpty {
-                        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
-                    }
-                    if let linkedServiceInstance {
-                        request.setValue("1", forHTTPHeaderField: "Linked-Sankalpa-Version")
-                        request.setValue(linkedServiceInstance.uuidString, forHTTPHeaderField: "Sankalpa-Service-Instance")
-                    }
-                    request.httpBody = try encoder.encode(input)
+                    let request = try makeRequest(input)
                     let (bytes, response) = try await session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
                           http.value(forHTTPHeaderField: "Content-Type")?.contains("text/event-stream") == true

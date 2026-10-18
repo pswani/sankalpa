@@ -19,6 +19,10 @@ public final class PracticeHttp {
     public PracticeHttp(SankalpaUseCases service,ServiceInstanceIdentity identity,SessionCursorCodec cursors) {
         this.service=service;this.identity=identity;this.cursors=cursors;
     }
+    public void requireInstance(HttpHeaders headers) {
+        String value = headers.getFirst("Sankalpa-Service-Instance");
+        identity.require(value == null ? null : UUID.fromString(value));
+    }
     public PracticeContract contract(HttpHeaders headers) {
         String version=headers.getFirst("Linked-Sankalpa-Version");
         if(version==null)return PracticeContract.SINGLE_VOW_V1;

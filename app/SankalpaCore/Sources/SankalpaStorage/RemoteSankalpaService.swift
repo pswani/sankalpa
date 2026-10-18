@@ -99,6 +99,7 @@ public struct AssistantCapability: Equatable, Sendable {
     public let enabled: Bool
     public let profile: String
     public let authenticationRequired: Bool
+    public var batchSessionsVersion: Int = 0
 }
 
 /// Service-backed practice with a durable operation overlay. Session creates and deletes are
@@ -289,7 +290,8 @@ public final class RemoteSankalpaService {
         if let assistant = response.assistant {
             assistantCapability = AssistantCapability(enabled: assistant.enabled,
                 profile: assistant.aguiProfile,
-                authenticationRequired: assistant.authenticationRequired)
+                authenticationRequired: assistant.authenticationRequired,
+                batchSessionsVersion: response.assistantBatchSessions ?? 0)
         } else {
             assistantCapability = nil
         }

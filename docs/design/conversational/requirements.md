@@ -57,3 +57,21 @@ accepted into the product requirements; this document does not silently amend
 | CR-17–18 | [architecture.md](architecture.md), speech/privacy | Permission, disclosure, and log tests |
 | CR-19 | [user-journeys.md](user-journeys.md), unsupported action | Coordinator and model-eval tests |
 | CR-20 | [user-journeys.md](user-journeys.md), accessibility | UI accessibility journeys |
+
+## Batch-session requirements — October 17, 2026
+
+These extend the conversational scope and are implemented; local verification is recorded in the
+[implementation review](../conversational-batch-sessions/implementation-review.md).
+
+| ID | Requirement | Validation |
+|---|---|---|
+| CR-21 | One request can propose up to 30 performed sessions for one owner, with one exact preview and approval. | Counting fake plus persistence acceptance |
+| CR-22 | Daily range plans skip already satisfied days using complete linked contribution reads; explicit repeats remain distinct facts. | Linked/pagination/repeat fixtures |
+| CR-23 | A confirmed batch commits all new entries and its result atomically, or commits none; retries preserve identities. | Failure injection on both adapters |
+| CR-24 | Stale previews require fresh approval; dates, times, skipped days, and bounds are never silently changed. | Revision, clock, and 31/34-entry fixtures |
+| CR-25 | Unsupported clients cannot approve the new proposal; old proposals remain readable/replayable. | Capability and codec compatibility matrix |
+
+CR-04 now includes bounded multi-session proposals under the same confirmation boundary. These
+requirements do not add lifecycle automation or date-only domain facts. See the
+[batch design](../conversational-batch-sessions/README.md) for semantics, and its
+[review](../conversational-batch-sessions/review-and-dry-run.md) for dry-run evidence.

@@ -70,7 +70,7 @@ public final class ApiModels {
             LocalDateTime occurredAt) {}
 
     public record CapabilitiesResponse(int sessionCommandIdentity, int linkedSankalpaExtensions, UUID serviceInstanceId,
-                                       AssistantCapability assistant) {}
+                                       AssistantCapability assistant, int assistantBatchSessions) {}
     public record AssistantCapability(boolean enabled, String aguiProfile,
                                       int maxMessages, int maxEventBytes,
                                       int maxRequestBytes, boolean authenticationRequired) {}

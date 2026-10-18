@@ -48,6 +48,7 @@ public interface SankalpaUseCases {
     List<SankalpaId> contributors(Session session);
     CursorPage cursorSessions(SankalpaId target, LocalDate from, LocalDate until,
             SessionBoundary after, int size, PracticeContract contract);
+    default Sankalpa lockForSessionBatch(SankalpaId id, PracticeContract contract) { return detail(id, contract); }
     <T> PracticeSnapshot<T> writeSnapshot(java.util.function.Supplier<T> query);
     <T> PracticeSnapshot<T> readSnapshot(Long expectedRevision, java.util.function.Supplier<T> query);
 }

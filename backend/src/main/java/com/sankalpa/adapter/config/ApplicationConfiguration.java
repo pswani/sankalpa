@@ -57,8 +57,12 @@ public class ApplicationConfiguration {
     @Bean
     ProposalService proposalService(ProposalRepository proposals, SankalpaService sankalpas,
                                     SankalpaClock clock,
+                                    com.sankalpa.adapter.out.persistence.ServiceInstanceIdentity identity,
+                                    org.springframework.beans.factory.ObjectProvider<com.sankalpa.adapter.out.persistence.BatchProposalMigration> migration,
+                                    @Value("${sankalpa.timezone}") String timezone,
                                     @Value("${sankalpa.assistant.proposal-lifetime:PT30M}") Duration lifetime) {
-        return new ProposalService(proposals, sankalpas, clock, lifetime);
+        migration.getIfAvailable();
+        return new ProposalService(proposals, sankalpas, clock, lifetime, identity::value, timezone);
     }
 
     @Bean

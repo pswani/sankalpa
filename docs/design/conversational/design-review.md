@@ -162,3 +162,12 @@ These are implementation prerequisites with already-defined answers:
 
 No additional framework, agent runtime, MCP server, message broker, vector store, or persistence
 service is required to begin implementation.
+
+## Batch-session extension — October 17, 2026
+
+A new Analyze → Design → Review with dry run → Fix cycle is recorded in
+[batch review and dry run](../conversational-batch-sessions/review-and-dry-run.md).
+It revises single-entry scope and the model-round budget without permitting direct model mutation.
+The review identifies rollback ordering, DynamoDB capacity, stale preview, linked contribution,
+client negotiation, and exact-time requirements. This is a reviewed implementation design,
+not evidence that batch behavior has shipped.

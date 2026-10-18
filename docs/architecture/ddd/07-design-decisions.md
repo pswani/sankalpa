@@ -372,3 +372,19 @@ suppression before contribution filtering; scope repeat confirmation to the seri
 Partial rollout must not let owner-only semantics silently mutate a linked series.
 
 Details of these decisions are in [Linked extensions](11-linked-extensions.md).
+
+---
+
+## DD-33 — Confirm One Bounded Session Plan, Reuse Identified Commands
+
+**Decision.** Interpret multi-session intent into one immutable proposal of at most 30 entries.
+After approval, invoke existing identified session commands in one atomic application transaction.
+The model does not execute mutations. Daily range satisfaction uses complete linked contributions;
+explicit repeated sessions retain distinct IDs. A changed practice revision requires a new preview.
+
+**Why.** Thirty independent model rounds/approvals add latency and failure paths. One bounded plan
+reuses domain rules and retry identities, fits both local SQLite and current DynamoDB persistence,
+and avoids partial-success infrastructure. No session is copied between linked vows.
+
+**Limits.** Exact times remain required by the current domain; larger requests need separately
+approved chunks. See [design and review](../../design/conversational-batch-sessions/README.md).

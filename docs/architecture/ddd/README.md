@@ -152,3 +152,7 @@ The cross-system mechanics behind these rows are specified in
 
 Linked-series changes to the earlier per-owner read and client assumptions are specified in
 [Linked extensions](11-linked-extensions.md).
+
+The implemented [conversational batch-session amendment](../../design/conversational-batch-sessions/README.md)
+adds bounded application orchestration over existing session commands (DD-33), with no new domain
+aggregate, event infrastructure, session copying, or bulk persistence endpoint.

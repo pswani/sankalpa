@@ -19,15 +19,22 @@ class DynamoPersistenceTest {
     static class MemoryStore implements DocumentStore {
         final Map<String, ObjectNode> data = new TreeMap<>();
         Runnable queryHook;
+        List<Change> lastCommit = List.of();
+        boolean loseCommitResponse;
+        boolean conflictOnce;
         synchronized public ObjectNode get(String key) { var n = data.get(key); return n == null ? null : n.deepCopy(); }
         synchronized public Map<String, ObjectNode> query(String prefix) {
             Map<String, ObjectNode> result = new TreeMap<>(); data.forEach((k,v) -> { if (k.startsWith(prefix)) result.put(k, v.deepCopy()); });
             if (queryHook != null) { var hook = queryHook; queryHook = null; hook.run(); } return result;
         }
         synchronized public void commit(List<Change> changes) {
+            if (conflictOnce) { conflictOnce = false; throw new Conflict(); }
+            if (changes.size() > 100) throw new AssertionError("Transaction action overflow");
+            lastCommit = List.copyOf(changes);
             if (changes.stream().map(Change::key).distinct().count() != changes.size()) throw new AssertionError("Duplicate transaction keys");
             for (var c : changes) if (!Objects.equals(data.get(c.key()), c.before())) throw new Conflict();
             for (var c : changes) if (!c.checkOnly()) { if (c.after() == null) data.remove(c.key()); else data.put(c.key(), c.after().deepCopy()); }
+            if (loseCommitResponse) { loseCommitResponse = false; throw new PracticeException("INDETERMINATE", "Lost response after commit"); }
         }
     }
     final ObjectMapper json = new ObjectMapper().findAndRegisterModules().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -46,6 +53,58 @@ class DynamoPersistenceTest {
         proposals = new TransactionalConversationUseCases(new ProposalService(repo,core,clock,Duration.ofMinutes(30)),tx);
     }
     Sankalpa source() { var v = service.declare("Sit","Practice",ActionType.MEDITATION,now.toLocalDate().minusDays(10),PeriodUnit.DAY,1,40); return service.begin(v.id(),now.minusDays(10)); }
+    BatchSessionPlan batchPlan() {
+        return new BatchSessionPlan(BatchSessionPlan.Mode.DAILY_RANGE, now.toLocalDate().minusDays(30),
+                now.toLocalDate().minusDays(1), LocalTime.of(8,0), null);
+    }
+    Sankalpa batchTarget() {
+        var v=service.declare("Observe","",ActionType.OBSERVANCE,now.toLocalDate().minusDays(40),PeriodUnit.DAY,1,100);
+        return service.begin(v.id(),now.minusDays(40),PracticeContract.LINKED_V1);
+    }
+    @Test void thirtySessionConfirmationUsesNinetyFiveActionsIncludingFenceAndReplaysLostResponse() {
+        var v=batchTarget(); var thread=UUID.randomUUID();
+        var p=proposals.proposeSessions(thread,UUID.randomUUID(),v.id(),batchPlan(),PracticeContract.LINKED_V1);
+        var fence=json.createObjectNode().put("leaseUntil",java.time.Instant.now().getEpochSecond()+120);
+        store.data.put("LEASE#test",fence);tx.bindFence(new DocumentStore.Change("LEASE#test",fence,null,true));
+        var confirmation=UUID.randomUUID();store.loseCommitResponse=true;
+        assertThatThrownBy(()->proposals.confirm(thread,p.id(),confirmation,PracticeContract.LINKED_V1,true)).isInstanceOf(PracticeException.class);
+        assertThat(store.lastCommit).hasSize(95);
+        assertThat(store.lastCommit.stream().filter(DocumentStore.Change::checkOnly).count()).isEqualTo(1);
+        assertThat(store.lastCommit.stream().filter(c->c.key().startsWith("SESSION#")).count()).isEqualTo(30);
+        assertThat(store.lastCommit.stream().filter(c->c.after()!=null).mapToLong(c->c.after().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length).sum()).isLessThan(4*1024*1024);
+        tx.clearFence();
+        var replay=proposals.confirm(thread,p.id(),confirmation,PracticeContract.LINKED_V1,true);
+        assertThat(replay.replay()).isTrue();assertThat(replay.proposal().batchResult().sessionIds()).hasSize(30);
+        assertThat(service.totalSessionCount(v.id())).isEqualTo(30);
+        // Read through a fresh codec/unit of work: this is persisted identity, not an object cache.
+        var other=new DynamoUnitOfWork(store); var decoded=new DynamoRepository(other,json);
+        assertThat(other.read(()->decoded.findByIdForUpdate(p.id())).orElseThrow()).isEqualTo(replay.proposal());
+    }
+    @Test void batchDomainRefusalRollsBackEveryStagedDocumentAndRevision() {
+        var v=batchTarget();var p=proposals.proposeSessions(UUID.randomUUID(),UUID.randomUUID(),v.id(),batchPlan(),PracticeContract.LINKED_V1);
+        long revision=tx.read(repo::readRevision); int[] calls={0};
+        var core=new SankalpaService(repo,repo,new SankalpaClock(){public LocalDateTime now(){return now;}public LocalDate today(){return now.toLocalDate();}});
+        var failing=(SankalpaUseCases)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{SankalpaUseCases.class},(proxy,method,args)->{
+            if(method.getName().equals("logSession") && ++calls[0]==17) throw new DomainException("TEST_REFUSAL","Injected");
+            try{return method.invoke(core,args);}catch(java.lang.reflect.InvocationTargetException failure){throw failure.getCause();}
+        });
+        var clock=new SankalpaClock(){public LocalDateTime now(){return now;}public LocalDate today(){return now.toLocalDate();}};
+        var failingProposals=new TransactionalConversationUseCases(new ProposalService(repo,failing,clock,Duration.ofMinutes(30)),tx);
+        var result=failingProposals.confirm(p.threadId(),p.id(),UUID.randomUUID(),PracticeContract.LINKED_V1,true);
+        assertThat(result.proposal().status()).isEqualTo(Proposal.Status.REJECTED);assertThat(calls[0]).isEqualTo(17);
+        assertThat(store.query("SESSION#")).isEmpty();assertThat(store.query("OWNER#")).isEmpty();assertThat(store.query("JOURNAL#")).isEmpty();
+        assertThat(tx.read(repo::readRevision)).isEqualTo(revision);
+    }
+    @Test void batchContentionRetriesTheSameIdentitiesAndExpiredLeaseCommitsNothing() {
+        var v=batchTarget();var p=proposals.proposeSessions(UUID.randomUUID(),UUID.randomUUID(),v.id(),batchPlan(),PracticeContract.LINKED_V1);
+        var fence=json.createObjectNode().put("leaseUntil",0);store.data.put("LEASE#test",fence);
+        tx.bindFence(new DocumentStore.Change("LEASE#test",fence,null,true));
+        assertThatThrownBy(()->proposals.confirm(p.threadId(),p.id(),UUID.randomUUID(),PracticeContract.LINKED_V1,true)).isInstanceOf(ConversationFailure.class);
+        assertThat(store.query("SESSION#")).isEmpty();tx.clearFence();store.conflictOnce=true;
+        var result=proposals.confirm(p.threadId(),p.id(),UUID.randomUUID(),PracticeContract.LINKED_V1,true);
+        assertThat(result.proposal().status()).isEqualTo(Proposal.Status.EXECUTED);
+        assertThat(service.totalSessionCount(v.id())).isEqualTo(30);
+    }
     @Test void linkedFactsTombstonesAndRevisionSurviveNewAdapters() {
         var root = source(); var id = SessionId.newId();
         service.logSession(root.id(),id,now.minusDays(1));

@@ -198,3 +198,14 @@ and outcomes use one contribution helper; combined totals use a union of session
 route deletion from any contributing view to the immutable logging owner exposed on each row.
 The extension factory supplies creation rules; the application checks existing children and
 commits creation with inherited history. No command fans out session writes.
+
+## Conversational batch orchestration
+
+The [batch-session design](../../design/conversational-batch-sessions/README.md) adds an application
+orchestration operation, not a new domain session shape or bulk REST endpoint. One approved plan
+invokes `LogSession` up to 30 times in one `UseCaseTransactions.write` boundary. Each entry retains
+its own immutable logging owner and stable identity. Failure rolls back all entries; proposal
+resolution commits with the successful facts. Recording a refusal must happen after rollback.
+Daily satisfaction checks reuse linked contribution reads and never replace UUID replay identity.
+Existing “no command fans out session writes” means no copying across linked vows; this proposal
+records distinct performed facts under one owner and does not change that rule.

@@ -56,6 +56,17 @@ public final class TransactionalConversationUseCases implements ConversationUseC
         return inTransaction(() -> delegate.confirm(threadId, proposalId, confirmationId));
     }
 
+    @Override public Proposal proposeSessions(UUID thread, UUID run, SankalpaId id,
+            com.sankalpa.application.conversation.BatchSessionPlan plan, com.sankalpa.application.PracticeContract contract) {
+        return inTransaction(() -> delegate.proposeSessions(thread, run, id, plan, contract));
+    }
+    @Override public Resolution confirm(UUID thread, UUID proposal, UUID confirmation,
+            com.sankalpa.application.PracticeContract contract, boolean batchSupported) {
+        try { return inTransaction(() -> delegate.confirm(thread, proposal, confirmation, contract, batchSupported)); }
+        catch (com.sankalpa.application.conversation.BatchRejection failure) {
+            return inTransaction(() -> delegate.rejectBatch(thread, proposal, confirmation, failure.code()));
+        }
+    }
     @Override public Proposal proposeSession(UUID threadId,UUID runId,SankalpaId id,LocalDateTime at,String summary,
             List<SankalpaId> alternatives,com.sankalpa.application.PracticeContract contract) {
         return inTransaction(()->delegate.proposeSession(threadId,runId,id,at,summary,alternatives,contract));

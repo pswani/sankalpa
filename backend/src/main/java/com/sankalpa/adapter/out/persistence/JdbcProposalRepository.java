@@ -73,8 +73,7 @@ public class JdbcProposalRepository implements ProposalRepository {
 
     private Proposal map(ResultSet rs) throws SQLException {
         Proposal.Kind kind = Proposal.Kind.valueOf(rs.getString("kind"));
-        Class<? extends Proposal.Payload> payloadType = kind == Proposal.Kind.LOG_SESSION
-                ? Proposal.LogSessionPayload.class : Proposal.DeclareSankalpaPayload.class;
+        Class<? extends Proposal.Payload> payloadType = Proposal.payloadType(kind, rs.getInt("schema_version"));
         try {
             return new Proposal(UUID.fromString(rs.getString("proposal_id")),
                     UUID.fromString(rs.getString("thread_id")),
@@ -91,7 +90,12 @@ public class JdbcProposalRepository implements ProposalRepository {
     }
 
     private String payloadJson(Proposal p) {
-        try { return json.writeValueAsString(p.payload()); }
+        try {
+            String payload = json.writeValueAsString(p.payload());
+            if (payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 48 * 1024)
+                throw new com.sankalpa.application.conversation.ConversationFailure("BATCH_READ_INCOMPLETE", "The preview is too large. Choose a smaller range.");
+            return payload;
+        }
         catch (JsonProcessingException e) { throw new IllegalStateException("Cannot encode proposal", e); }
     }
 

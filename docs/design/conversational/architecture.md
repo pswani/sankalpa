@@ -55,7 +55,9 @@ as one `TEXT_MESSAGE_CONTENT` event in v1.
 - Builds application-owned instructions and tool specifications.
 - Before model invocation, replays a proposal already created by the same `runId`; otherwise rejects
   ordinary input when the thread has a pending proposal.
-- Runs at most three model rounds and three total model tool requests.
+- Batch-session design amendment: allow three model tool requests plus a fourth text-only
+  model round, within the same deadline; see [batch orchestration](../conversational-batch-sessions/README.md).
+  The implementation now enforces this budget and a shared provider deadline.
 - Accepts at most one tool request in a model response. If a response contains multiple requests,
   it executes none and ends with `ASSISTANT_COULD_NOT_INTERPRET`.
 - Rejects unknown, malformed, or disallowed tool requests.
@@ -487,7 +489,7 @@ Initial configurable bounds:
 | Limit | Initial value |
 |---|---:|
 | Active runs per thread | 1 |
-| Model rounds per run | 3 |
+| Model rounds per run | 4 proposed: up to 3 tool rounds plus final text-only round |
 | Model tool requests per run | 3, one per model response |
 | Conversation messages sent to model | 20 |
 | Model/tool wall-clock deadline | 30 seconds |
@@ -521,3 +523,18 @@ assistant reports unavailable.
 Add MCP only when another process or independent AI host must discover Sankalpa capabilities. The
 future adapter may expose read and proposal operations, but it must call `ProposalService` and
 `SankalpaUseCases` exactly as the AG-UI adapter does. No MCP-specific domain logic is allowed.
+
+## Batch-session amendment — October 17, 2026
+
+[Conversational batch session logging](../conversational-batch-sessions/README.md) specifies one
+`LOG_SESSIONS` proposal with up to 30 entries and one confirmation. It supersedes single-session-only
+assumptions for this new kind. Existing single-session and declaration contracts remain intact.
+One tool request per model response remains enforced; application code expands one plan into
+multiple existing `logSession` calls inside one atomic persistence boundary. A batch is not multiple
+model tool requests. Its failure handler must roll back all entries before recording rejection in
+a separate ordered transaction. A stored practice revision prevents execution of a changed preview.
+
+The amendment also specifies client negotiation, proposal schema v2, complete linked contribution
+reads, and adapter action/byte limits. SQLite and the deployed AWS DynamoDB adapter must both pass
+acceptance. Earlier SQLite-only deployment descriptions in this original design are historical;
+see [AWS deployment](../aws/README.md). No model or external HTTP call belongs inside confirmation.

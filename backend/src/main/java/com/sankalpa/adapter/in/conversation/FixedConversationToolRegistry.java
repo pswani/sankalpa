@@ -24,7 +24,7 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
     private static final Logger log = LoggerFactory.getLogger(FixedConversationToolRegistry.class);
     private static final Set<String> SERVER_TOOLS = Set.of(
             "get_sankalpa", "get_recent_sessions", "get_period_summary",
-            "propose_log_session", "propose_declare_sankalpa");
+            "propose_log_session", "propose_declare_sankalpa", "propose_log_sessions");
     private static final Set<String> FRONTEND_TOOLS = Set.of(
             "navigate_to_sankalpa", "open_sankalpa_list");
     private final ObjectMapper json;
@@ -50,6 +50,14 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
                 definition("propose_declare_sankalpa", "Create a non-mutating declaration proposal.", """
                     {"type":"object","properties":{"title":{"type":"string","maxLength":200},"description":{"type":"string","maxLength":2000},"actionType":{"type":"string","enum":["MEDITATION","PRANAYAMA","PHYSICAL_ACTIVITY","OBSERVANCE"]},"startDate":{"type":"string"},"periodUnit":{"type":"string","enum":["DAY","WEEK","MONTH","YEAR"]},"timesPerPeriod":{"type":"integer"},"periodCount":{"type":["integer","null"]},"inferredFields":{"type":"array","items":{"type":"string"}}},"required":["title","description","actionType","startDate","periodUnit","timesPerPeriod","periodCount","inferredFields"],"additionalProperties":false}
                     """)));
+        if (clientTools.contains("batch_sessions_v1")) {
+            definitions.add(definition("propose_log_sessions", "Propose up to 30 performed sessions for one Sankalpa, confirmed once. Daily ranges ensure one contributed session per date; explicit timestamps add distinct sessions. Exact times required. Never truncate a range.", """
+                {"type":"object","properties":{"sankalpaId":{"type":"string","format":"uuid"},"plan":{"anyOf":[
+                {"type":"object","properties":{"mode":{"type":"string","enum":["DAILY_RANGE"]},"from":{"type":"string"},"through":{"type":"string"},"localTime":{"type":"string"}},"required":["mode","from","through","localTime"],"additionalProperties":false},
+                {"type":"object","properties":{"mode":{"type":"string","enum":["EXPLICIT_TIMESTAMPS"]},"occurredAt":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":30}},"required":["mode","occurredAt"],"additionalProperties":false}
+                ]}},"required":["sankalpaId","plan"],"additionalProperties":false}
+                """));
+        }
         if (clientTools.contains("navigate_to_sankalpa")) {
             definitions.add(definition("navigate_to_sankalpa", "Open one known Sankalpa in the app.",
                     objectSchema("sankalpaId")));
@@ -72,9 +80,11 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
             return executeValidated(call, threadId, runId, context, clientTools,contract);
         } catch (ConversationFailure failure) {
             throw failure;
-        } catch (DomainException | IllegalArgumentException failure) {
+        } catch (DomainException | IllegalArgumentException | java.time.DateTimeException failure) {
             log.warn("Assistant tool contract rejected ({}): {}", call == null ? "unknown" : call.name(),
                     failure.getMessage());
+            if (call != null && "propose_log_sessions".equals(call.name()))
+                throw new ConversationFailure("BATCH_INVALID_ENTRY", "Specify valid ISO dates and exact local times. Nothing was changed.");
             invalid("Tool arguments violate the Sankalpa contract");
             return null;
         }
@@ -99,6 +109,10 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
         }
         if (!SERVER_TOOLS.contains(call.name())) invalid("Unknown tool");
         return switch (call.name()) {
+            case "propose_log_sessions" -> {
+                if (!clientTools.contains("batch_sessions_v1")) throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Update the app to propose multiple sessions.");
+                yield proposeSessions(args, threadId, runId, context, contract);
+            }
             case "get_sankalpa" -> readSankalpa(args,contract);
             case "get_recent_sessions" -> recentSessions(args,contract);
             case "get_period_summary" -> periodSummary(args,contract);
@@ -106,6 +120,38 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
             case "propose_declare_sankalpa" -> proposeDeclaration(args, threadId, runId);
             default -> throw new AssertionError(call.name());
         };
+    }
+
+    private Outcome proposeSessions(JsonNode args, UUID thread, UUID run, ConversationModel.Context context,
+            com.sankalpa.application.PracticeContract contract) {
+        exact(args, Set.of("sankalpaId", "plan"));
+        var id = SankalpaId.parse(requiredText(args, "sankalpaId"));
+        if (context.sankalpas().stream().noneMatch(s -> s.id().equals(id.toString()))) invalid("Unknown Sankalpa id");
+        JsonNode node = args.get("plan");
+        if (node == null || !node.isObject()) invalid("Invalid batch plan");
+        BatchSessionPlan plan;
+        if ("DAILY_RANGE".equals(requiredText(node, "mode"))) {
+            exact(node, Set.of("mode", "from", "through", "localTime"));
+            plan = new BatchSessionPlan(BatchSessionPlan.Mode.DAILY_RANGE,
+                    LocalDate.parse(requiredText(node, "from")), LocalDate.parse(requiredText(node, "through")),
+                    java.time.LocalTime.parse(requiredText(node, "localTime")), null);
+        } else {
+            if (!"EXPLICIT_TIMESTAMPS".equals(requiredText(node, "mode"))) invalid("Unknown batch mode");
+            exact(node, Set.of("mode", "occurredAt"));
+            var values = node.get("occurredAt");
+            if (values == null || !values.isArray() || values.size() > 30) {
+                throw new ConversationFailure("BATCH_TOO_LARGE", "Specify 1–30 exact timestamps.");
+            }
+            var times = new ArrayList<LocalDateTime>();
+            for (var value : values) {
+                if (!value.isTextual()) invalid("Invalid batch timestamp");
+                times.add(LocalDateTime.parse(value.textValue()));
+            }
+            plan = new BatchSessionPlan(BatchSessionPlan.Mode.EXPLICIT_TIMESTAMPS, null, null, null, times);
+        }
+        Proposal proposal = proposals.proposeSessions(thread, run, id, plan, contract);
+        return proposal == null ? new ReadResult("{\"allDaysRecorded\":true,\"message\":\"All requested days are already recorded. No changes needed.\"}")
+                : new ProposalResult(proposal);
     }
 
     private Outcome readSankalpa(JsonNode args,com.sankalpa.application.PracticeContract contract) {

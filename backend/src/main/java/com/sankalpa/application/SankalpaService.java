@@ -337,6 +337,9 @@ public class SankalpaService implements SankalpaUseCases {
         return new CursorPage(eligible.subList(0, Math.min(size, eligible.size())), eligible.size() > size);
     }
 
+    @Override public Sankalpa lockForSessionBatch(SankalpaId id, PracticeContract contract) {
+        var target = locked(id); checkContract(target, contract); return target;
+    }
     @Override public <T> PracticeSnapshot<T> writeSnapshot(java.util.function.Supplier<T> query) {
         T result = query.get();
         return new PracticeSnapshot<>(sankalpas.readRevision(), result);

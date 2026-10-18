@@ -517,3 +517,13 @@ emulation or the Console Test button as proof of production HTTP behavior.
 | AWS-027–AWS-028 | 3, 7, 8, 13 |
 | AWS-029–AWS-031 | 2, 11, 12 |
 | AWS-032 | 13 and the Console guide |
+
+## Conversational batch-session extension — October 17, 2026
+
+The [batch design](../conversational-batch-sessions/README.md) requires one atomic DynamoDB unit of
+work for up to 30 session commands plus proposal resolution and run fencing. Current writes are
+three distinct documents per session; 30 new entries plus four resolution/metadata actions and
+one fence total 95 actions. Adapter tests must assert actual distinct keys and serialized byte
+limits, and fail closed if the write layout exceeds capacity. Do not split the commit or invoke
+REST endpoints from inside the transaction. Preserve existing lease/ownership fencing and stable
+service-instance binding. This is implemented and verified against DynamoDB Local; it does not change production deployment acceptance claims.

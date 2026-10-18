@@ -134,11 +134,13 @@ public final class DynamoRepository implements SankalpaRepository, SessionReposi
     private Proposal proposal(ObjectNode n) {
         var p = decode(n, StoredProposal.class);
         try {
-            Proposal.Payload payload = p.kind() == Proposal.Kind.LOG_SESSION ? json.treeToValue(p.payload(), Proposal.LogSessionPayload.class) : json.treeToValue(p.payload(), Proposal.DeclareSankalpaPayload.class);
+            Proposal.Payload payload = json.treeToValue(p.payload(), Proposal.payloadType(p.kind(), p.schemaVersion()));
             return new Proposal(p.id(), p.threadId(), p.sourceRunId(), p.kind(), p.schemaVersion(), payload, p.status(), p.confirmationId(), p.resultResourceId(), p.failureCode(), p.createdAt(), p.expiresAt(), p.resolvedAt());
         } catch (Exception failure) { throw new IllegalStateException("Invalid proposal payload"); }
     }
     private void persist(Proposal p) {
+        if (json.valueToTree(p.payload()).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 48 * 1024)
+            throw new ConversationFailure("BATCH_READ_INCOMPLETE", "The preview is too large. Choose a smaller range.");
         tx.put("PROPOSAL#" + p.id(), encode(new StoredProposal(p.id(), p.threadId(), p.sourceRunId(), p.kind(), p.schemaVersion(), json.valueToTree(p.payload()), p.status(), p.confirmationId(), p.resultResourceId(), p.failureCode(), p.createdAt(), p.expiresAt(), p.resolvedAt())));
     }
     public void insert(Proposal p) {

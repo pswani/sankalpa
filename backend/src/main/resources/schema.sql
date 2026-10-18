@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS assistant_proposal (
     proposal_id VARCHAR(36) PRIMARY KEY,
     thread_id VARCHAR(36) NOT NULL,
     source_run_id VARCHAR(36) NOT NULL UNIQUE,
-    kind VARCHAR(32) NOT NULL CHECK (kind IN ('LOG_SESSION', 'DECLARE_SANKALPA')),
+    kind VARCHAR(32) NOT NULL CHECK (kind IN ('LOG_SESSION', 'DECLARE_SANKALPA', 'LOG_SESSIONS')),
     schema_version INTEGER NOT NULL,
     payload_json TEXT NOT NULL,
     status VARCHAR(16) NOT NULL CHECK (status IN ('PENDING', 'EXECUTED', 'CANCELLED', 'EXPIRED', 'REJECTED')),

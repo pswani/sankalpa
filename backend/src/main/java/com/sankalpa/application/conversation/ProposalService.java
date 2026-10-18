@@ -24,9 +24,18 @@ public final class ProposalService implements ConversationUseCases {
     private final SankalpaUseCases sankalpas;
     private final SankalpaClock clock;
     private final Duration lifetime;
+    private final java.util.function.Supplier<UUID> serviceInstance;
+    private final String timezone;
 
     public ProposalService(ProposalRepository proposals, SankalpaUseCases sankalpas,
                            SankalpaClock clock, Duration lifetime) {
+        this(proposals, sankalpas, clock, lifetime, () -> new UUID(0, 0), "UTC");
+    }
+
+    public ProposalService(ProposalRepository proposals, SankalpaUseCases sankalpas,
+            SankalpaClock clock, Duration lifetime, java.util.function.Supplier<UUID> serviceInstance,
+            String timezone) {
+        this.serviceInstance = serviceInstance; this.timezone = timezone;
         this.proposals = proposals;
         this.sankalpas = sankalpas;
         this.clock = clock;
@@ -127,7 +136,15 @@ public final class ProposalService implements ConversationUseCases {
         return confirm(threadId,proposalId,confirmationId,com.sankalpa.application.PracticeContract.SINGLE_VOW_V1);
     }
     @Override public Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId, com.sankalpa.application.PracticeContract contract) {
+        return confirm(threadId, proposalId, confirmationId, contract, false);
+    }
+    @Override public Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId,
+            com.sankalpa.application.PracticeContract contract, boolean batchSupported) {
         Proposal proposal = lockedOwned(threadId, proposalId);
+        if (proposal.kind() == Proposal.Kind.LOG_SESSIONS) {
+            if (!batchSupported) throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Update the app to confirm multiple sessions.");
+            return confirmBatch(proposal, confirmationId, contract);
+        }
         if (proposal.status() == Proposal.Status.EXECUTED
                 && confirmationId.equals(proposal.confirmationId())) return new Resolution(proposal, true);
         if (proposal.status() == Proposal.Status.EXPIRED) return new Resolution(proposal, true);
@@ -160,6 +177,119 @@ public final class ProposalService implements ConversationUseCases {
         }
     }
 
+    @Override public Proposal proposeSessions(UUID thread, UUID run, SankalpaId id, BatchSessionPlan plan,
+            com.sankalpa.application.PracticeContract contract) {
+        Proposal replay = findBySourceRunId(run);
+        if (replay != null) return replay;
+        rejectPending(thread);
+        var times = plan.expand();
+        var target = sankalpas.detail(id, contract);
+        var now = clock.now();
+        // Complete contributing reads under the same outer snapshot as the revision and proposal.
+        long revision = sankalpas.readSnapshot(null, () -> null).revision();
+        var existing = readContributions(id, times.getFirst().toLocalDate(), times.getLast().toLocalDate(), contract);
+        var entries = new java.util.ArrayList<Proposal.BatchEntry>();
+        var skipped = new java.util.ArrayList<Proposal.SkippedDay>();
+        var repeats = new java.util.ArrayList<LocalDateTime>();
+        for (var at : times) {
+            var sameDay = existing.stream().filter(s -> s.occurredAt().toLocalDate().equals(at.toLocalDate())).toList();
+            var sessionId = SessionId.newId();
+            try { target.validateSessionAt(sessionId, at, now); }
+            catch (DomainException refusal) {
+                throw new ConversationFailure("BATCH_INVALID_ENTRY", "Cannot record " + at + " (" + refusal.code() + "). Correct the request; nothing was changed.");
+            }
+            if (plan.mode() == BatchSessionPlan.Mode.DAILY_RANGE && !sameDay.isEmpty()) {
+                skipped.add(new Proposal.SkippedDay(at.toLocalDate(), sameDay.stream().map(Session::id).toList()));
+                continue;
+            }
+            entries.add(new Proposal.BatchEntry(sessionId, at));
+            if (existing.stream().anyMatch(s -> s.occurredAt().equals(at))) repeats.add(at);
+        }
+        if (entries.isEmpty()) return null;
+        var payload = new Proposal.LogSessionsPayload(id, target.title().value(), target.seriesId(), contract,
+                serviceInstance.get(), timezone, plan, revision, times.size(), entries, skipped, repeats);
+        var proposal = new Proposal(UUID.randomUUID(), thread, run, Proposal.Kind.LOG_SESSIONS, 2,
+                payload, Proposal.Status.PENDING, null, null, null, now, now.plus(lifetime), null);
+        proposals.insert(proposal);
+        return proposal;
+    }
+
+    private List<Session> readContributions(SankalpaId id, LocalDate from, LocalDate through,
+            com.sankalpa.application.PracticeContract contract) {
+        var existing = new java.util.ArrayList<Session>();
+        if (contract == com.sankalpa.application.PracticeContract.SINGLE_VOW_V1) {
+            long total = -1;
+            for (int pageNumber = 0; ; pageNumber++) {
+                var page = sankalpas.sessions(id, from, through, pageNumber, 200);
+                if (total < 0) total = page.totalElements();
+                if (total > 10_000 || total != page.totalElements()) incompleteHistory();
+                existing.addAll(page.content());
+                if (pageNumber + 1 >= page.totalPages()) break;
+                if (page.content().isEmpty() || existing.size() > 10_000) incompleteHistory();
+            }
+            if (existing.size() != total) incompleteHistory();
+        } else {
+            com.sankalpa.application.SessionBoundary after = null;
+            do {
+                var page = sankalpas.cursorSessions(id, from, through, after, 200, contract);
+                existing.addAll(page.content());
+                if (existing.size() > 10_000 || (page.hasMore() && page.content().isEmpty())) incompleteHistory();
+                if (!page.hasMore()) break;
+                var last = page.content().getLast();
+                var next = new com.sankalpa.application.SessionBoundary(last.occurredAt(), last.id());
+                if (next.equals(after)) incompleteHistory();
+                after = next;
+            } while (true);
+        }
+        if (existing.stream().map(Session::id).distinct().count() != existing.size()) incompleteHistory();
+        return existing;
+    }
+    private static void incompleteHistory() {
+        throw new ConversationFailure("BATCH_READ_INCOMPLETE", "History could not be read completely. Choose a smaller range.");
+    }
+
+    private Resolution confirmBatch(Proposal proposal, UUID confirmation,
+            com.sankalpa.application.PracticeContract contract) {
+        var p = (Proposal.LogSessionsPayload) proposal.payload();
+        if (!p.serviceInstanceId().equals(serviceInstance.get()) || p.contract() != contract)
+            throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Use the original service and practice contract to resolve this proposal.");
+        if ((proposal.status() == Proposal.Status.EXECUTED || proposal.status() == Proposal.Status.REJECTED)
+                && confirmation.equals(proposal.confirmationId())) return new Resolution(proposal, true);
+        if (proposal.status() == Proposal.Status.EXPIRED) return new Resolution(proposal, true);
+        if (proposal.status() != Proposal.Status.PENDING) alreadyResolved();
+        if (isExpired(proposal)) {
+            var expired = expire(proposal); proposals.update(expired); return new Resolution(expired, false);
+        }
+        var target = sankalpas.lockForSessionBatch(p.sankalpaId(), contract);
+        if (sankalpas.readSnapshot(null, () -> null).revision() != p.baseRevision())
+            throw new BatchRejection("PROPOSAL_STALE");
+        // Refusals MUST escape the transaction, even if an earlier entry already wrote data.
+        try {
+            var now = clock.now();
+            for (var entry : p.entries()) target.validateSessionAt(entry.sessionId(), entry.occurredAt(), now);
+            clock.at(now, () -> {
+                for (var entry : p.entries())
+                    sankalpas.logSession(p.sankalpaId(), entry.sessionId(), entry.occurredAt(), contract);
+                return null;
+            });
+        } catch (DomainException failure) { throw new BatchRejection(failure.code()); }
+        var executed = proposal.resolve(Proposal.Status.EXECUTED, confirmation, null, null, clock.now());
+        proposals.update(executed);
+        return new Resolution(executed, false);
+    }
+
+    @Override public Resolution rejectBatch(UUID thread, UUID id, UUID confirmation, String code) {
+        var proposal = lockedOwned(thread, id);
+        if (proposal.kind() != Proposal.Kind.LOG_SESSIONS) alreadyResolved();
+        if (proposal.status() != Proposal.Status.PENDING) {
+            if (confirmation.equals(proposal.confirmationId())) return new Resolution(proposal, true);
+            alreadyResolved();
+        }
+        var rejected = proposal.resolve(Proposal.Status.REJECTED, confirmation, null, code, clock.now());
+        proposals.update(rejected);
+        return new Resolution(rejected, false);
+    }
+
     @Override
     public Resolution cancel(UUID threadId, UUID proposalId) {
         Proposal proposal = lockedOwned(threadId, proposalId);
@@ -176,7 +306,7 @@ public final class ProposalService implements ConversationUseCases {
     private Proposal lockedOwned(UUID threadId, UUID proposalId) {
         Proposal proposal = proposals.findByIdForUpdate(proposalId)
                 .orElseThrow(() -> new ConversationFailure("PROPOSAL_NOT_FOUND", "Proposal not found"));
-        if (!proposal.threadId().equals(threadId) || proposal.schemaVersion() != Proposal.SCHEMA_VERSION) {
+        if (!proposal.threadId().equals(threadId) || proposal.schemaVersion() != (proposal.kind() == Proposal.Kind.LOG_SESSIONS ? 2 : Proposal.SCHEMA_VERSION)) {
             throw new ConversationFailure("PROPOSAL_NOT_FOUND", "Proposal not found");
         }
         return proposal;

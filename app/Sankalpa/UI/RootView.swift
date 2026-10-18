@@ -185,6 +185,7 @@ struct RootView: View {
                 actionType: action, startDate: start, periodUnit: unit,
                 timesPerPeriod: times, periodCount: proposal.metadata.int("periodCount"))
             declaringSankalpa = true
+        case .logSessions, .unsupported: break
         case .logSession:
             guard let idText = proposal.metadata.string("sankalpaId"), let uuid = UUID(uuidString: idText),
                   let summary = model.summary(SankalpaId(uuid)),

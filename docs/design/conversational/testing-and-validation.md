@@ -297,3 +297,12 @@ The feature is ready for staged use when:
 
 Rollback is `SANKALPA_ASSISTANT_ENABLED=false`. Existing REST and manual UI continue to work; any
 pending proposal expires without affecting domain data.
+
+## Batch-session acceptance amendment
+
+Use the [batch acceptance matrix](../conversational-batch-sessions/README.md) and
+[review dry runs](../conversational-batch-sessions/review-and-dry-run.md) in addition to these tests.
+Release requires entry-17 rollback, commit-response-loss replay, concurrent confirmation, complete
+linked-day satisfaction, 30/31-entry bounds, and actual DynamoDB staged-action/byte assertions.
+Keep all legacy single-session/declaration and client-version tests. Design dry runs do not replace
+adapter, native-client, model-evaluation, or staging acceptance tests.

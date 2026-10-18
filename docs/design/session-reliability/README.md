@@ -725,3 +725,13 @@ Implementation is complete only when:
 - rejected pending mutations both correct the display and leave an acknowledgeable notice;
 - deletion changes open and closed period calculations consistently on server and client;
 - the full existing backend, Swift package, and iOS UI suites pass.
+
+## Conversational batch amendment (implemented October 17, 2026)
+
+[Batch session logging](../conversational-batch-sessions/README.md) preserves every entry's UUID
+identity and permanent deletion rules. Server-owned batches are confirmed and committed atomically
+with proposal resolution, not placed into the client offline journal. Day-based skipping applies
+only to an explicit “ensure daily recording” plan and is not value-based retry reconciliation.
+Same-time explicit sessions remain legitimate. Existing pending local operations in the same series
+must synchronize before submitting a batch; a failed refresh after batch success must not trigger
+a new batch with fresh identities.

@@ -48,7 +48,14 @@ public final class ConversationController {
     public ResponseEntity<SseEmitter> run(@RequestBody RunAgentInput wire,@org.springframework.web.bind.annotation.RequestHeader org.springframework.http.HttpHeaders headers) {
         if (!enabled) throw new ConversationFailure("ASSISTANT_DISABLED", "Assistant is disabled");
         var parsed=validate(wire);
-        var input=new ConversationCoordinator.RunInput(parsed.threadId(),parsed.runId(),parsed.messages(),parsed.clientTools(),parsed.resume(),practiceHttp.contract(headers));
+        var clientTools = new ArrayList<>(parsed.clientTools());
+        String batchVersion = headers.getFirst("X-Sankalpa-Assistant-Batch-Sessions");
+        if (batchVersion != null) {
+            if (!"1".equals(batchVersion)) throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Batch session version 1 is required.");
+            practiceHttp.requireInstance(headers);
+            clientTools.add("batch_sessions_v1");
+        }
+        var input=new ConversationCoordinator.RunInput(parsed.threadId(),parsed.runId(),parsed.messages(),clientTools,parsed.resume(),practiceHttp.contract(headers));
         SseEmitter emitter = new SseEmitter(35_000L);
         var task = executor.submit(() -> stream(input, emitter));
         emitter.onTimeout(() -> task.cancel(true));
@@ -64,7 +71,8 @@ public final class ConversationController {
             for (var message : result.messages()) message(emitter, input, message);
             for (var effect : result.effects()) tool(emitter, input, effect);
             Map<String, Object> outcome = result.proposal() == null
-                    ? Map.of("type", "success") : interrupt(result.proposal());
+                    ? result.batchResult() == null ? Map.of("type", "success")
+                    : Map.of("type", "success", "batchResult", result.batchResult()) : interrupt(result.proposal());
             send(emitter, event("RUN_FINISHED", input, Map.of("outcome", outcome)));
             emitter.complete();
             log.info("Assistant run {} on thread {} finished: {}", input.runId(), input.threadId(),
@@ -125,6 +133,16 @@ public final class ConversationController {
             metadata.put("sankalpaTitle", session.sankalpaTitle());
             metadata.put("occurredAt", session.occurredAt().toString());
             metadata.put("userSummary", session.userSummary());
+        } else if (p.payload() instanceof Proposal.LogSessionsPayload batch) {
+            metadata.put("sankalpaId", batch.sankalpaId().toString());
+            metadata.put("sankalpaTitle", batch.sankalpaTitle());
+            Map<String, Object> preview = new LinkedHashMap<>();
+            preview.put("plan", batch.plan()); preview.put("timezone", batch.timezone());
+            preview.put("requestedCount", batch.requestedCount());
+            preview.put("entries", batch.entries().stream().map(e -> Map.of("sessionId", e.sessionId().toString(), "occurredAt", e.occurredAt().toString())).toList());
+            preview.put("skippedDays", batch.skippedDays().stream().map(d -> Map.of("date", d.date().toString(), "contributionIds", d.contributionIds().stream().map(Object::toString).toList())).toList());
+            preview.put("repeatWarnings", batch.repeatWarnings());
+            metadata.put("batch", preview);
         } else {
             Proposal.DeclareSankalpaPayload d = (Proposal.DeclareSankalpaPayload) p.payload();
             metadata.put("title", d.title()); metadata.put("description", d.description());
@@ -166,7 +184,7 @@ public final class ConversationController {
         }
         if (input.tools() == null || input.tools().size() > 3) protocol("Invalid frontend tools");
         List<String> clientTools = input.tools().stream().map(Tool::name)
-                .filter(Objects::nonNull).distinct().toList();
+                .filter(Objects::nonNull).filter(name -> Set.of("refresh_practice", "navigate_to_sankalpa", "open_sankalpa_list").contains(name)).distinct().toList();
         ConversationCoordinator.Resume resume = null;
         if (input.resume() != null && !input.resume().isEmpty()) {
             if (input.resume().size() != 1 || !messages.isEmpty()) protocol("Invalid resume");
@@ -199,7 +217,7 @@ public final class ConversationController {
     private static UUID uuid(String value) { try { return UUID.fromString(value); } catch (Exception e) { protocol("Invalid UUID"); return null; } }
     private static void protocol(String detail) { throw new ConversationFailure("AGUI_PROTOCOL_ERROR", detail); }
     private static String safeMessage(ConversationFailure failure) {
-        return failure.code().startsWith("ASSISTANT_") || failure.code().startsWith("PROPOSAL_")
+        return failure.code().startsWith("ASSISTANT_") || failure.code().startsWith("PROPOSAL_") || failure.code().startsWith("BATCH_")
                 ? failure.getMessage() : "The assistant could not complete that request.";
     }
 }

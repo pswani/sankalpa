@@ -20,6 +20,7 @@ public final class ConversationContextLoader {
 
     public void requireReadable(Proposal proposal, com.sankalpa.application.PracticeContract contract) {
         if(proposal.payload() instanceof Proposal.LogSessionPayload p) sankalpas.detail(p.sankalpaId(),contract);
+        if(proposal.payload() instanceof Proposal.LogSessionsPayload p) sankalpas.detail(p.sankalpaId(),contract);
     }
 
     public ConversationModel.Context load() {

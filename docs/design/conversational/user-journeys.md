@@ -276,3 +276,15 @@ so all values can be validated against current state.
 - VoiceOver announces when listening stops and when the transcript is ready to send.
 - Dynamic Type, Reduce Motion, keyboard entry, and Voice Control are supported.
 - A tool call is never shown as raw JSON to the user.
+
+## Batch observance journey — October 17, 2026
+
+“I observed Brahmacharya every day since September 14, 2026” is a multi-session logging intent.
+Resolve the target and exact daily recording time. With the service date fixed to October 17,
+the inclusive range is 34 days: explain the 30-entry bound and ask which chunk to prepare first
+(for example September 14–October 13, then October 14–17). Each chunk needs its own preview and
+confirmation. Do not automatically execute the second chunk. If today's time has not occurred,
+clarify the endpoint/time. Show existing contributed days separately from new sessions, then use
+one confirmation for the approved chunk. Retry the same confirmation after a lost response;
+refresh authoritative history once after success. A changed practice requires a fresh preview.
+See the [complete design](../conversational-batch-sessions/README.md).

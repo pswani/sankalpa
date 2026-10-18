@@ -247,3 +247,13 @@ quality. The model adapter is integrated only after deterministic behavior is co
 The OpenAI reference is used for the provider-neutral execution rule reflected here: a model emits
 a typed request, application code validates and executes it, and the result is returned separately.
 The design does not depend on an OpenAI-specific client type.
+
+## Reviewed amendment — October 17, 2026
+
+[Conversational batch session logging](../conversational-batch-sessions/README.md) extends this
+design with one multi-session proposal and approval, reusing the existing session use case up to
+30 times atomically. It also reserves a final text-only model round. The original single-entry
+flows remain supported. The amendment is implemented and verified locally; see its [implementation review](../conversational-batch-sessions/implementation-review.md). Its
+[review and dry runs](../conversational-batch-sessions/review-and-dry-run.md) document the fixes.
+Production deployment now uses [AWS Lambda and DynamoDB](../aws/README.md); local SQLite remains
+supported, and the amendment requires tests against both persistence adapters.

@@ -333,6 +333,21 @@ final class AppModel {
         guard members.count > 1 else { return nil }
         return "One session will count toward " + members.map { $0.commitment.durationValueText }.joined(separator: ", ") + "."
     }
+    func prepareAssistantRequest() async -> Bool {
+        if remote.pendingChangeCount > 0 { await refresh() }
+        return remote.pendingChangeCount == 0 && remote.reliabilityProblem == nil
+    }
+    func confirmAssistantBatch(owner: SankalpaId, action: () async -> Void) async {
+        guard let root = remote.seriesId(for: owner), !processingSankalpas.contains(root),
+              await prepareAssistantRequest() else {
+            report(.storage(.unavailable("Synchronize pending changes before confirming this batch."))); return
+        }
+        guard !processingSankalpas.contains(root) else { return }
+        processingSankalpas.insert(root)
+        defer { processingSankalpas.remove(root) }
+        await action()
+        rebuild()
+    }
     func confirmAssistantSession(owner: SankalpaId, sessionId: SessionId, action: () async -> Void) async {
         guard let root = remote.seriesId(for: owner), !processingSankalpas.contains(root) else {
             report(.storage(.unavailable("A session for this linked practice is already being processed."))); return

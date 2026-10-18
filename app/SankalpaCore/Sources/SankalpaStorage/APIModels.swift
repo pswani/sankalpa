@@ -67,6 +67,7 @@ enum API {
         var linkedSankalpaExtensions: Int? = nil
         let serviceInstanceId: UUID
         let assistant: AssistantCapability?
+        var assistantBatchSessions: Int? = nil
     }
 
     struct AssistantCapability: Decodable, Sendable {

@@ -406,3 +406,18 @@ provider output.
 - Additive frontend tools are optional; the server checks what the client advertises.
 - Proposal payloads are versioned. Unsupported versions are refused, never guessed.
 - The existing REST endpoints remain the public domain contract and manual fallback.
+
+## Batch-session contract amendment — October 17, 2026
+
+The normative proposed extension is [batch tool, proposal, and negotiation contracts](../conversational-batch-sessions/README.md).
+Add `propose_log_sessions`, `LOG_SESSIONS` proposal version 2, `assistantBatchSessions:1` capability,
+and `X-Sankalpa-Assistant-Batch-Sessions: 1` request header. Existing kinds retain version 1.
+One model tool call carries a bounded range/list; confirmation executes up to 30 existing session
+commands atomically. The interrupt includes every canonical new entry and skipped/repeat details;
+confirmation cannot substitute values. Add structured multi-session results rather than selecting
+one session for `resultResourceId`. Unknown kinds/versions cannot render an enabled Confirm action.
+
+New stable errors: `BATCH_TOO_LARGE`, `BATCH_INVALID_ENTRY`, `BATCH_READ_INCOMPLETE`,
+`PROPOSAL_STALE`, `ASSISTANT_BATCH_UNSUPPORTED`. Existing identity, contract, expiry, and replay
+rules continue to apply. Detailed field ownership, error recovery, and compatibility are in the
+amendment; earlier single-session examples are still valid for single-session proposals.

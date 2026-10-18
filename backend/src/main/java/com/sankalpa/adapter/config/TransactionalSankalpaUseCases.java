@@ -103,6 +103,9 @@ public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
         return reading(() -> delegate.readSnapshot(revision, query));
     }
 
+    @Override public Sankalpa lockForSessionBatch(SankalpaId id, PracticeContract contract) {
+        return identityWriting(() -> delegate.lockForSessionBatch(id, contract));
+    }
     @Override public <T> PracticeSnapshot<T> writeSnapshot(Supplier<T> query) {
         return identityWriting(() -> delegate.writeSnapshot(query));
     }

@@ -18,8 +18,14 @@ struct AssistantView: View {
         self.edit = edit
         let token = appModel.apiToken
         let client = AGUIClient(baseURL: appModel.serviceLocation.url, bearerToken: token,
-                                linkedServiceInstance: appModel.supportsLinkedExtensions ? appModel.serviceInstanceId : nil)
-        _session = State(initialValue: AssistantSession(client: client) { tool in
+                                linkedServiceInstance: appModel.supportsLinkedExtensions ? appModel.serviceInstanceId : nil,
+                                batchSessions: appModel.assistantCapability?.batchSessionsVersion == 1)
+        let recoveryURL = appModel.serviceInstanceId.map { instance in
+            URL.applicationSupportDirectory.appending(path: "Assistant/\(instance.uuidString)-linked-v1.json")
+        }
+        _session = State(initialValue: AssistantSession(client: client, recoveryURL: recoveryURL, prepareSend: {
+            await appModel.prepareAssistantRequest()
+        }, handleTool: { tool in
             switch tool.name {
             case "refresh_practice":
                 await appModel.refresh()
@@ -33,7 +39,7 @@ struct AssistantView: View {
             case "open_sankalpa_list": navigate(nil); return true
             default: return false
             }
-        })
+        }))
     }
 
     var body: some View {
@@ -83,6 +89,7 @@ struct AssistantView: View {
             }
             .onChange(of: speech.transcript) { _, value in session.composer = value }
             .onDisappear { speech.stop() }
+            .task { await session.recover() }
         }
     }
 
@@ -100,6 +107,9 @@ struct AssistantView: View {
         if proposal.kind == .logSession {
             guard let (owner, id) = sessionIdentity(proposal) else { return }
             await model.confirmAssistantSession(owner: owner, sessionId: id) { await session.confirm() }
+        } else if proposal.kind == .logSessions {
+            guard case .string(let owner)? = proposal.metadata["sankalpaId"], let id = UUID(uuidString: owner) else { return }
+            await model.confirmAssistantBatch(owner: SankalpaId(id)) { await session.confirm() }
         } else { await session.confirm() }
     }
 
@@ -148,23 +158,65 @@ private struct ProposalCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(proposal.kind == .logSession ? "Confirm session" : "Confirm Sankalpa",
+            Label(proposal.kind == .unsupported ? "Update app to review this proposal" : proposal.kind == .logSessions ? "Confirm sessions" : proposal.kind == .logSession ? "Confirm session" : "Confirm Sankalpa",
                   systemImage: "checkmark.shield")
                 .font(.headline)
             ForEach(rows, id: \.0) { key, value in LabeledContent(key, value: value) }
+            if proposal.kind == .logSessions {
+                DisclosureGroup("Review every session") {
+                    ForEach(batchEntryRows, id: \.self) { Text($0).font(.footnote) }
+                }
+            }
             if let sharedEffects { Text(sharedEffects).font(.footnote) }
             HStack {
                 Button("Cancel", role: .cancel, action: cancel)
-                Button("Edit", action: edit)
+                if proposal.kind != .logSessions && proposal.kind != .unsupported { Button("Edit", action: edit) }
                 Spacer()
-                Button("Confirm", action: confirm).buttonStyle(.borderedProminent)
+                if proposal.canConfirm {
+                    Button(proposal.kind == .logSessions ? "Record \(proposal.newSessionCount) sessions" : "Confirm", action: confirm)
+                        .buttonStyle(.borderedProminent)
+                }
             }.disabled(disabled)
         }
         .padding().background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 16))
         .accessibilityElement(children: .contain)
     }
 
+    private var batchEntryRows: [String] {
+        var rows: [String] = []
+        if case .array(let entries)? = proposal.batch["entries"] {
+            rows += entries.compactMap { item in
+                if case .object(let entry) = item, case .string(let time)? = entry["occurredAt"] { return "Add: " + time }
+                return nil
+            }
+        }
+        if case .array(let skipped)? = proposal.batch["skippedDays"] {
+            rows += skipped.compactMap { item in
+                if case .object(let day) = item, case .string(let date)? = day["date"] { return "Already recorded: " + date }
+                return nil
+            }
+        }
+        return rows
+    }
     private var rows: [(String, String)] {
+        if proposal.kind == .logSessions {
+            let batch = proposal.batch
+            let requested = batch["requestedCount"].map(text) ?? ""
+            let skipped: Int = { if case .array(let values)? = batch["skippedDays"] { return values.count }; return 0 }()
+            var rows = [("Sankalpa", proposal.metadata["sankalpaTitle"].map(text) ?? ""),
+                        ("Sessions", "\(requested) requested / \(proposal.newSessionCount) new / \(skipped) already recorded"),
+                        ("Timezone", batch["timezone"].map(text) ?? "")]
+            if case .object(let plan)? = batch["plan"] {
+                for key in ["from", "through", "localTime"] {
+                    if let value = plan[key], value != .null { rows.append((label(key), text(value))) }
+                }
+            }
+            if case .array(let repeats)? = batch["repeatWarnings"], !repeats.isEmpty {
+                rows.append(("Repeated times", repeats.map(text).joined(separator: ", ") + ". These add separate sessions."))
+            }
+            return rows
+        }
+        if proposal.kind == .unsupported { return [] }
         let keys = proposal.kind == .logSession
             ? ["sankalpaTitle", "occurredAt", "userSummary"]
             : ["title", "description", "actionType", "startDate", "periodUnit", "timesPerPeriod", "periodCount"]
