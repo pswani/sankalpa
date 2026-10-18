@@ -1,6 +1,9 @@
 # Sankalpa: Step-by-Step AWS Console Setup
 
-Status: setup tools implemented October 13, 2026. No AWS resources have been provisioned by this implementation.
+Status reviewed October 17, 2026. The production foundation and SQLite import are complete.
+Production REST deployment and provider streaming are verified. Live acceptance is tracked in [implementation-review.md](implementation-review.md).
+For an existing installation, inspect its status and resume at the first incomplete step; do not
+recreate resources or repeat database initialization/import.
 
 See the [requirements](../../requirements/aws.md) and [detailed design](design.md).
 
@@ -37,6 +40,11 @@ Set up a local AWS CLI profile using the account's normal short-lived credential
 such as IAM Identity Center. The deployment profile remains on the Mac; it is not embedded in
 the application or phone.
 
+For the dedicated `sankalpa-deployer` user and local profile, use the complete
+[deployer setup guide and bootstrap script](deployer-setup.md). It separates the administrator
+bootstrap session from routine deployment, attaches the policy to the correct user, and includes
+the exact identity/CloudFormation/DynamoDB verification commands.
+
 The deploying identity or CloudFormation service role needs to manage the named Sankalpa
 resources and pass the Sankalpa runtime role. The local image publisher needs ECR push access;
 the initialization/import operator needs the selected table's item operations. These permissions
@@ -47,10 +55,15 @@ do not attach broad application-runtime administrator permissions to solve deplo
 
 ## Step 2 — Check concurrency and set a budget
 
-Open **Service Quotas → AWS services → AWS Lambda** and check concurrent executions.
-The design reserves 2. AWS keeps 100 units unreserved, so a low-quota account may require an
-increase before that reservation is possible. Request the increase before deploying a template
-that would fail this check. [Concurrency guidance](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html)
+Use shared concurrency for this small personal backend: `DEPLOY_CONCURRENCY=-1` and the
+application template's `ReservedConcurrency=-1`. The template omits the reservation property.
+No quota increase is required; the function shares the existing account pool (currently 10).
+The previous quota request is no longer a deployment prerequisite.
+
+Do not enter -1 in Lambda's reserved-concurrency Console field: choose **Use unreserved
+account concurrency** there. Manage the declared value through CloudFormation/operator tools.
+A positive reservation is optional and requires AWS's 100-unit unreserved headroom.
+[Concurrency guidance](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html)
 
 Then open **Billing and Cost Management → Budgets**:
 
@@ -65,6 +78,12 @@ Choose account-wide scope for a dedicated account. For a shared account, activat
 cost-allocation tag and configure an appropriate filter once resource tags appear. A filtered
 budget does not include untagged or unrelated charges.
 
+If `DEPLOY_BUDGET_EMAIL` is configured, the setup command can create this budget, but the
+example deployer policy does not include Budgets permissions. Create/verify it with the
+administrator identity, then omit that setting from routine deployer setup runs, or grant the
+specific budget permissions separately. Verify the notification thresholds and subscriber
+address; finding an existing budget by name alone does not prove the alerts are correct.
+
 A budget alert does not stop the application automatically.
 [Budget setup](https://docs.aws.amazon.com/cost-management/latest/userguide/create-cost-budget.html)
 
@@ -75,7 +94,10 @@ Use the supplied `infra/foundation.yaml`:
 1. Open **CloudFormation → Stacks → Create stack → With new resources**.
 2. Choose **Upload a template file** and upload `foundation.yaml`.
 3. Name the stack `sankalpa-prod-foundation`.
-4. Set the environment to `prod` and use the design's resource names.
+4. Set `Environment=prod`, `ResourcePrefix=sankalpa`, and leave `RestoredTableName` empty
+   for the original table. On the stack options page add `Project=Sankalpa`,
+   `Environment=prod`, and `ManagedBy=CloudFormation` stack tags. The operator requires
+   these ownership tags; template resource tags do not substitute for stack tags.
 5. Review parameters, tags, resource changes, and retention behavior.
 6. Acknowledge creation of named IAM resources.
 7. Create the stack and wait for **CREATE_COMPLETE**.
@@ -118,9 +140,13 @@ cd backend
 ./scripts/bootstrap-tools.sh
 ```
 
-Choose **one** of the following data operations. To migrate your existing SQLite practice, stop
+For this installation the import has already succeeded. Run `db validate` below; do not
+initialize or reimport the populated target. For a new installation, choose **one** of the
+following data operations. To migrate your existing SQLite practice, stop
 writes to the old backend, keep a consistent backup, and run this before creating the application
-stack. Replace the source path with your backup's actual location:
+stack. The backup must have the current linked schema. For an older backup, follow the
+[copy-and-migrate procedure](../../../backend/scripts/README-aws.md#preparing-an-older-sqlite-backup)
+first. Replace the source path with your prepared backup's actual location:
 
 ```sh
 ./scripts/backend db import --target aws --environment prod \
@@ -197,8 +223,11 @@ image. [Container deployment requirements](https://docs.aws.amazon.com/lambda/la
 
 ## Step 7 — Prepare production configuration
 
-Copy the supplied production environment example to an ignored `.env.prod` file. Configure the
-table, time zone, and a randomly generated bearer token. Keep the assistant disabled initially.
+For a new installation only, copy the supplied production environment example to an ignored
+`.env.prod` file. Preserve an existing configured file. Configure account, Region, profile,
+time zone, and a randomly generated bearer token. The table comes from foundation Outputs.
+Keep the assistant disabled for initial verification, then enable it after staging acceptance.
+Do not overwrite existing secrets or change assistant settings without recording that choice.
 
 The user is responsible for retaining this configuration locally. The deployment tool reads it
 and sets Lambda environment variables without requiring Secrets Manager.
@@ -211,7 +240,9 @@ or practice dataset to an environment intended for destructive tests.
 
 ## Step 8 — Create the application stack
 
-Open **CloudFormation → Create stack**, upload `application.yaml`, and name the stack
+Prefer `./scripts/backend deploy --target aws --environment prod`: it builds and pushes the
+image, supplies every runtime parameter, validates the candidate, and manages promotion.
+For a manual first deployment, open **CloudFormation → Create stack**, upload `application.yaml`, and name the stack
 `sankalpa-prod-app`.
 
 Enter the template's corresponding parameters:
@@ -223,12 +254,20 @@ Enter the template's corresponding parameters:
 | TableName | Foundation output |
 | RuntimeRoleArn | Foundation output |
 | ImageUri | ECR image URI with digest |
+| ReleaseId | Unique release label, for example `release-20261017-001` |
+| ProductionVersion / RollbackVersion | Empty on the first deployment only |
+| Architecture | `arm64` |
 | MemorySize | `1024` |
 | TimeoutSeconds | `90` |
-| ReservedConcurrency | `2` |
+| ReservedConcurrency | `-1` (omit reservation; use shared pool) |
 | PracticeTimezone | `America/Chicago`, if it matches the app |
 | ApiToken | Generated application bearer token |
 | AssistantEnabled | `false` |
+
+Also review `LlmProvider`, `LlmApiKey`, `LlmModel`, `LlmReasoningEffort`, `LlmTimeout`,
+`RunsPerMinute`, and `RunsPerDay` against the selected environment file. Add the same stack
+ownership tags as in Step 3. Subsequent releases should use the operator tool rather than
+blanking the version parameters: doing that can move production before candidate validation.
 
 Secret parameters use `NoEcho`; authorized Lambda administrators can still access environment
 configuration. Review the stack changes and create it. Wait for **CREATE_COMPLETE**.
@@ -242,7 +281,7 @@ current version until candidate verification succeeds.
 Open **Lambda → Functions → sankalpa-prod**.
 
 Check container package type, ARM64 architecture, release digest, 1,024 MB memory, 90-second
-timeout, 512 MB temporary storage, reserved concurrency 2, no provisioned concurrency, no VPC,
+timeout, 512 MB temporary storage, shared/unreserved concurrency, no provisioned concurrency, no VPC,
 and the expected execution role.
 
 Under **Configuration → Environment variables**, check persistence mode, table, time zone,
@@ -302,7 +341,28 @@ The Console's Lambda **Test** button alone does not verify HTTP adaptation or in
 
 ## Step 11 — Connect the iPhone
 
-After implementing the iOS HTTPS port fix:
+The verified production address for this installation is:
+
+```text
+https://xkf54pbp4oata4kxbnwsy3hk2a0rjwxl.lambda-url.us-east-1.on.aws/
+```
+
+Use that base URL in the **Computer** field of **Sankalpas → Sankalpa service**. Under
+**Authentication**, enter only the `SANKALPA_API_TOKEN` value from the private local
+`backend/.env.prod` file (without the key name, quotes, or a `Bearer ` prefix). Do not use an
+AWS key or the model-provider key. Save and refresh. The existing 2 sankalpas should appear.
+If **Save** is disabled because pending session changes exist, resolve/send them against the
+old service first; the current UI prevents switching addresses while changes are pending.
+A launch argument/environment override can also take precedence over this saved address.
+
+The Mac may be switched off after deployment. Use the connected client under `app/`; `app2/`
+is a separate local-file app. If the installed app is older, build/install the current
+`app/Sankalpa.xcodeproj` using the **Sankalpa** scheme and your physical iPhone as the destination.
+The first request after Lambda has gone idle can take tens of
+seconds while Java starts; the current read retry behavior handles transient failures.
+
+
+The connected client under `app/` already includes the HTTPS default-port fix:
 
 1. Open **Sankalpas → Sankalpa service**.
 2. Enter the production Function URL.
@@ -310,7 +370,7 @@ After implementing the iOS HTTPS port fix:
 4. Confirm the practice time zone.
 5. Refresh and verify the imported practice and service identity.
 
-Until the port fix exists, the current parser requires an explicit `:443` after the hostname.
+HTTPS addresses use port 443 when no port is given; an explicit `:443` remains compatible.
 Keep pending operations bound to their persisted service identity; do not manually force them
 onto an unrelated empty practice.
 
@@ -320,8 +380,9 @@ session replay and correction on a physical device using the planned acceptance 
 ## Step 12 — Enable the assistant after verification
 
 Run streaming, thread-lease, confirmation, replay, and disconnect scenarios in staging first.
-Then update the production environment file with provider configuration, enable the assistant,
-and set daily/minute limits. Publish a candidate, verify it, and promote it.
+Then review the production environment file with provider configuration, assistant enablement,
+and daily/minute limits. This installation already has provider settings configured; retain
+them privately and verify behavior before declaring assistant acceptance. Publish a candidate, verify it, and promote it.
 
 Verify SSE events arrive incrementally and a replayed confirmation does not create another
 practice change. The provider key stays on Lambda; only the application bearer token goes to
@@ -336,8 +397,8 @@ waits for completion, validates candidates, and reports the resulting version an
 |---|---|
 | Deploy | Publish/validate candidate, then promote; keep prior compatible release |
 | Stop | Declare reserved concurrency zero; reject new URL invocations |
-| Start | Restore declared concurrency to 2 |
-| Rollback | Promote compatible old code/configuration without changing URL |
+| Start | Remove the zero reservation and resume shared account concurrency |
+| Rollback | Republish compatible old code with current file-supplied credentials, validate, then promote without changing URL |
 | Cleanup | Delete only owned, unreferenced versions and unneeded image digests |
 | Staging teardown | Remove application first, then explicitly remove disposable retained foundation resources |
 
@@ -359,7 +420,7 @@ Exercise this in staging before relying on it for production.
 |---|---|
 | AWS 403 before application response | URL alias, resource policy, both URL invocation permissions |
 | Application 401 | Token in the selected published version and iOS Keychain |
-| Phone tries port 8080 | Explicit `:443` or implemented HTTPS parser fix |
+| Phone tries port 8080 | Update to the connected client with the HTTPS fix; explicit `:443` also works |
 | Lambda 429 | Stopped/busy reserved concurrency or URL request-rate limit |
 | DynamoDB access denied | Runtime-role table ARN, Region, item-operation permissions |
 | Readiness never succeeds | Required token, supported/READY metadata, table connectivity |

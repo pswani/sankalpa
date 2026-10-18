@@ -1,6 +1,8 @@
 # AWS Backend Deployment — Detailed Design
 
-Status: implementation and local verification complete October 13, 2026. Live AWS and physical-device acceptance require a deployment.
+Status: production deployment, REST authentication, imported data and provider streaming verified
+October 17, 2026. The user confirmed the iPhone connection works. Recovery rehearsal, advanced
+device workflows and billing observation remain tracked in the implementation review.
 
 The deployment uses one Spring Boot backend on AWS Lambda, an AWS-generated Function URL,
 and DynamoDB. Local environment files supply configuration during deployment. The initial
@@ -27,8 +29,9 @@ session reliability, linked-extension, and conversational contracts remain in fo
 - Read ignored environment files locally and supply Lambda environment variables.
 - Use separate foundation and application CloudFormation stacks per environment.
 - Retain production practice data when replacing or removing the application.
-- Keep the assistant disabled for initial production verification; enable it after streaming
-  and confirmation tests pass.
+- Use shared Lambda account concurrency; no reserved-concurrency increase is needed.
+- The production assistant is enabled and live response streaming is verified. Use an isolated
+  staging practice for mutation and confirmation tests.
 
 The initial deployment requires no Route 53 zone, custom domain, API Gateway, Secrets Manager,
 RDS, NAT gateway, or customer VPC. `api.pswani.com` is deferred. A future custom-domain design
@@ -41,5 +44,5 @@ The adapters, scripts, configuration, container definitions, and templates now e
 [operator commands](../../../backend/scripts/README-aws.md) for the executable workflow.
 The Console guide and automated setup use the same infrastructure templates.
 
-This documentation does not modify the application, provision cloud resources, commit changes,
-or perform a production cutover.
+Use the operator tools for releases and infrastructure changes. The current production URL and
+iPhone connection steps are in the [Console guide](aws-console-setup.md#step-11--connect-the-iphone).

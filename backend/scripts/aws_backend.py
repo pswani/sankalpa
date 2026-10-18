@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import ssl
 import subprocess
 import sys
 import time
@@ -31,7 +32,7 @@ RUNTIME = {
     "SANKALPA_ASSISTANT_RUNS_PER_MINUTE": "RunsPerMinute", "SANKALPA_ASSISTANT_RUNS_PER_DAY": "RunsPerDay",
 }
 DEFAULTS = {"DEPLOY_RESOURCE_PREFIX":"sankalpa", "DEPLOY_REGION":"us-east-1", "DEPLOY_MEMORY":"1024", "DEPLOY_TIMEOUT":"90",
-    "DEPLOY_CONCURRENCY":"2", "DEPLOY_ARCHITECTURE":"arm64", "LOCAL_API_PORT":"8080", "LOCAL_DB_PORT":"8000",
+    "DEPLOY_CONCURRENCY":"-1", "DEPLOY_ARCHITECTURE":"arm64", "LOCAL_API_PORT":"8080", "LOCAL_DB_PORT":"8000",
     "SANKALPA_TIMEZONE":"America/Chicago", "SANKALPA_ASSISTANT_ENABLED":"false", "SANKALPA_LLM_PROVIDER":"fake",
     "SANKALPA_LLM_API_KEY":"", "SANKALPA_LLM_MODEL":"gpt-6-luna", "SANKALPA_LLM_REASONING_EFFORT":"none",
     "SANKALPA_LLM_TIMEOUT":"PT20S", "SANKALPA_ASSISTANT_RUNS_PER_MINUTE":"2", "SANKALPA_ASSISTANT_RUNS_PER_DAY":"20"}
@@ -71,8 +72,9 @@ def configuration(args):
     if args.region: cfg["DEPLOY_REGION"]=args.region
     if args.profile: cfg["DEPLOY_AWS_PROFILE"]=args.profile
     if cfg["DEPLOY_ENVIRONMENT"] not in ({"dev","test"} if args.target=="local" else {"prod","staging"}): raise ValueError("Invalid target/environment combination")
-    for key,low,high in [("DEPLOY_MEMORY",512,3072),("DEPLOY_TIMEOUT",45,120),("DEPLOY_CONCURRENCY",1,10),("LOCAL_API_PORT",1,65535),("LOCAL_DB_PORT",1,65535)]:
+    for key,low,high in [("DEPLOY_MEMORY",512,3072),("DEPLOY_TIMEOUT",45,120),("DEPLOY_CONCURRENCY",-1,10),("LOCAL_API_PORT",1,65535),("LOCAL_DB_PORT",1,65535)]:
         if not low <= int(cfg[key]) <= high: raise ValueError(f"{key} outside supported range")
+    if int(cfg['DEPLOY_CONCURRENCY'])==0: raise ValueError("Use stop to disable requests; DEPLOY_CONCURRENCY must be -1 (shared) or positive")
     if cfg["DEPLOY_ARCHITECTURE"] not in {"arm64","x86_64"}: raise ValueError("Unsupported architecture")
     ZoneInfo(cfg["SANKALPA_TIMEZONE"])
     if cfg["SANKALPA_ASSISTANT_ENABLED"] not in {"true","false"}: raise ValueError("Assistant enabled must be true or false")
@@ -270,8 +272,13 @@ def request(url,path,token=None,body=None,extra_headers=None,method=None):
     if extra_headers: headers.update(extra_headers)
     if token: headers["Authorization"]="Bearer "+token
     req=urllib.request.Request(url.rstrip("/")+path,data=None if body is None else json.dumps(body).encode(),headers=headers,method=method)
+    context=None
+    if url.startswith("https://"):
+        from botocore.httpsession import get_cert_path
+        context=ssl.create_default_context()
+        context.load_verify_locations(cafile=get_cert_path(True))
     try:
-        with urllib.request.urlopen(req,timeout=110) as response: return response.status,response.headers,response.read()
+        with urllib.request.urlopen(req,timeout=110,context=context) as response: return response.status,response.headers,response.read()
     except urllib.error.HTTPError as response: return response.code,response.headers,response.read()
 
 def smoke(url,cfg,mutations=False):
@@ -372,6 +379,9 @@ class Cloud:
         print("Account-wide $5 budget configured")
     def check_concurrency(self):
         available=self.lam.get_account_settings()["AccountLimit"].get("UnreservedConcurrentExecutions",0)
+        if int(self.cfg["DEPLOY_CONCURRENCY"])==-1:
+            if available<1: raise ValueError("No shared Lambda concurrency available")
+            return
         try: current=self.lam.get_function_concurrency(FunctionName=self.name).get("ReservedConcurrentExecutions",0)
         except self.lam.exceptions.ResourceNotFoundException: current=0
         if available-100+current<int(self.cfg["DEPLOY_CONCURRENCY"]):
@@ -384,7 +394,7 @@ class Cloud:
         if restored:
             validate_documents(all_docs(self.db,restored)); parameters["RestoredTableName"]=restored
         self.apply(self.name+"-foundation",(ROOT/"infra/foundation.yaml").read_text(),parameters); self.budget()
-        print("Foundation ready. Initialize an empty practice or import an offline SQLite backup before deploying.")
+        print("Foundation ready. Validate an existing practice; initialize/import only a new empty target before deploying.")
     def app_parameters(self,image,release,production="",previous=""):
         require_token(self.cfg); foundation=self.outputs(self.name+"-foundation")
         p={"Environment":self.environment,"ResourcePrefix":self.cfg["DEPLOY_RESOURCE_PREFIX"],"TableName":foundation["TableName"],"RuntimeRoleArn":foundation["RuntimeRoleArn"],"ImageUri":image,"ReleaseId":release,
@@ -396,6 +406,7 @@ class Cloud:
         return [v for page in self.lam.get_paginator("list_versions_by_function").paginate(FunctionName=self.name) for v in page["Versions"]]
     def deploy(self,image=None,source_image=None):
         require_token(self.cfg)
+        self.check_concurrency()  # Check account capacity before building/pushing.
         table=self.outputs(self.name+"-foundation")["TableName"]
         meta=get_doc(self.db,table,"META")
         if not meta or meta.get("status")!="READY": raise ValueError("Initialize/import and validate the practice before deployment")
@@ -443,7 +454,10 @@ class Cloud:
             if "ReservedConcurrency" in changes:
                 requested=int(changes["ReservedConcurrency"])
                 if self.lam.get_function_concurrency(FunctionName=self.name).get("ReservedConcurrentExecutions")!=requested:
-                    self.lam.put_function_concurrency(FunctionName=self.name,ReservedConcurrentExecutions=requested)
+                    if requested==-1:
+                        self.lam.delete_function_concurrency(FunctionName=self.name)
+                    else:
+                        self.lam.put_function_concurrency(FunctionName=self.name,ReservedConcurrentExecutions=requested)
             print("Configuration already selected or reconciled"); return
         template=self.cf.get_template(StackName=self.name+"-app")["TemplateBody"]
         if not isinstance(template,str): template=json.dumps(template)

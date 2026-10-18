@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 spec=importlib.util.spec_from_file_location("aws_backend",Path(__file__).resolve().parents[1]/"aws_backend.py")
 ops=importlib.util.module_from_spec(spec); spec.loader.exec_module(ops)
@@ -70,6 +70,14 @@ class OperatorTests(unittest.TestCase):
         responses=[ConnectionResetError("Starting"),(200,{},b""),(401,{},b""),(200,{},capability),(200,{},b"[]")]
         with patch.object(ops,"request",side_effect=responses),patch.object(ops.time,"sleep"),contextlib.redirect_stdout(io.StringIO()):
             ops.smoke("http://127.0.0.1:8080",cfg)
+    def test_https_probe_uses_trusted_ca_without_disabling_verification(self):
+        with patch.object(ops.urllib.request,"urlopen") as opened:
+            opened.return_value.__enter__.return_value.status=200
+            ops.request("https://example.com","/health/ready")
+            context=opened.call_args.kwargs["context"]
+            self.assertTrue(context.check_hostname)
+            self.assertEqual(context.verify_mode,ops.ssl.CERT_REQUIRED)
+            self.assertGreater(context.cert_store_stats()["x509_ca"],0)
     def test_initialization_cannot_overwrite_practice(self):
         client=MemoryClient();ops.init_db(client,"test")
         identity=ops.get_doc(client,"test","META")["serviceInstanceId"]
@@ -112,11 +120,41 @@ class OperatorTests(unittest.TestCase):
         class Lambda:
             def get_alias(self,**kwargs):return {"FunctionVersion":"3" if kwargs["Name"]=="prod" else "2"}
             def get_function_concurrency(self,**kwargs):return {"ReservedConcurrentExecutions":2}
-        cloud.lam=Lambda();cloud.outputs=lambda name:{"TableName":cloud.name,"RuntimeRoleArn":"role","RepositoryUri":"repo","CandidateUrl":"https://candidate","CandidateVersion":"4"}
+        cloud.lam=Lambda();cloud.check_concurrency=lambda:None;cloud.outputs=lambda name:{"TableName":cloud.name,"RuntimeRoleArn":"role","RepositoryUri":"repo","CandidateUrl":"https://candidate","CandidateVersion":"4"}
         applied=[];cloud.apply=lambda name,template,params:applied.append(dict(params))
         with patch.object(ops,"smoke",side_effect=RuntimeError("Failed candidate")):
             with self.assertRaises(RuntimeError):cloud.deploy("repo@sha256:abcd")
         self.assertEqual(len(applied),1);self.assertEqual(applied[0]["ProductionVersion"],"3")
+    def test_deploy_rejects_quota_before_database_build_or_push(self):
+        cloud=object.__new__(ops.Cloud);cloud.cfg={**ops.DEFAULTS,"SANKALPA_API_TOKEN":"x"*40}
+        cloud.check_concurrency=Mock(side_effect=ValueError("Insufficient quota"))
+        cloud.outputs=Mock();cloud.push=Mock();cloud.apply=Mock()
+        with self.assertRaisesRegex(ValueError,"Insufficient quota"):cloud.deploy()
+        cloud.outputs.assert_not_called();cloud.push.assert_not_called();cloud.apply.assert_not_called()
+    def test_concurrency_preserves_unreserved_headroom_and_existing_reservation(self):
+        cloud=object.__new__(ops.Cloud);cloud.cfg={**ops.DEFAULTS,"DEPLOY_CONCURRENCY":"2"};cloud.name="sankalpa-prod";cloud.lam=Mock()
+        cloud.lam.get_function_concurrency.return_value={"ReservedConcurrentExecutions":0}
+        for available in (10,100,101):
+            cloud.lam.get_account_settings.return_value={"AccountLimit":{"UnreservedConcurrentExecutions":available}}
+            with self.assertRaises(ValueError):cloud.check_concurrency()
+        cloud.lam.get_account_settings.return_value={"AccountLimit":{"UnreservedConcurrentExecutions":102}}
+        cloud.check_concurrency()
+        cloud.lam.get_account_settings.return_value={"AccountLimit":{"UnreservedConcurrentExecutions":100}}
+        cloud.lam.get_function_concurrency.return_value={"ReservedConcurrentExecutions":2}
+        cloud.check_concurrency()
+    def test_shared_concurrency_works_with_small_account_quota(self):
+        cloud=object.__new__(ops.Cloud);cloud.cfg={**ops.DEFAULTS};cloud.lam=Mock()
+        cloud.lam.get_account_settings.return_value={"AccountLimit":{"UnreservedConcurrentExecutions":10}}
+        cloud.check_concurrency();cloud.lam.get_function_concurrency.assert_not_called()
+        cloud.lam.get_account_settings.return_value={"AccountLimit":{"UnreservedConcurrentExecutions":0}}
+        with self.assertRaises(ValueError):cloud.check_concurrency()
+    def test_start_reconciles_shared_concurrency_by_removing_reservation(self):
+        cloud=object.__new__(ops.Cloud);cloud.name="sankalpa-prod";cloud.lam=Mock()
+        cloud.stack=lambda name:{"Parameters":[{"ParameterKey":"ReservedConcurrency","ParameterValue":"-1"}]}
+        cloud.lam.get_function_concurrency.return_value={"ReservedConcurrentExecutions":0}
+        cloud.update_parameters({"ReservedConcurrency":"-1"})
+        cloud.lam.delete_function_concurrency.assert_called_once_with(FunctionName=cloud.name)
+        cloud.lam.put_function_concurrency.assert_not_called()
     def test_rollback_republishes_current_credentials(self):
         cloud=object.__new__(ops.Cloud);cloud.name="sankalpa-prod"
         class Lambda:

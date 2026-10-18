@@ -77,13 +77,14 @@ and Lambda architecture must agree.
 | Memory | 1,024 MB |
 | Timeout | 90 seconds |
 | Temporary storage | 512 MB |
-| Reserved concurrency | 2 |
+| Reserved concurrency | None (`DEPLOY_CONCURRENCY=-1`; shared account pool) |
 | Provisioned concurrency | None |
 | VPC attachment | None |
 | Internal server port | 8080 |
 
-Reserved concurrency bounds simultaneous work but is not a monthly spending cap. Database
-correctness must not depend on it. Verify account quota permits the reservation before deployment.
+Shared concurrency uses the existing account pool without a quota increase. Database
+correctness does not depend on a function reservation. A positive reservation remains optional
+and requires AWS headroom; neither concurrency mode imposes a monthly spending cap.
 
 Lambda images must run with a read-only filesystem; temporary writes belong under `/tmp`.
 Use an ECR repository in the same Region. [AWS image requirements](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
@@ -433,8 +434,8 @@ Templates explicitly separate candidate creation from production promotion. The 
 creates the first production alias; a later candidate failure does not move an existing alias.
 Console inspection does not create competing ownership of stack-managed settings.
 
-`stop` updates reserved concurrency to zero; `start` restores the declared value through the
-deployment definition. Already-running invocations can finish. Rollback promotes a compatible
+`stop` updates reserved concurrency to zero; `start` removes the reservation in shared mode
+(or restores an explicitly configured positive reservation) through the deployment definition. Already-running invocations can finish. Rollback promotes a compatible
 version/configuration through the same stable alias.
 
 Deleting a Function URL cannot preserve its address on recreation.
@@ -479,7 +480,7 @@ and continuous staging. Capture release, request correlation, operation/status, 
 safe error codes. Do not log practice content or credentials.
 
 Set a $5 monthly budget alert. It reports spending and is not an enforcement mechanism.
-Reserve concurrency and assistant quotas limit exposure but do not prove a fixed-dollar cap.
+Account concurrency and assistant quotas limit exposure but do not prove a fixed-dollar cap.
 Model-provider charges, optional domain renewal, taxes, and unrelated workloads are separate.
 
 ## 13. Verification and delivery

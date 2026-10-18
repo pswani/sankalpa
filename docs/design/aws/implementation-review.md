@@ -1,10 +1,76 @@
 # AWS Implementation and Verification
 
-Date: October 13, 2026.
+Date: implementation October 13, 2026; reviewed and reverified October 17, 2026.
 
-Status: implementation and local verification complete. Live AWS deployment and physical-iPhone
-acceptance remain deployment-dependent. No AWS resources were provisioned and no production
-practice data was migrated during this work.
+Status: implementation/local verification, deployment identity, production foundation, data import
+and production deployment are complete. Live REST and provider SSE checks pass. The user
+confirmed the iPhone connection works on October 17, 2026. Advanced device workflows, cloud
+recovery rehearsal and observed billing remain outstanding; the evidence below distinguishes
+completed checks from those remaining activities.
+
+## Current activity ledger — October 17, 2026
+
+| Activity | Result and evidence |
+|---|---|
+| Administrator and deployer setup | Complete: `pswani1-admin` bootstrap and `sankalpa-deployer` profile in account `516246499367`; IAM setup and live reads passed |
+| Production foundation | Complete: `sankalpa-prod-foundation` is `UPDATE_COMPLETE`; exact repository template and expected ownership tags verified |
+| Production database | Complete: `sankalpa-prod` is ACTIVE, on-demand, PK/SK schema, no indexes/streams, deletion protection enabled, 35-day PITR, `ttlEpoch` enabled |
+| Runtime role, ECR, logs | Audited against the template: scoped table/log permissions and Lambda trust, immutable AES-256 private images with Lambda retrieval policy, 14-day Standard logs |
+| SQLite migration/import | Complete: consistent copy migrated through the normal Java backend; original `tmp/sankalpa.db` unchanged, existing service UUID preserved, exact imported document parity verified |
+| Imported records | 2 sankalpas, 4 lifecycle transitions, 7 active sessions, 14 durable session identities total, 5 proposals; structural and authoritative Java domain validation passed |
+| Budget | Created account-wide `Sankalpa Monthly`, $5/month; ACTUAL alerts at 80% and 100%, both matching the private configured email |
+| Lambda quota | Existing pool of 10 used in shared mode; no increase required |
+| Quota request | AWS rejected 104 because its API requires a value above the standard 1,000. Request `c787416843d84134bb5a2fd800be67bcLZRsfQwO` for 1,001 submitted; last observed CASE_OPENED. Superseded by the operator’s choice of shared concurrency |
+| Local verification | 112 Java tests, 65 Python tests including the real local SDK migration test, both templates linted; all pass |
+| Connected-client verification | 109 storage/client + 95 domain/application + 11 conversational tests pass; package tests do not establish physical-device acceptance |
+| Container lifecycle | ARM64 build, real HTTP mutations/replay, replacement, rollback, failed replacement recovery, stop/start, cleanup/data retention all pass; disposable containers/volumes removed |
+| Staging configuration | Prepared ignored mode-600 `.env.staging` with a separate random token, this account/deployer profile, fake provider, assistant disabled, no provider key |
+| Release artifact | Deployed ARM64 digest `sha256:d9db004b9a62a1e5e1b1cda5c647a7d9889e8402735421f8314c953d5e16a4c2`; identical image in staging and production, no secrets bundled |
+| Live application | Production stack complete; HTTPS readiness, anonymous/wrong-token refusal, authenticated practice reads, READY metadata, preserved UUID and domain validation pass |
+| Provider streaming | Explicitly approved harmless production greeting: RUN_STARTED at 0.307 s, message at 3.758 s, RUN_FINISHED at 3.788 s. Business documents unchanged |
+| Live lifecycle | Staging stop/start, second deployment, rollback, unused-version/image cleanup and domain validation passed; URL, identity and persisted data preserved |
+| Staging teardown | Completed after acceptance; disposable stacks, function, table, repository and logs removed; private local staging configuration retained for future use |
+| Physical iPhone | User confirmed the connection works on October 17, 2026; advanced correction/offline replay workflows are not yet separately verified |
+| Billing observation | Actual charges over normal usage remain to be observed |
+
+The budget is an alert, not a spending cap. The quota increase does not reserve paid compute;
+no provisioned concurrency is configured. Production data was not changed by this review.
+
+## Review corrections and execution
+
+Reviewed the three operator/Console/review documents against the requirements, scripts,
+templates, local execution and live AWS reads before continuing setup. Corrected stale
+“no resources/no import” status, stack-level ownership tags, missing manual application
+parameters, the implemented HTTPS fix, current-credential rollback behavior, optional budget
+permissions, and the older-SQLite migration prerequisite. The adjacent deployer guide now
+points to the migrated backup and warns against repeating an already-completed import.
+
+The deploy command checks shared capacity or optional reservation headroom before building or
+pushing an image. Initial verification confirmed the old reserved configuration refused the
+account quota; the operator subsequently authorized shared concurrency as described below.
+
+### Shared-concurrency decision and completed rollout
+
+The operator explicitly chose shared concurrency instead of waiting for quota approval.
+`DEPLOY_CONCURRENCY=-1` now omits the Lambda reservation; the existing account pool of 10
+is sufficient. Stop still sets a zero reservation; start removes it. Positive reservations
+remain optional. Regression tests cover shared startup, reservation removal, and positive
+headroom checks. Backend verification passed 112 Java and 65 Python tests with real local
+DynamoDB, plus template lint.
+
+The former quota request is no longer a deployment prerequisite. If AWS approves it later,
+the account-wide limit may change, but this configuration does not create a function reservation
+or provisioned concurrency. The $5 budget remains an alert, not a spending cap.
+
+Live staging creation exposed missing `logs:DescribeLogGroups` permission needed by
+CloudFormation to resolve a log-group ARN. Added that read-only account discovery action to
+the owned deployer policy. The failed staging stack retained an empty table, repository and
+log group; recovery checks ownership and empty practice before recreating these staging-only
+resources. Production data is unaffected.
+
+Live staging HTTP/mutation and lifecycle acceptance, production deployment/read validation,
+and approved provider streaming have passed. The user subsequently confirmed the
+physical-iPhone connection works. Do not repeat production initialization/import. Live evidence is recorded below.
 
 ## Delivered implementation
 
@@ -58,8 +124,8 @@ The entry point is [`backend/scripts/backend`](../../../backend/scripts/backend)
 | Failed local replacement needed to restore the prior release | Restore the recorded image after failed readiness; leave release state unchanged | Actual exiting candidate restored the working container and practice data |
 | SQLite snapshot connections were not explicitly closed | Close source/snapshot connections deterministically | Operator import suite without resource warnings |
 
-The review was performed locally against the design, code, tests, and real local services. It is
-not represented as an independent external review or a successful live AWS deployment.
+The initial review used the design, code, tests and real local services. Subsequent live AWS
+evidence is recorded separately below; this is not an independent external review.
 
 ## Verification evidence
 
@@ -80,7 +146,8 @@ mutation refusal, namespace validation, state separation, NoEcho preservation, o
 failed candidate promotion, rollback code selection, startup resets, item limits, and interrupted
 imports. The real local SDK migration test preserves UUIDs, Unicode, revision, and nanoseconds.
 
-The final operator suite comprises 19 tests, including the real SDK test when
+The original operator suite comprises 19 tests; deployment quota/shared-start/HTTPS regressions add 5, and the
+identity bootstrap adds 41, for 65 total, including the real SDK test when
 `SANKALPA_TEST_DYNAMODB_ENDPOINT` is set. Default unit-only discovery explicitly skips that
 integration test when no local server is configured.
 
@@ -124,20 +191,20 @@ Both CloudFormation templates passed `cfn-lint`. The setup command's `--plan` pa
 without AWS calls or secret output. Python syntax, shell syntax, local Markdown links, and Git
 whitespace checks were checked before handoff.
 
-## Live acceptance still required
+## Remaining acceptance
 
-The operator must supply an AWS account/profile, actual credentials through that profile, and
-an application token in the ignored environment file. Before production cutover:
+Live setup, production REST access, authentication, database identity/parity and incremental
+provider streaming have passed. Staging release and lifecycle results are recorded below.
+The following checks still require separate operational/device work:
 
-1. Run setup and deploy in AWS staging, including account quota/IAM checks.
-2. Verify Function URL HTTPS, actual Web Adapter streaming, IAM enforcement, version publication,
-   alias promotion, stop/start, rollback, and cleanup through the live AWS services.
-3. Rehearse import and point-in-time recovery, including restored table permissions and metadata.
-4. Verify the connected physical iPhone and pending operation/service-identity behavior.
-5. Measure billed duration, logs, storage, and provider usage against the cost assumptions.
+1. Cloud point-in-time restore-and-switch rehearsal, including protection, runtime permissions
+   and metadata validation on the restored table. Import itself has already passed live.
+2. Advanced physical-iPhone session correction, offline replay and pending-operation/service-identity
+   behavior. Basic connection is user-confirmed; the broader workflow checks remain unverified.
+3. Observation of actual billed duration, logs, storage and provider charges over real usage.
 
-These checks cannot be proven by local emulation or template lint. No live deployment result,
-physical-device acceptance, or guaranteed monthly bill is claimed here.
+The user confirmation establishes basic device connectivity, not the full advanced device
+acceptance matrix. No guaranteed monthly bill is claimed here.
 
 ## Practical limits
 
@@ -151,3 +218,32 @@ physical-device acceptance, or guaranteed monthly bill is claimed here.
 - External restores need explicit protection/TTL/PITR/tag configuration and can require a short
   controlled outage while role and table configuration switch.
 - Concurrency and budget alerts do not enforce a hard dollar cap.
+
+## Live deployment evidence — shared concurrency
+
+Production URL: https://xkf54pbp4oata4kxbnwsy3hk2a0rjwxl.lambda-url.us-east-1.on.aws/
+
+Production service identity: `57f23afa-7d1e-4ce4-bc33-63ec9c00c340`.
+The live imported document set exactly matched the migrated SQLite backup before the approved
+assistant greeting; the greeting preserved business records. Provider operational usage/lease
+records can change independently of practice records.
+
+Shared mode is verified by the absence of `ReservedConcurrentExecutions` in the Lambda
+concurrency response. The first live startup showed Java cold-start latency of tens of seconds.
+A local Python CA-store failure initially prevented the operator's HTTPS probe despite curl and
+the Lambda runtime succeeding. The probe now loads the AWS dependency CA bundle while retaining
+certificate and hostname verification; an HTTPS regression test and all 65 Python tests pass.
+
+Staging live mutation checks passed declaration/begin, session and linked-extension replay,
+shared session reads, deletion replay and permanent tombstone behavior. Production verification
+uses reads; the assistant greeting did not request or confirm mutations.
+
+The user entered the production endpoint on the iPhone and confirmed it works. Detailed
+session correction/offline replay checks, cloud PITR restore-and-switch rehearsal and elapsed
+real billing observation remain separate operational acceptance activities.
+
+Staging lifecycle acceptance completed against AWS: zero concurrency rejected new requests;
+start removed the reservation and preserved data/identity; second deployment and rollback
+preserved URL/identity; cleanup removed unused versions 1 and 2, retained aliased versions,
+and passed the authoritative database validator. Disposable staging teardown then completed: both stacks, Lambda, table, repository and log
+group were removed to avoid ongoing test-resource costs. Production remains serving version 1.

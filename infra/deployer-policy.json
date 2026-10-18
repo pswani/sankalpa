@@ -8,7 +8,8 @@
         "sts:GetCallerIdentity",
         "lambda:GetAccountSettings",
         "ecr:GetAuthorizationToken",
-        "lambda:ListFunctions"
+        "lambda:ListFunctions",
+        "logs:DescribeLogGroups"
       ],
       "Resource": "*"
     },
@@ -41,7 +42,8 @@
         "arn:aws:lambda:REGION:ACCOUNT_ID:function:sankalpa-*",
         "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/sankalpa-*",
         "arn:aws:ecr:REGION:ACCOUNT_ID:repository/sankalpa-*",
-        "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/sankalpa-*"
+        "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/sankalpa-*",
+        "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/sankalpa-*:*"
       ]
     },
     {
@@ -55,6 +57,7 @@
         "iam:DeleteRolePolicy",
         "iam:GetRolePolicy",
         "iam:ListRolePolicies",
+        "iam:ListRoleTags",
         "iam:TagRole",
         "iam:UntagRole",
         "iam:UpdateAssumeRolePolicy"

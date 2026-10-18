@@ -15,7 +15,7 @@ Parameters:
   Architecture: {Type: String, Default: arm64, AllowedValues: [arm64, x86_64]}
   MemorySize: {Type: Number, Default: 1024, MinValue: 512, MaxValue: 3072}
   TimeoutSeconds: {Type: Number, Default: 90, MinValue: 45, MaxValue: 120}
-  ReservedConcurrency: {Type: Number, Default: 2, MinValue: 0, MaxValue: 10}
+  ReservedConcurrency: {Type: Number, Default: -1, MinValue: -1, MaxValue: 10}
   PracticeTimezone: {Type: String, Default: America/Chicago}
   ApiToken: {Type: String, NoEcho: true, MinLength: 32}
   AssistantEnabled: {Type: String, Default: 'false', AllowedValues: ['true', 'false']}
@@ -27,6 +27,7 @@ Parameters:
   RunsPerMinute: {Type: Number, Default: 2, MinValue: 1}
   RunsPerDay: {Type: Number, Default: 20, MinValue: 1}
 Conditions:
+  HaveReservation: !Not [!Equals [!Ref ReservedConcurrency, -1]]
   HaveProduction: !Not [!Equals [!Ref ProductionVersion, '']]
   HaveRollback: !Not [!Equals [!Ref RollbackVersion, '']]
 Resources:
@@ -42,7 +43,7 @@ Resources:
       MemorySize: !Ref MemorySize
       Timeout: !Ref TimeoutSeconds
       EphemeralStorage: {Size: 512}
-      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      ReservedConcurrentExecutions: !If [HaveReservation, !Ref ReservedConcurrency, !Ref 'AWS::NoValue']
       Environment:
         Variables:
           SANKALPA_PERSISTENCE: dynamodb

@@ -197,6 +197,11 @@ deployment inputs; they are not bundled into the container image. No Secrets Man
 
 ### AWS deployment settings
 
+For a dedicated deployment identity, follow the [Sankalpa deployer setup guide](../docs/design/aws/deployer-setup.md).
+It includes the administrator bootstrap script, policy attachment, access-key creation, named
+profile configuration, and live permission checks. Use `DEPLOY_AWS_PROFILE=sankalpa-deployer`
+after completing that setup.
+
 Create or edit `.env.prod` with these settings. The values below are examples/defaults, not a copy
 of any operator's credentials or personal configuration.
 
@@ -206,29 +211,30 @@ of any operator's credentials or personal configuration.
 | `DEPLOY_RESOURCE_PREFIX` | `sankalpa` | Owned resource namespace; the default production resources use `sankalpa-prod`. |
 | `DEPLOY_REGION` | `us-east-1` | AWS Region for the stacks and data. |
 | `DEPLOY_ACCOUNT_ID` | Your 12-digit account ID | The operator checks the authenticated AWS account before cloud operations. |
-| `DEPLOY_AWS_PROFILE` | `default` | Local AWS credential profile. Keep AWS access keys in the AWS credential provider, not this file. |
+| `DEPLOY_AWS_PROFILE` | `sankalpa-deployer` | Local AWS credential profile created by complete setup. Keep AWS access keys in the AWS credential provider, not this file. |
 | `DEPLOY_MEMORY` | `1024` | Lambda memory in MB; supported range 512–3072. |
 | `DEPLOY_TIMEOUT` | `90` | Lambda invocation timeout in seconds; supported range 45–120. |
-| `DEPLOY_CONCURRENCY` | `2` | Reserved concurrent Lambda invocations; supported range 1–10. |
+| `DEPLOY_CONCURRENCY` | `-1` | Shared account concurrency; optional positive reservation 1–10. Stop uses zero internally; start removes the reservation in shared mode. |
 | `DEPLOY_ARCHITECTURE` | `arm64` | Image and Lambda architecture; `x86_64` is also supported. |
 | `SANKALPA_TIMEZONE` | `America/Chicago` | Practice time zone; must match the iOS client. |
 | `DEPLOY_BUDGET_EMAIL` | Empty | Optional opt-in to account-wide monthly $5 budget alerts. This is not a spending cap. |
 
-The selected AWS profile must exist on the machine running the script. Install the AWS CLI if
-needed using the [official installation instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
-For an existing access-key
-deployment identity, configure it interactively with the AWS CLI, using the same profile name as
-`DEPLOY_AWS_PROFILE` (for example, `default`):
+The selected AWS profile must exist on the machine running deployment. For this repository, the
+complete setup command below opens an administrator browser login and creates/reuses the
+deployment user, policy, access key, local profile, and `.env.prod` profile selection automatically:
 
 ```sh
-aws configure --profile default
+python3 scripts/setup_aws_deployer.py \
+  --account-id 516246499367 --region us-east-1 \
+  --admin-user pswani1-admin --complete
 ```
 
-Enter that identity's access key, secret key, and Region in the prompts. For an IAM Identity Center
-identity, use `aws configure sso --profile default`, then `aws sso login --profile default` instead.
-You can also select an already configured profile by updating `DEPLOY_AWS_PROFILE`. These are
-local credential setup steps; they do not grant permissions. The identity still needs the deployment
-permissions described in the [operator prerequisites](scripts/README-aws.md#prerequisites).
+Run it on your Mac with Python 3.11+ and AWS CLI 2.32.0+. Select `pswani1-admin` in the browser;
+no SSO session name, administrator access key, CloudShell upload, or manual deployer key copying
+is needed. The [setup guide](../docs/design/aws/deployer-setup.md) explains checks, reruns, and
+credential storage. It requires administrator IAM and local-browser-login permissions; it does
+not import data or deploy the backend. Install the CLI if needed using the
+[official installation instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
 
 ### API authentication and assistant settings
 
