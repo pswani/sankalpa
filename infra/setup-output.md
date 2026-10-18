@@ -1,0 +1,14 @@
+LogGroupName
+/aws/lambda/sankalpa-prod
+-
+-
+RepositoryUri
+516246499367.dkr.ecr.us-east-1.amazonaws.com/sankalpa-prod
+-
+-
+RuntimeRoleArn
+arn:aws:iam::516246499367:role/sankalpa-prod-runtime
+-
+-
+TableName
+sankalpa-prod

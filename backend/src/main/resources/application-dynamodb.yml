@@ -1,0 +1,12 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+sankalpa:
+  dynamodb:
+    table: ${SANKALPA_DYNAMODB_TABLE:sankalpa-local}
+    region: ${AWS_REGION:us-east-1}
+    endpoint: ${SANKALPA_DYNAMODB_ENDPOINT:}
+  assistant:
+    runs-per-day: ${SANKALPA_ASSISTANT_RUNS_PER_DAY:20}

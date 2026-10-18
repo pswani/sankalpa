@@ -15,11 +15,20 @@ public final class ServiceInstanceIdentity {
     private final JdbcTemplate jdbc;
     private final JdbcSankalpaPersistenceAdapter practice;
     private volatile UUID value;
+    private com.sankalpa.adapter.out.dynamodb.DynamoUnitOfWork dynamo;
 
     public ServiceInstanceIdentity(JdbcTemplate jdbc, JdbcSankalpaPersistenceAdapter practice) { this.jdbc = jdbc; this.practice = practice; }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    public ServiceInstanceIdentity(org.springframework.beans.factory.ObjectProvider<JdbcTemplate> jdbc,
+            org.springframework.beans.factory.ObjectProvider<JdbcSankalpaPersistenceAdapter> practice,
+            org.springframework.beans.factory.ObjectProvider<com.sankalpa.adapter.out.dynamodb.DynamoUnitOfWork> dynamo) {
+        this.jdbc = jdbc.getIfAvailable(); this.practice = practice.getIfAvailable(); this.dynamo = dynamo.getIfAvailable();
+    }
+
     @PostConstruct
     void initializeAndVerify() {
+        if (dynamo != null) { value = UUID.fromString(dynamo.metadata().get("serviceInstanceId").asText()); return; }
         List<String> stored = jdbc.query(
                 "SELECT metadata_value FROM service_metadata WHERE metadata_key = ?",
                 (rs, rowNum) -> rs.getString(1), KEY);

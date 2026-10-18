@@ -23,12 +23,14 @@ public final class AssistantBoundaryFilter extends OncePerRequestFilter {
     static final long MAX_BODY_BYTES = 256 * 1024;
     private final int runsPerMinute;
     private final Clock clock;
+    private boolean distributed;
     private final Map<String, ArrayDeque<Long>> requests = new ConcurrentHashMap<>();
 
     @Autowired
     public AssistantBoundaryFilter(
-            @Value("${sankalpa.assistant.runs-per-minute:30}") int runsPerMinute) {
-        this(runsPerMinute, Clock.systemUTC());
+            @Value("${sankalpa.assistant.runs-per-minute:30}") int runsPerMinute,
+            @Value("${sankalpa.persistence:sqlite}") String persistence) {
+        this(runsPerMinute, Clock.systemUTC()); distributed = "dynamodb".equals(persistence);
     }
 
     AssistantBoundaryFilter(int runsPerMinute, Clock clock) {
@@ -49,6 +51,7 @@ public final class AssistantBoundaryFilter extends OncePerRequestFilter {
                     "ASSISTANT_LIMIT_REACHED", "Assistant request is too large.");
             return;
         }
+        if (distributed) { chain.doFilter(request, response); return; }
         String key = request.getRemoteAddr();
         long now = clock.millis();
         ArrayDeque<Long> bucket = requests.computeIfAbsent(key, ignored -> new ArrayDeque<>());

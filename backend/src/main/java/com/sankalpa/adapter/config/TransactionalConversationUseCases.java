@@ -17,17 +17,14 @@ import java.util.function.Supplier;
 /** Owns the outer transaction that includes proposal resolution and the joined domain command. */
 public final class TransactionalConversationUseCases implements ConversationUseCases {
     private final ConversationUseCases delegate;
-    private final TransactionTemplate transaction;
-
-    public TransactionalConversationUseCases(ConversationUseCases delegate,
-                                             PlatformTransactionManager manager) {
-        this.delegate = delegate;
-        this.transaction = new TransactionTemplate(manager);
+    private final UseCaseTransactions transactions;
+    public TransactionalConversationUseCases(ConversationUseCases delegate, PlatformTransactionManager manager) {
+        this(delegate, new JdbcUseCaseTransactions(manager));
     }
-
-    private <T> T inTransaction(Supplier<T> action) {
-        return transaction.execute(status -> action.get());
+    public TransactionalConversationUseCases(ConversationUseCases delegate, UseCaseTransactions transactions) {
+        this.delegate = delegate; this.transactions = transactions;
     }
+    private <T> T inTransaction(Supplier<T> action) { return transactions.write(action); }
 
     @Override public Proposal findBySourceRunId(UUID runId) {
         return inTransaction(() -> delegate.findBySourceRunId(runId));
@@ -56,7 +53,7 @@ public final class TransactionalConversationUseCases implements ConversationUseC
 
     @Override
     public Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId) {
-        return PracticeTransactions.retry(() -> inTransaction(() -> delegate.confirm(threadId, proposalId, confirmationId)));
+        return inTransaction(() -> delegate.confirm(threadId, proposalId, confirmationId));
     }
 
     @Override public Proposal proposeSession(UUID threadId,UUID runId,SankalpaId id,LocalDateTime at,String summary,
@@ -64,7 +61,7 @@ public final class TransactionalConversationUseCases implements ConversationUseC
         return inTransaction(()->delegate.proposeSession(threadId,runId,id,at,summary,alternatives,contract));
     }
     @Override public Resolution confirm(UUID threadId,UUID proposalId,UUID confirmationId,com.sankalpa.application.PracticeContract contract) {
-        return PracticeTransactions.retry(()->inTransaction(()->delegate.confirm(threadId,proposalId,confirmationId,contract)));
+        return inTransaction(()->delegate.confirm(threadId,proposalId,confirmationId,contract));
     }
 
     @Override

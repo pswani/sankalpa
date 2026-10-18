@@ -13,7 +13,7 @@ class ArchitectureTest {
     static final ArchRule domain_is_framework_free = noClasses()
             .that().resideInAPackage("..domain..")
             .should().dependOnClassesThat().resideInAnyPackage(
-                    "org.springframework..", "jakarta..", "com.fasterxml.jackson..");
+                    "org.springframework..", "jakarta..", "com.fasterxml.jackson..", "software.amazon.awssdk..");
 
     @ArchTest
     static final ArchRule application_does_not_depend_on_adapters = noClasses()
@@ -24,5 +24,5 @@ class ArchitectureTest {
     static final ArchRule application_is_framework_free = noClasses()
             .that().resideInAPackage("..application..")
             .should().dependOnClassesThat().resideInAnyPackage(
-                    "org.springframework..", "jakarta..", "com.fasterxml.jackson..");
+                    "org.springframework..", "jakarta..", "com.fasterxml.jackson..", "software.amazon.awssdk..");
 }

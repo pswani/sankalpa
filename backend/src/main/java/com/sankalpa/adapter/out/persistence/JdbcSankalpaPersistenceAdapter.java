@@ -30,6 +30,7 @@ import java.util.Optional;
 
 @Repository
 @org.springframework.context.annotation.DependsOn("linkedSchemaMigration")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="sankalpa.persistence", havingValue="sqlite", matchIfMissing=true)
 public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, SessionRepository {
     private final JdbcTemplate jdbc;
 

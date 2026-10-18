@@ -32,6 +32,10 @@ public class ApplicationConfiguration {
     }
 
     @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="sankalpa.persistence", havingValue="sqlite", matchIfMissing=true)
+    UseCaseTransactions jdbcTransactions(PlatformTransactionManager manager) { return new JdbcUseCaseTransactions(manager); }
+
+    @Bean
     SankalpaService sankalpaService(SankalpaRepository sankalpas,
                                     SessionRepository sessions,
                                     SankalpaClock clock) {
@@ -41,7 +45,7 @@ public class ApplicationConfiguration {
     @Bean
     @Primary
     SankalpaUseCases transactionalSankalpaUseCases(SankalpaService service,
-                                                    PlatformTransactionManager manager) {
+                                                    UseCaseTransactions manager) {
         return new TransactionalSankalpaUseCases(service, manager);
     }
 
@@ -60,7 +64,7 @@ public class ApplicationConfiguration {
     @Bean
     @Primary
     ConversationUseCases transactionalConversationUseCases(ProposalService service,
-                                                            PlatformTransactionManager manager) {
+                                                            UseCaseTransactions manager) {
         return new TransactionalConversationUseCases(service, manager);
     }
 }

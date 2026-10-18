@@ -1,0 +1,79 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AccountDiscoveryAndImageAuthentication",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "lambda:GetAccountSettings",
+        "ecr:GetAuthorizationToken",
+        "lambda:ListFunctions",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SankalpaStacks",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateChangeSet",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:ListStackResources",
+        "cloudformation:GetTemplate",
+        "cloudformation:DeleteStack"
+      ],
+      "Resource": "arn:aws:cloudformation:REGION:ACCOUNT_ID:stack/sankalpa-*/*"
+    },
+    {
+      "Sid": "SankalpaResources",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:*",
+        "dynamodb:*",
+        "ecr:*",
+        "logs:*"
+      ],
+      "Resource": [
+        "arn:aws:lambda:REGION:ACCOUNT_ID:function:sankalpa-*",
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/sankalpa-*",
+        "arn:aws:ecr:REGION:ACCOUNT_ID:repository/sankalpa-*",
+        "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/sankalpa-*",
+        "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/sankalpa-*:*"
+      ]
+    },
+    {
+      "Sid": "ManageOnlyRuntimeRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListRoleTags",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/sankalpa-*-runtime"
+    },
+    {
+      "Sid": "PassRuntimeRolesOnlyToLambda",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/sankalpa-*-runtime",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        }
+      }
+    }
+  ]
+}

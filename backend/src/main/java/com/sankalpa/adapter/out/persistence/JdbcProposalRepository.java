@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Repository
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="sankalpa.persistence", havingValue="sqlite", matchIfMissing=true)
 public class JdbcProposalRepository implements ProposalRepository {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;

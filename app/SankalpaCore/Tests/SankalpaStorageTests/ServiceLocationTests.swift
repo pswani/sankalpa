@@ -15,7 +15,9 @@ struct ServiceLocationTests {
             ("studio.local", "studio.local", 8080),
             ("studio.local:9000", "studio.local", 9000),
             ("http://studio.local:9000", "studio.local", 9000),
-            ("https://studio.local", "studio.local", 8080),
+            ("https://studio.local", "studio.local", 443),
+            ("https://example.lambda-url.us-east-1.on.aws/", "example.lambda-url.us-east-1.on.aws", 443),
+            ("https://studio.local:8443", "studio.local", 8443),
             ("http://studio.local:9000/api/v1", "studio.local", 9000),
             ("  studio.local  ", "studio.local", 8080),
             ("192.168.1.24:8080", "192.168.1.24", 8080)

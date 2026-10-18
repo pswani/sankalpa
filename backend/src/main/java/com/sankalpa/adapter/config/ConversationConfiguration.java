@@ -20,6 +20,7 @@ import java.time.ZoneId;
 public class ConversationConfiguration {
     @Bean
     @ConditionalOnProperty(name = "sankalpa.assistant.provider", havingValue = "openai")
+    @ConditionalOnProperty(name = "sankalpa.assistant.enabled", havingValue = "true")
     ConversationModel langChain4jConversationModel(ObjectMapper json,
             @Value("${sankalpa.assistant.model}") String model,
             @Value("${sankalpa.assistant.api-key}") String apiKey,
@@ -33,7 +34,7 @@ public class ConversationConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(name = "sankalpa.assistant.provider", havingValue = "fake", matchIfMissing = true)
+    @org.springframework.context.annotation.Conditional(ScriptedWhenDisabledOrFake.class)
     ScriptedConversationModel scriptedConversationModel() { return new ScriptedConversationModel(); }
 
     @Bean
@@ -51,7 +52,15 @@ public class ConversationConfiguration {
     @Bean
     ConversationCoordinator conversationCoordinator(ConversationModel model,
             ConversationContextLoader context, ConversationToolExecutor tools,
-            ConversationUseCases proposals) {
-        return new ConversationCoordinator(model, context, tools, proposals);
+            ConversationUseCases proposals, org.springframework.beans.factory.ObjectProvider<ConversationRunGuard> guard) {
+        return new ConversationCoordinator(model, context, tools, proposals, guard.getIfAvailable());
     }
+    static final class ScriptedWhenDisabledOrFake implements org.springframework.context.annotation.Condition {
+        public boolean matches(org.springframework.context.annotation.ConditionContext context, org.springframework.core.type.AnnotatedTypeMetadata metadata) {
+            var environment = context.getEnvironment();
+            return !environment.getProperty("sankalpa.assistant.enabled", Boolean.class, false)
+                || "fake".equals(environment.getProperty("sankalpa.assistant.provider", "fake"));
+        }
+    }
+
 }

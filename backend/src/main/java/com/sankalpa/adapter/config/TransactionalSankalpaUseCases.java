@@ -24,20 +24,16 @@ import java.util.function.Supplier;
 /** Spring transaction adapter around framework-free application use cases. */
 public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
     private final SankalpaUseCases delegate;
-    private final TransactionTemplate write;
-    private final TransactionTemplate read;
+    private final UseCaseTransactions transactions;
 
     public TransactionalSankalpaUseCases(SankalpaUseCases delegate, PlatformTransactionManager manager) {
-        this.delegate = delegate;
-        this.write = new TransactionTemplate(manager);
-        this.read = new TransactionTemplate(manager);
-        this.read.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_SERIALIZABLE);
-        // SQLite does not support changing JDBC read-only mode after connection creation.
-        // Reads still get a transaction boundary, without the unsupported driver hint.
+        this(delegate, new JdbcUseCaseTransactions(manager));
     }
-
-    private <T> T writing(Supplier<T> action) { return write.execute(status -> action.get()); }
-    private <T> T reading(Supplier<T> action) { return read.execute(status -> action.get()); }
+    public TransactionalSankalpaUseCases(SankalpaUseCases delegate, UseCaseTransactions transactions) {
+        this.delegate = delegate;
+        this.transactions = transactions;
+    }
+    private <T> T reading(Supplier<T> action) { return transactions.read(action); }
 
     @Override
     public Sankalpa declare(String title, String description, ActionType actionType, LocalDate startDate,
@@ -111,9 +107,5 @@ public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
         return identityWriting(() -> delegate.writeSnapshot(query));
     }
 
-    private <T> T identityWriting(Supplier<T> action) {
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
-            return action.get();
-        return PracticeTransactions.retry(() -> writing(action));
-    }
+    private <T> T identityWriting(Supplier<T> action) { return transactions.write(action); }
 }

@@ -8,12 +8,24 @@ perform, and see how each period turned out once it closes.
 
 **The [backend service](../backend/README.md) owns the practice; the phone keeps a copy.** Every
 command goes to the service, which decides what is allowed. What it returns is cached on the phone,
-so the practice is still readable when that computer is not reachable — and a session logged while
+so the practice is still readable when the service is not reachable — and a session logged while
 it is away is held and sent as soon as it answers.
 
 ## Running it
 
-Requires Xcode 27, an iOS 27 simulator runtime, and the service running.
+Requires Xcode 27 and a compatible simulator runtime or physical iPhone. The backend can run
+on AWS or locally on the Mac.
+
+For the deployed AWS service, open **Sankalpas → Sankalpa service** and enter:
+
+- **Computer:** `https://xkf54pbp4oata4kxbnwsy3hk2a0rjwxl.lambda-url.us-east-1.on.aws/`
+- **Authentication:** the `SANKALPA_API_TOKEN` value from your private `backend/.env.prod` file.
+
+Save and refresh. The Mac does not need to remain running. See the
+[AWS connection guide](../docs/design/aws/aws-console-setup.md#step-11--connect-the-iphone)
+for details. The user confirmed this iPhone connection works on October 17, 2026.
+
+For local development, start the backend on the Mac:
 
 ```bash
 cd backend && SANKALPA_TIMEZONE=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||') mvn spring-boot:run
@@ -33,10 +45,10 @@ Pick the **Sankalpa** scheme and an iPhone 17 Pro simulator. From the command li
 xcodebuild -project app/Sankalpa.xcodeproj -scheme Sankalpa -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
-The app looks for the service on `localhost` by default, which is where a **simulator** reaches one
-running on the same Mac. On a **real phone** that never works — `localhost` is the phone — so the
-name of the Mac has to be set: **Sankalpas → Sankalpa service**, then type something like
-`studio.local` (add `:port` if it is not 8080). The same screen is reachable from the recovery
+For local development, the app defaults to `localhost`, where a **simulator** reaches a backend
+on the same Mac. A real iPhone needs the AWS HTTPS address above or the address of a reachable
+local backend. Set it under **Sankalpas → Sankalpa service**. A local HTTP address such as
+`studio.local:8080` is for development; physical-device deployments use trusted HTTPS. The same screen is reachable from the recovery
 screen, which is where someone with nothing on screen yet will be. `SANKALPA_API_BASE_URL` in the
 scheme's environment overrides the setting without disturbing it, which is how a UI run points the
 app at its own service.

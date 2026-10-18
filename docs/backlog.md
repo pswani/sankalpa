@@ -1,4 +1,17 @@
-#Backlog
-## 1 Extending sankalpa
-I want to extend an ongoing sankalpa.  I would like to clone the existing sankalpa for a higher duration.  The observances / sessions for the existing sankalpa should be copied to the new extended sankalpa.
-Newly added sessions to the old sankalpa should get copied to the newly added Sankalpa too.  A good way to handle this will be to check all the sankalpas where the session can be applied while it is being added to any of the Sankalpa. 
+# Backlog
+
+No open items are currently recorded in this file. Feature-specific requirements and remaining
+acceptance work are maintained in the linked documents below.
+
+## Completed: linked sankalpa extensions
+
+Implemented in the backend and connected iOS app. A finite ongoing sankalpa can be extended
+into a longer linked vow. Sessions contribute to every eligible vow in the series, preserving
+session identities and avoiding duplicate session copies.
+
+The original cloning/copying proposal is superseded by the
+[linked-extension requirements](requirements/linked-sankalpa-extensions.md) and
+[detailed design](design/linked-sankalpa-extensions/README.md).
+
+For remaining AWS recovery, device workflow and billing checks, see
+[the implementation review](design/aws/implementation-review.md#remaining-acceptance).

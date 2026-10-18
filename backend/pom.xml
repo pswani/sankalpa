@@ -21,6 +21,9 @@
     </properties>
     <dependencies>
         <dependency>
+            <groupId>software.amazon.awssdk</groupId><artifactId>dynamodb</artifactId><version>2.55.15</version>
+        </dependency>
+        <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
             <version>${langchain4j.version}</version>

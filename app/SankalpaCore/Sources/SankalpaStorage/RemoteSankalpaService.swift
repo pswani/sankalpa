@@ -277,7 +277,7 @@ public final class RemoteSankalpaService {
             response = try await client.capabilities()
         } catch let failure as APIFailure {
             if case .unreachable = failure,
-               journal.serviceLocation == location.displayText,
+               location.matchesStoredAddress(journal.serviceLocation),
                let cached = journal.capability,
                cached.supportsReliableSessions {
                 if cached.supportsLinkedExtensions { client = client.linked(to: cached.serviceInstanceId) }

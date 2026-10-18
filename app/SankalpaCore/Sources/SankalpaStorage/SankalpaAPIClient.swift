@@ -233,7 +233,7 @@ public struct SankalpaAPIClient: Sendable {
         let data: Data
         let response: HTTPURLResponse
         do {
-            (data, response) = try await transport.send(request)
+            (data, response) = try await exchange(request)
         } catch let failure as APIFailure {
             throw failure
         } catch {
@@ -287,7 +287,7 @@ public struct SankalpaAPIClient: Sendable {
         let data: Data
         let response: HTTPURLResponse
         do {
-            (data, response) = try await transport.send(request)
+            (data, response) = try await exchange(request)
         } catch let failure as APIFailure {
             throw failure
         } catch {
@@ -306,9 +306,24 @@ public struct SankalpaAPIClient: Sendable {
         }
     }
 
+    /// Retry only read/identity-bound exchanges, using the exact same request and body.
+    private func exchange(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let safe = request.httpMethod == "GET" || request.httpMethod == "DELETE"
+            || request.value(forHTTPHeaderField: "Idempotency-Key") != nil
+        for attempt in 0..<3 {
+            let result = try await transport.send(request)
+            if !safe || ![429, 503].contains(result.1.statusCode) || attempt == 2 { return result }
+            try await Task.sleep(for: .milliseconds(100 * (attempt + 1)))
+        }
+        throw APIFailure.unreachable("The service is busy. Try again shortly.")
+    }
+
     /// A non-2xx is expected to be problem+json with a stable `code`. When it is not — a proxy
     /// error page, a 500 — there is no code to map, so it stays an unreachable-service failure.
     private func refusal(from data: Data, status: Int) -> APIFailure {
+        if [429, 503].contains(status), (try? decoder.decode(API.Problem.self, from: data))?.code == nil {
+            return .unreachable("The service is busy. Try again shortly.")
+        }
         guard let problem = try? decoder.decode(API.Problem.self, from: data),
               let code = problem.code
         else {

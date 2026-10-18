@@ -16,9 +16,9 @@ public struct ServiceLocation: Equatable, Sendable {
     /// What the simulator needs, and a sensible thing to show someone who has not changed it yet.
     public static let simulatorDefault = ServiceLocation(host: "localhost", port: defaultPort)
 
-    public init(host: String, port: Int = ServiceLocation.defaultPort, scheme: String = "http") {
+    public init(host: String, port: Int? = nil, scheme: String = "http") {
         self.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.port = port
+        self.port = port ?? (scheme == "https" ? 443 : ServiceLocation.defaultPort)
         self.scheme = scheme == "https" ? "https" : "http"
     }
 
@@ -43,7 +43,7 @@ public struct ServiceLocation: Equatable, Sendable {
 
         let parts = remainder.split(separator: ":", omittingEmptySubsequences: false)
         let host: String
-        var port = ServiceLocation.defaultPort
+        var port = parsedScheme == "https" ? 443 : ServiceLocation.defaultPort
         switch parts.count {
         case 1:
             host = String(parts[0])
@@ -75,11 +75,16 @@ public struct ServiceLocation: Equatable, Sendable {
         URL(string: "\(scheme)://\(host):\(port)") ?? ServiceLocation.simulatorDefault.fallbackURL
     }
 
+    /// Preserve the earlier persisted spelling of HTTPS port 443 without rebinding a service.
+    func matchesStoredAddress(_ text: String) -> Bool {
+        text == displayText || (scheme == "https" && port == 443 && text == "https://\(host):443")
+    }
+
     private var fallbackURL: URL { URL(string: "http://localhost:8080")! }
 
     /// What the settings screen shows and the recovery screen names.
     public var displayText: String {
-        let authority = port == ServiceLocation.defaultPort ? host : "\(host):\(port)"
+        let authority = port == (scheme == "https" ? 443 : ServiceLocation.defaultPort) ? host : "\(host):\(port)"
         return scheme == "https" ? "https://\(authority)" : authority
     }
 }
