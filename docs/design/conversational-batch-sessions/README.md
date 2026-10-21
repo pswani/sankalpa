@@ -1,5 +1,12 @@
 # Conversational batch session logging
 
+**October 17 recovery amendment:** [Historical observance repair](history-repair.md) governs
+new version-3 proposals. It adds an explicitly reviewed initial-Begin correction for eligible
+independent observances and a labeled suggested recording time when the user reports whole days.
+The original version-2 exact-time behavior below remains the compatibility path. Structured tool
+failures now preserve the actual lifecycle blocker; changing times cannot fix an earlier date.
+
+
 Status: implemented and verified locally. Date: October 17, 2026.
 See [implementation review](implementation-review.md) for test evidence and remaining rollout gates.
 No production practice data or deployed service was changed.

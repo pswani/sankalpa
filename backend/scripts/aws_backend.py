@@ -171,7 +171,8 @@ def sqlite_documents(path):
             history=[]
             for t in db.execute("SELECT * FROM sankalpa_lifecycle_transition WHERE sankalpa_id=? ORDER BY sequence_number",(id,)):
                 if t["sequence_number"]!=len(history): raise ValueError("Invalid SQLite audit sequence")
-                history.append({"from":t["from_state"],"to":t["to_state"],"effectiveAt":t["effective_at"],"recordedAt":t["recorded_at"],"originSankalpaId":{"value":t["origin_sankalpa_id"]}})
+                history.append({"from":t["from_state"],"to":t["to_state"],"effectiveAt":t["effective_at"],"recordedAt":t["recorded_at"],"originSankalpaId":{"value":t["origin_sankalpa_id"]},
+                                **({"beginCorrections":json.loads(t["begin_corrections_json"])} if "begin_corrections_json" in t.keys() else {})})
             value={"id":id,"title":row["title"],"description":row["description"],"actionType":row["action_type"],"startDate":row["start_date"],"periodUnit":row["period_unit"],"timesPerPeriod":row["times_per_period"],"periodCount":row["period_count"],"declaredAt":row["declared_at"],"currentState":row["current_state"],"version":row["version"],"seriesId":row["series_id"],"extensionOf":row["extension_of"],"history":history}
             docs["VOW#"+id]=value
             docs[f"SERIES#{value['seriesId']}#{value['periodCount'] or 0:04d}#{id}"]={"id":id}
@@ -320,6 +321,7 @@ def smoke(url,cfg,mutations=False):
         if request(url,base+"/sessions",token,fact,session_headers)[0]!=410: raise RuntimeError("Deleted session identity was resurrected")
         print("Staging lifecycle, linked-session, identity replay and tombstone verification passed")
     print("Readiness/authentication/database access verified; service identity:",capability["serviceInstanceId"])
+    return capability
 
 class Cloud:
     def __init__(self,cfg):
@@ -404,7 +406,7 @@ class Cloud:
         return p
     def versions(self):
         return [v for page in self.lam.get_paginator("list_versions_by_function").paginate(FunctionName=self.name) for v in page["Versions"]]
-    def deploy(self,image=None,source_image=None):
+    def deploy(self,image=None,source_image=None,candidate_check=None):
         require_token(self.cfg)
         self.check_concurrency()  # Check account capacity before building/pushing.
         table=self.outputs(self.name+"-foundation")["TableName"]
@@ -427,7 +429,10 @@ class Cloud:
         template=(ROOT/"infra/application.yaml").read_text()
         self.apply(self.name+"-app",template,p)
         out=self.outputs(self.name+"-app")
-        smoke(out["CandidateUrl"],self.cfg,False)
+        capability=smoke(out["CandidateUrl"],self.cfg,False)
+        if capability["serviceInstanceId"]!=meta["serviceInstanceId"]:
+            raise RuntimeError("Candidate service identity differs from the selected practice")
+        if candidate_check: candidate_check(capability)
         version=out["CandidateVersion"]
         if production:
             p["RollbackVersion"]=production; p["ProductionVersion"]=version

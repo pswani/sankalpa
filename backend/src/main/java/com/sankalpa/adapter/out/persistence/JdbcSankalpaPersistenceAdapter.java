@@ -29,10 +29,23 @@ import java.util.Map;
 import java.util.Optional;
 
 @Repository
-@org.springframework.context.annotation.DependsOn("linkedSchemaMigration")
+@org.springframework.context.annotation.DependsOn("beginCorrectionSchemaMigration")
 @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="sankalpa.persistence", havingValue="sqlite", matchIfMissing=true)
 public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, SessionRepository {
     private final JdbcTemplate jdbc;
+    private static final com.fasterxml.jackson.databind.ObjectMapper AUDIT_JSON = new com.fasterxml.jackson.databind.ObjectMapper()
+            .findAndRegisterModules().disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    private static String encodeCorrections(List<com.sankalpa.domain.lifecycle.BeginCorrection> corrections) {
+        try { return AUDIT_JSON.writeValueAsString(corrections); }
+        catch (com.fasterxml.jackson.core.JsonProcessingException failure) { throw new IllegalStateException("Invalid correction audit", failure); }
+    }
+    private static List<com.sankalpa.domain.lifecycle.BeginCorrection> decodeCorrections(ResultSet rs) throws SQLException {
+        String value;
+        try { value = rs.getString("begin_corrections_json"); }
+        catch (SQLException absentLegacyColumn) { return List.of(); }
+        try { return AUDIT_JSON.readValue(value, AUDIT_JSON.getTypeFactory().constructCollectionType(List.class, com.sankalpa.domain.lifecycle.BeginCorrection.class)); }
+        catch (com.fasterxml.jackson.core.JsonProcessingException failure) { throw new SQLException("Invalid Begin correction audit", failure); }
+    }
 
     public JdbcSankalpaPersistenceAdapter(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -77,6 +90,18 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
             }
         }
         appendTransitions(sankalpa);
+    }
+
+    @Override public void saveBeginCorrection(Sankalpa corrected, LifecycleTransition expected) {
+        var stored = findById(corrected.id()).orElseThrow();
+        if (stored.version() != corrected.version() || stored.lifecycle().transitions().size() != 1
+                || !stored.lifecycle().transitions().getFirst().equals(expected) || !expected.beginCorrections().isEmpty())
+            throw new ConcurrentModificationException("Begin changed during correction");
+        var transition = corrected.lifecycle().transitions().getFirst();
+        int changed = jdbc.update("UPDATE sankalpa_lifecycle_transition SET effective_at=?, begin_corrections_json=? WHERE sankalpa_id=? AND sequence_number=0 AND effective_at=?",
+                format(transition.effectiveAt()), encodeCorrections(transition.beginCorrections()), corrected.id().toString(), format(expected.effectiveAt()));
+        if (changed != 1) throw new ConcurrentModificationException("Begin changed during correction");
+        save(corrected);
     }
 
     @Override
@@ -150,6 +175,10 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, s.id().toString(), sequence, transition.from().name(), transition.to().name(),
                     format(transition.effectiveAt()), format(transition.recordedAt()), transition.originSankalpaId().toString());
+            if (!transition.beginCorrections().isEmpty()) {
+                jdbc.update("UPDATE sankalpa_lifecycle_transition SET begin_corrections_json=? WHERE sankalpa_id=? AND sequence_number=?",
+                        encodeCorrections(transition.beginCorrections()), s.id().toString(), sequence);
+            }
         }
     }
 
@@ -165,7 +194,7 @@ public class JdbcSankalpaPersistenceAdapter implements SankalpaRepository, Sessi
                 LifecycleState.valueOf(rs.getString("from_state")),
                 LifecycleState.valueOf(rs.getString("to_state")),
                 parse(rs.getString("effective_at")),
-                parse(rs.getString("recorded_at")), SankalpaId.parse(rs.getString("origin_sankalpa_id")));
+                parse(rs.getString("recorded_at")), SankalpaId.parse(rs.getString("origin_sankalpa_id")), decodeCorrections(rs));
     }
 
     private Sankalpa mapSankalpa(ResultSet rs, List<LifecycleTransition> transitions) throws SQLException {

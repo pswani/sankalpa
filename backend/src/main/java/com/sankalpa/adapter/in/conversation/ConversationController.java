@@ -55,6 +55,12 @@ public final class ConversationController {
             practiceHttp.requireInstance(headers);
             clientTools.add("batch_sessions_v1");
         }
+        String repairVersion = headers.getFirst("X-Sankalpa-Assistant-Begin-Correction");
+        if (repairVersion != null) {
+            if (!"1".equals(repairVersion) || !"1".equals(batchVersion))
+                throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "History repair requires batch version 1 and repair version 1.");
+            clientTools.add("begin_correction_v1");
+        }
         var input=new ConversationCoordinator.RunInput(parsed.threadId(),parsed.runId(),parsed.messages(),clientTools,parsed.resume(),practiceHttp.contract(headers));
         SseEmitter emitter = new SseEmitter(35_000L);
         var task = executor.submit(() -> stream(input, emitter));
@@ -142,6 +148,7 @@ public final class ConversationController {
             preview.put("entries", batch.entries().stream().map(e -> Map.of("sessionId", e.sessionId().toString(), "occurredAt", e.occurredAt().toString())).toList());
             preview.put("skippedDays", batch.skippedDays().stream().map(d -> Map.of("date", d.date().toString(), "contributionIds", d.contributionIds().stream().map(Object::toString).toList())).toList());
             preview.put("repeatWarnings", batch.repeatWarnings());
+            preview.put("beginAdjustment", batch.beginAdjustment());
             metadata.put("batch", preview);
         } else {
             Proposal.DeclareSankalpaPayload d = (Proposal.DeclareSankalpaPayload) p.payload();

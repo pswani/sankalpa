@@ -21,6 +21,9 @@ public interface SankalpaRepository {
         return findAll().stream().filter(s -> s.extensionOf().filter(source::equals).isPresent()).findFirst();
     }
     default void acquireSeriesWriteGuard(SankalpaId root) { findByIdForUpdate(root).orElseThrow(); }
+    default void saveBeginCorrection(Sankalpa corrected, com.sankalpa.domain.lifecycle.LifecycleTransition expected) {
+        throw new UnsupportedOperationException("Begin correction persistence is unavailable");
+    }
     default long readRevision() { return 0; }
     default void incrementRevision() {}
 }

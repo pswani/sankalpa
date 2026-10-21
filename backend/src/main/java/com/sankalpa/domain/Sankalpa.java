@@ -95,6 +95,23 @@ public final class Sankalpa {
                 new LifecycleTimeline(lifecycle.current(), lifecycle.transitions()), 0, seriesId, id);
     }
 
+    public Sankalpa withEarlierBegin(java.util.UUID correctionId, LocalDateTime at, LocalDateTime now) {
+        var history = lifecycle.transitions();
+        if (actionType != ActionType.OBSERVANCE || extensionOf != null || !seriesId.equals(id)
+                || lifecycle.current() != com.sankalpa.domain.lifecycle.LifecycleState.IN_PROGRESS
+                || history.size() != 1 || !history.getFirst().beginCorrections().isEmpty())
+            throw new DomainException("BEGIN_CORRECTION_NOT_AVAILABLE", "Only an independent observance with one uncorrected Begin can be corrected automatically");
+        var original = history.getFirst();
+        if (at == null || now == null || at.isAfter(now) || now.isBefore(original.recordedAt())
+                || !at.isBefore(original.effectiveAt()) || !commitment.covers(at.toLocalDate()))
+            throw new DomainException("INVALID_BEGIN_CORRECTION", "The earlier Begin must be within the commitment and before the recorded Begin");
+        var receipt = new com.sankalpa.domain.lifecycle.BeginCorrection(correctionId, original.effectiveAt(), at, now);
+        var corrected = new com.sankalpa.domain.lifecycle.LifecycleTransition(original.from(), original.to(), at,
+                original.recordedAt(), original.originSankalpaId(), java.util.List.of(receipt));
+        return new Sankalpa(id, title, description, actionType, commitment, declaredAt,
+                new LifecycleTimeline(lifecycle.current(), java.util.List.of(corrected)), version, seriesId, extensionOf);
+    }
+
     public boolean acceptsPerformedAt(LocalDateTime at) {
         return at != null && commitment.covers(at.toLocalDate()) && lifecycle.wasInProgressAt(at);
     }

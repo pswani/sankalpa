@@ -82,7 +82,7 @@ public final class PracticeHttp {
         var entries=value.lifecycle().transitions();
         return java.util.stream.IntStream.range(0,entries.size()).mapToObj(i -> {
             var t=entries.get(i);return new LifecycleTransitionResponse(t.from(),t.to(),t.effectiveAt(),t.recordedAt(),
-                    t.originSankalpaId().value(),i);
+                    t.originSankalpaId().value(),i,t.beginCorrections());
         }).toList();
     }
     public List<VowSnapshot> series(SankalpaId id) {

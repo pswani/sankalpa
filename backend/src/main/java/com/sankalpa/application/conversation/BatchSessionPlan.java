@@ -6,7 +6,10 @@ import java.util.*;
 
 /** Untrusted plan input. Canonical expansion and bounds belong to application code. */
 public record BatchSessionPlan(Mode mode, LocalDate from, LocalDate through, LocalTime localTime,
-                               List<LocalDateTime> occurredAt) {
+                               List<LocalDateTime> occurredAt, boolean recordingTimeSuggested) {
+    public BatchSessionPlan(Mode mode, LocalDate from, LocalDate through, LocalTime localTime, List<LocalDateTime> occurredAt) {
+        this(mode, from, through, localTime, occurredAt, false);
+    }
     public enum Mode { DAILY_RANGE, EXPLICIT_TIMESTAMPS }
     public static final int MAX_ENTRIES = 30;
     public BatchSessionPlan { occurredAt = occurredAt == null ? null : List.copyOf(occurredAt); }

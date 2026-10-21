@@ -246,4 +246,37 @@ Staging lifecycle acceptance completed against AWS: zero concurrency rejected ne
 start removed the reservation and preserved data/identity; second deployment and rollback
 preserved URL/identity; cleanup removed unused versions 1 and 2, retained aliased versions,
 and passed the authoritative database validator. Disposable staging teardown then completed: both stacks, Lambda, table, repository and log
-group were removed to avoid ongoing test-resource costs. Production remains serving version 1.
+group were removed to avoid ongoing test-resource costs. That initial deployment served version 1; the latest verified release is recorded below.
+
+## Verified production release script — October 17, 2026
+
+Added executable `backend/scripts/release-aws` and its Python orchestrator. The default workflow
+runs backend/DynamoDB Local, operator/bootstrap, reporting, connected Swift package and exact
+container-image gates before invoking the existing candidate/promotion deployment. `--full-ios`
+adds connected-app UI journeys and the native Release build. Initial setup/import remain separate.
+
+Review/fix/test addressed candidate identity validation before promotion, testing a different
+image from the one pushed, private stage reports, concurrent-release exclusion, source/config
+changes during verification, and production/staging environment-file mismatch. Added 16 release
+regression tests; the final operator suite passed 81 tests with the real SDK test enabled and no
+skips. Mismatch/identity/capability/container/test failures refuse deployment or promotion.
+
+Executed the full release workflow with `--full-ios`: 134 backend tests, 223 connected-client
+package tests, 24 UI cases, reporting regressions, template lint, the native Release build and
+container lifecycle/replay/data-retention checks passed. Container verification reused and retained
+the image that was subsequently uploaded, rather than rebuilding another release artifact.
+Final environment-selection hardening passed the follow-up 81-test operator run and CLI plan checks;
+it does not change the tested application image or the successful production configuration.
+
+Release report: `backend/logs/releases/20261018T025117Z-6a83cada/summary.json` (UTC run identifier).
+Production alias now serves **version 2** using digest
+`sha256:65ef4deaa7e7d37aa17f3a3cfd3faf4dec0889e48abc0ad9cf9c055026b6f828`.
+The Function URL and service identity remain unchanged. Readiness, bearer authentication,
+practice reads, required capabilities including `assistantBatchSessions: 1`, and authoritative
+production database validation passed. No model-provider test or practice mutation ran in AWS.
+
+The connected iOS Release build is ready; installing/signing it on the iPhone is separate from
+backend deployment and is required to use the newly negotiated batch-session confirmation UI.
+Do not roll back to pre-batch code after new batch proposal payloads have been persisted; use a
+compatible backend release. The script retains rollback artifacts and reports failures rather
+than automatically reverting data or selecting an incompatible old application version.

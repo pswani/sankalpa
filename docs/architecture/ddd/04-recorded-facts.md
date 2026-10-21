@@ -25,7 +25,8 @@ public record LifecycleTransition(
     LifecycleState to,
     LocalDateTime effectiveAt,
     LocalDateTime recordedAt,
-    SankalpaId originSankalpaId
+    SankalpaId originSankalpaId,
+    List<BeginCorrection> beginCorrections
 ) {}
 
 public record LifecycleTimeline(
@@ -91,3 +92,18 @@ is acknowledged from the completion command result and remains visible from the 
 transition. Session correction recalculates counts but never rewrites this user-declared outcome.
 No session contribution facts or separate achievement records are stored. See
 [Linked extensions](11-linked-extensions.md) for retry and client behavior.
+
+## Explicit initial-Begin correction
+
+The [historical-observance recovery design](../../design/conversational-batch-sessions/history-repair.md)
+permits a narrow exception to an unchanged effective timeline. An independent OBSERVANCE with
+one initial Begin and no existing correction may propose an earlier effective Begin inside its
+commitment. Confirming the version-3 batch writes that correction and all sessions in one transaction.
+No interpretation/read operation changes history. Paused, terminal, previously corrected, and linked
+vows are excluded. Ordinary repository saves remain append-only.
+
+The initial transition retains its original `recordedAt` and origin. Its immutable `BeginCorrection`
+receipt stores a stable UUID, previous effective time, corrected effective time, and approval recording
+time. API, native cache, imports, and later extension copies retain that receipt. SQLite adds
+`begin_corrections_json` through an idempotent additive migration; Dynamo embeds it in the VOW
+document. The 30-entry fenced transaction uses 96 actions including the one corrected VOW.

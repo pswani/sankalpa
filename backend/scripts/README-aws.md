@@ -252,3 +252,54 @@ key belongs on the phone. See the [iPhone setup details](../../docs/design/aws/a
 HTTPS, authentication, imported practice reads and real provider SSE have passed live checks.
 Cold starts can take tens of seconds. The operator HTTPS probes use the AWS dependency's CA
 bundle in addition to system trust; hostname and certificate verification remain required.
+
+## One-command verified AWS release
+
+Run from any directory:
+
+```sh
+/Users/prashantwani/wrk/sankalpa/backend/scripts/release-aws
+# Include the connected iOS simulator journeys and native Release build:
+/Users/prashantwani/wrk/sankalpa/backend/scripts/release-aws --full-ios
+```
+
+The default uses `.env.prod` and the existing production foundation/practice. It checks the
+account, ownership, READY metadata, backup protections and stopped state before expensive work.
+It runs the complete backend suite against isolated DynamoDB Local, operator/bootstrap tests,
+template lint, reporting regressions and connected Swift package tests. It builds the image
+once, tests that exact image with disposable container mutations/lifecycle checks, then pushes
+it and validates a candidate before promoting the stable production alias. Identity and required
+capabilities (including batch sessions) must match before promotion. Production smoke/domain
+checks run again after promotion. No model-provider call or practice mutation test runs in AWS.
+
+`--full-ios` adds the connected app's complete UI suite and native Release build instead of the
+package-only client gate. The independent `app2` local-file app is not published by this backend
+release; its verification remains `./app2/scripts/verify.sh` from the workspace root.
+
+```sh
+./scripts/release-aws --plan                 # No AWS, Docker, tests or installation
+./scripts/release-aws --verify-only          # All default local gates; no AWS calls
+./scripts/release-aws --environment staging --env-file /absolute/path/to/.env.staging
+./scripts/release-aws --profile sankalpa-deployer --region us-east-1
+```
+
+Dependencies are the tools listed above; `--full-ios` additionally requires full Xcode and the
+configured iOS simulator runtime. The wrapper bootstraps Python dependencies if needed, except
+for plan/help. The environment file is parsed as data; its `DEPLOY_ENVIRONMENT`, when present, must match
+the selected `--environment`. A staging file is refused for a production release before AWS
+is contacted. Tests receive fake/local credentials and
+run with the real model provider disabled. The script does not create IAM identities, provision
+the foundation, initialize/import a practice, restart an explicitly stopped deployment, or
+install the app on the phone. Complete initial setup/import separately before the first release.
+
+One release per account/Region/environment runs at a time on this Mac. Source/configuration
+changes during verification or a changed image tag abort deployment. Stage logs and a private
+`summary.json` are saved under ignored `backend/logs/releases/<release-id>/`; failure returns a
+nonzero status and reports the failed stage. A failed candidate never promotes the existing
+production alias. A failure after promotion is reported as a failed release requiring inspection;
+the script does not automatically roll back data or revive old code against new proposal types.
+Keep compatible rollback versions; pre-batch code cannot interpret new batch proposal payloads.
+
+After success, the script prints the production URL. The iPhone keeps using the same address
+and application token. Install the updated connected iOS app to use newly negotiated batch-session
+confirmation. Published backend deployment does not install iOS application changes.

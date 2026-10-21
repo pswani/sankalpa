@@ -51,12 +51,18 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
                     {"type":"object","properties":{"title":{"type":"string","maxLength":200},"description":{"type":"string","maxLength":2000},"actionType":{"type":"string","enum":["MEDITATION","PRANAYAMA","PHYSICAL_ACTIVITY","OBSERVANCE"]},"startDate":{"type":"string"},"periodUnit":{"type":"string","enum":["DAY","WEEK","MONTH","YEAR"]},"timesPerPeriod":{"type":"integer"},"periodCount":{"type":["integer","null"]},"inferredFields":{"type":"array","items":{"type":"string"}}},"required":["title","description","actionType","startDate","periodUnit","timesPerPeriod","periodCount","inferredFields"],"additionalProperties":false}
                     """)));
         if (clientTools.contains("batch_sessions_v1")) {
-            definitions.add(definition("propose_log_sessions", "Propose up to 30 performed sessions for one Sankalpa, confirmed once. Daily ranges ensure one contributed session per date; explicit timestamps add distinct sessions. Exact times required. Never truncate a range.", """
+            boolean repair = clientTools.contains("begin_correction_v1");
+            String description = "Propose up to 30 performed sessions, confirmed once. Daily ranges ensure one contributed session per date; explicit timestamps add distinct sessions. Never truncate a range. "
+                    + (repair ? "For OBSERVANCE, localTime may be null: propose 00:01 as a clearly labeled recording time. If an independent observance has one initial Begin later than reported practice, the server can include an explicit earlier-Begin correction in the same review card. Do not make the user guess a time to fix a Begin-date mismatch."
+                    : "Exact times required.");
+            String schema = """
                 {"type":"object","properties":{"sankalpaId":{"type":"string","format":"uuid"},"plan":{"anyOf":[
                 {"type":"object","properties":{"mode":{"type":"string","enum":["DAILY_RANGE"]},"from":{"type":"string"},"through":{"type":"string"},"localTime":{"type":"string"}},"required":["mode","from","through","localTime"],"additionalProperties":false},
                 {"type":"object","properties":{"mode":{"type":"string","enum":["EXPLICIT_TIMESTAMPS"]},"occurredAt":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":30}},"required":["mode","occurredAt"],"additionalProperties":false}
                 ]}},"required":["sankalpaId","plan"],"additionalProperties":false}
-                """));
+                """;
+            if (repair) schema = schema.replace("\"localTime\":{\"type\":\"string\"}", "\"localTime\":{\"type\":[\"string\",\"null\"]}");
+            definitions.add(definition("propose_log_sessions", description, schema));
         }
         if (clientTools.contains("navigate_to_sankalpa")) {
             definitions.add(definition("navigate_to_sankalpa", "Open one known Sankalpa in the app.",
@@ -111,7 +117,7 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
         return switch (call.name()) {
             case "propose_log_sessions" -> {
                 if (!clientTools.contains("batch_sessions_v1")) throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Update the app to propose multiple sessions.");
-                yield proposeSessions(args, threadId, runId, context, contract);
+                yield proposeSessions(args, threadId, runId, context, contract, clientTools);
             }
             case "get_sankalpa" -> readSankalpa(args,contract);
             case "get_recent_sessions" -> recentSessions(args,contract);
@@ -123,18 +129,22 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
     }
 
     private Outcome proposeSessions(JsonNode args, UUID thread, UUID run, ConversationModel.Context context,
-            com.sankalpa.application.PracticeContract contract) {
+            com.sankalpa.application.PracticeContract contract, List<String> clientTools) {
         exact(args, Set.of("sankalpaId", "plan"));
         var id = SankalpaId.parse(requiredText(args, "sankalpaId"));
         if (context.sankalpas().stream().noneMatch(s -> s.id().equals(id.toString()))) invalid("Unknown Sankalpa id");
         JsonNode node = args.get("plan");
         if (node == null || !node.isObject()) invalid("Invalid batch plan");
         BatchSessionPlan plan;
+        boolean repair = clientTools.contains("begin_correction_v1");
         if ("DAILY_RANGE".equals(requiredText(node, "mode"))) {
             exact(node, Set.of("mode", "from", "through", "localTime"));
+            boolean suggested = node.get("localTime") != null && node.get("localTime").isNull();
+            if (suggested && (!repair || sankalpas.detail(id, contract).actionType() != ActionType.OBSERVANCE))
+                throw new ConversationFailure("BATCH_INVALID_ENTRY", "An exact time is required for this action.");
             plan = new BatchSessionPlan(BatchSessionPlan.Mode.DAILY_RANGE,
                     LocalDate.parse(requiredText(node, "from")), LocalDate.parse(requiredText(node, "through")),
-                    java.time.LocalTime.parse(requiredText(node, "localTime")), null);
+                    suggested ? java.time.LocalTime.of(0, 1) : java.time.LocalTime.parse(requiredText(node, "localTime")), null, suggested);
         } else {
             if (!"EXPLICIT_TIMESTAMPS".equals(requiredText(node, "mode"))) invalid("Unknown batch mode");
             exact(node, Set.of("mode", "occurredAt"));
@@ -149,8 +159,10 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
             }
             plan = new BatchSessionPlan(BatchSessionPlan.Mode.EXPLICIT_TIMESTAMPS, null, null, null, times);
         }
-        Proposal proposal = proposals.proposeSessions(thread, run, id, plan, contract);
-        return proposal == null ? new ReadResult("{\"allDaysRecorded\":true,\"message\":\"All requested days are already recorded. No changes needed.\"}")
+        Proposal proposal = proposals.proposeSessions(thread, run, id, plan, contract, repair);
+        return proposal == null ? new ReadResult(write(Map.of("allDaysRecorded", true, "sankalpaId", id.toString(),
+                        "verifiedDates", plan.expand().stream().map(at -> at.toLocalDate().toString()).toList(),
+                        "message", "Only these verified dates are already recorded. This result says nothing about other dates.")))
                 : new ProposalResult(proposal);
     }
 
@@ -167,6 +179,9 @@ public final class FixedConversationToolRegistry implements ConversationToolExec
         result.put("description", description); result.put("descriptionTruncated", truncated);
         result.put("actionType", s.actionType().name());
         result.put("lifecycleState", s.lifecycle().current().name());
+        result.put("beganAt", s.lifecycle().transitions().stream()
+                .filter(t -> t.to() == com.sankalpa.domain.lifecycle.LifecycleState.IN_PROGRESS)
+                .findFirst().map(t -> t.effectiveAt().toString()).orElse(null));
         result.put("startDate", s.commitment().startDate().toString());
         result.put("endDate", s.commitment().endDate().map(Object::toString).orElse(null));
         result.put("periodUnit", s.commitment().periodUnit().name());

@@ -68,6 +68,7 @@ enum API {
         let serviceInstanceId: UUID
         let assistant: AssistantCapability?
         var assistantBatchSessions: Int? = nil
+        var assistantBeginCorrection: Int? = nil
     }
 
     struct AssistantCapability: Decodable, Sendable {
@@ -87,6 +88,12 @@ enum API {
         let totalPages: Int
     }
 
+    struct BeginCorrectionResponse: Codable, Sendable {
+        let id: UUID
+        let previousEffectiveAt: String
+        let correctedEffectiveAt: String
+        let recordedAt: String
+    }
     struct LifecycleTransitionResponse: Codable, Sendable {
         let from: String
         let to: String
@@ -94,6 +101,7 @@ enum API {
         let recordedAt: String
         var originSankalpaId: UUID? = nil
         var sequenceNumber: Int? = nil
+        var beginCorrections: [BeginCorrectionResponse]? = nil
     }
 
     struct ExtendRequest: Encodable, Sendable { let id: UUID; let totalPeriodCount: Int }

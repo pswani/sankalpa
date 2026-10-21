@@ -97,7 +97,9 @@ public final class ConversationCoordinator {
                     log.warn("Assistant tool request rejected ({}): {}", call.name(), failure.getMessage());
                     if (!batchFeedback) repairUsed = true;
                     results.add(new ConversationModel.ToolResult(call.id(), call.name(),
-                            call.argumentsJson(), "{\"error\":\"" + (batchFeedback ? failure.code() : "INVALID_TOOL_REQUEST") + "\"}"));
+                            call.argumentsJson(), "{\"error\":\"" + (batchFeedback ? failure.code() : "INVALID_TOOL_REQUEST") + "\"}",
+                            new ConversationModel.ToolError(batchFeedback ? failure.code() : "INVALID_TOOL_REQUEST",
+                                    failure.getMessage(), failure.details())));
                     continue;
                 }
                 if (outcome instanceof ConversationToolExecutor.ProposalResult proposal) {
@@ -141,7 +143,7 @@ public final class ConversationCoordinator {
                     "Cancelled. Nothing was changed.")), List.of(), null, null, null);
         }
         if (resume.confirmationId() == null) invalid();
-        resolution = proposals.confirm(input.threadId(), resume.interruptId(), resume.confirmationId(),input.contract(), input.clientTools().contains("batch_sessions_v1"));
+        resolution = proposals.confirm(input.threadId(), resume.interruptId(), resume.confirmationId(),input.contract(), input.clientTools().contains("batch_sessions_v1"), input.clientTools().contains("begin_correction_v1"));
         Proposal p = resolution.proposal();
         if (p.status() == Proposal.Status.EXPIRED) {
             throw new ConversationFailure("PROPOSAL_EXPIRED",
@@ -155,6 +157,7 @@ public final class ConversationCoordinator {
         boolean batch = p.payload() instanceof Proposal.LogSessionsPayload;
         String reason = p.kind() == Proposal.Kind.DECLARE_SANKALPA ? "SANKALPA_DECLARED" : "SESSION_LOGGED";
         String text = batch ? ((Proposal.LogSessionsPayload) p.payload()).entries().size() + " sessions logged."
+                + (((Proposal.LogSessionsPayload) p.payload()).beginAdjustment() == null ? "" : " The earlier Begin was recorded with its correction audit.")
                 : p.kind() == Proposal.Kind.LOG_SESSION ? "Your session was logged." : "Your Sankalpa was declared.";
         List<Effect> effects = new ArrayList<>();
         if (input.clientTools().contains("refresh_practice")) {
@@ -182,12 +185,18 @@ public final class ConversationCoordinator {
         return RunResult.text("I couldn't finish within this request's limits. Please choose a smaller date range or clarify the exact sessions to record. No unconfirmed changes were made.");
     }
     private static void requireBatchSupport(RunInput input, Proposal proposal) {
+        if (proposal.kind() == Proposal.Kind.LOG_SESSIONS && proposal.schemaVersion() == 3
+                && !input.clientTools().contains("begin_correction_v1"))
+            throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Update the app to review this history repair.");
         if (proposal.kind() == Proposal.Kind.LOG_SESSIONS && !input.clientTools().contains("batch_sessions_v1"))
             throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Update the app to review multiple sessions.");
     }
     private static String summary(Proposal proposal) {
         if (proposal.payload() instanceof Proposal.LogSessionsPayload p) {
-            return "Record " + p.entries().size() + " sessions for “" + p.sankalpaTitle() + "”? "
+            String correction = p.beginAdjustment() == null ? "" : "Correct the recorded Begin from "
+                    + p.beginAdjustment().previousEffectiveAt() + " to " + p.beginAdjustment().correctedEffectiveAt()
+                    + " (the original stays in the audit history), and ";
+            return correction + "record " + p.entries().size() + " sessions for “" + p.sankalpaTitle() + "”? "
                     + p.requestedCount() + " requested; " + p.skippedDays().size() + " days already recorded. Review all dates and times before confirming.";
         }
         if (proposal.payload() instanceof Proposal.LogSessionPayload p) {

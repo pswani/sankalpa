@@ -1,0 +1,13 @@
+#!/bin/sh
+# Run from any directory. Configuration is parsed by Python, never sourced by the shell.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+plan=false
+for argument in "$@"; do
+    if [ "$argument" = --plan ] || [ "$argument" = --help ] || [ "$argument" = -h ]; then plan=true; fi
+done
+if [ ! -x "$root/.venv/bin/python" ] && [ "$plan" = false ]; then
+    "$root/scripts/bootstrap-tools.sh"
+fi
+if [ -x "$root/.venv/bin/python" ]; then python="$root/.venv/bin/python"; else python=python3; fi
+exec "$python" "$root/scripts/release_aws.py" "$@"

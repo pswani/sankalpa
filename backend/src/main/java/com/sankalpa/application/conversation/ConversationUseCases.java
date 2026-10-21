@@ -25,6 +25,14 @@ public interface ConversationUseCases {
     Resolution cancel(UUID threadId, UUID proposalId);
     default Proposal proposeSessions(UUID thread, UUID run, SankalpaId id, BatchSessionPlan plan,
             com.sankalpa.application.PracticeContract contract) { throw new UnsupportedOperationException(); }
+    default Proposal proposeSessions(UUID thread, UUID run, SankalpaId id, BatchSessionPlan plan,
+            com.sankalpa.application.PracticeContract contract, boolean repairSupported) {
+        return proposeSessions(thread, run, id, plan, contract);
+    }
+    default Resolution confirm(UUID thread, UUID proposal, UUID confirmation,
+            com.sankalpa.application.PracticeContract contract, boolean batchSupported, boolean repairSupported) {
+        return confirm(thread, proposal, confirmation, contract, batchSupported);
+    }
     default Resolution confirm(UUID thread, UUID proposal, UUID confirmation,
             com.sankalpa.application.PracticeContract contract, boolean batchSupported) {
         return confirm(thread, proposal, confirmation, contract);

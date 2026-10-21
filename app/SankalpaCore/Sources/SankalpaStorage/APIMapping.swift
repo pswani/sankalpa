@@ -115,7 +115,20 @@ enum APIMapping {
         guard let recordedAt = WireFormat.moment(from: dto.recordedAt) else {
             throw WireDecodingError(field: "transition time", value: dto.recordedAt)
         }
-        return LifecycleTransition(from: from, to: to, effectiveAt: effectiveAt, recordedAt: recordedAt, originSankalpaId: dto.originSankalpaId.map(SankalpaId.init))
+        let corrections = try (dto.beginCorrections ?? []).map { correction in
+            guard let previous = WireFormat.moment(from: correction.previousEffectiveAt),
+                  let corrected = WireFormat.moment(from: correction.correctedEffectiveAt),
+                  let recorded = WireFormat.moment(from: correction.recordedAt),
+                  corrected < previous, previous <= recordedAt, corrected == effectiveAt, recorded >= recordedAt,
+                  from == .notStarted, to == .inProgress else {
+                throw WireDecodingError(field: "Begin correction", value: correction.correctedEffectiveAt)
+            }
+            return BeginCorrection(id: correction.id, previousEffectiveAt: previous, correctedEffectiveAt: corrected, recordedAt: recorded)
+        }
+        guard corrections.count <= 1 else { throw WireDecodingError(field: "Begin correction", value: "Multiple corrections") }
+        return LifecycleTransition(from: from, to: to, effectiveAt: effectiveAt, recordedAt: recordedAt,
+                                   originSankalpaId: dto.originSankalpaId.map(SankalpaId.init),
+                                   beginCorrections: corrections.isEmpty ? nil : corrections)
     }
 
     static func session(_ dto: API.SessionResponse) throws -> Session {

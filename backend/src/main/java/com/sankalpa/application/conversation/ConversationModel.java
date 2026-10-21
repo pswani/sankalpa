@@ -18,7 +18,14 @@ public interface ConversationModel {
                         int remainingToolCalls) {}
     record ToolCall(String id, String name, String argumentsJson) {}
     /** A tool call the model made this run, replayed with its own arguments and the result. */
-    record ToolResult(String id, String name, String argumentsJson, String resultJson) {}
+    record ToolError(String error, String message, java.util.Map<String, String> details) {
+        public ToolError { details = java.util.Map.copyOf(details); }
+    }
+    record ToolResult(String id, String name, String argumentsJson, String resultJson, ToolError error) {
+        public ToolResult(String id, String name, String argumentsJson, String resultJson) {
+            this(id, name, argumentsJson, resultJson, null);
+        }
+    }
 
     sealed interface ModelTurn permits TextTurn, ToolRequestsTurn, RefusalTurn {}
     record TextTurn(String text) implements ModelTurn {}

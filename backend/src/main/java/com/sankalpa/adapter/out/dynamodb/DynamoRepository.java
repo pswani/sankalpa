@@ -72,6 +72,13 @@ public final class DynamoRepository implements SankalpaRepository, SessionReposi
             throw new com.sankalpa.application.ConcurrentModificationException("Vow version or audit changed");
         value.markPersistedAtVersion(Math.addExact(value.version(), 1)); persist(value);
     }
+    @Override public void saveBeginCorrection(Sankalpa corrected, LifecycleTransition expected) {
+        var old = findById(corrected.id()).orElseThrow();
+        if (old.version() != corrected.version() || old.lifecycle().transitions().size() != 1
+                || !old.lifecycle().transitions().getFirst().equals(expected) || !expected.beginCorrections().isEmpty())
+            throw new com.sankalpa.application.ConcurrentModificationException("Begin changed during correction");
+        corrected.markPersistedAtVersion(Math.addExact(corrected.version(), 1)); persist(corrected);
+    }
     private void persist(Sankalpa v) {
         tx.put("VOW#" + v.id(), encode(new Vow(v.id().toString(), v.title().value(), v.description().value(), v.actionType(),
                 v.commitment().startDate(), v.commitment().periodUnit(), v.commitment().timesPerPeriod(), v.commitment().periodCount(),

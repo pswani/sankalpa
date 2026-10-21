@@ -99,5 +99,6 @@ approved after the reset and completed successfully.
 Before production enablement, perform the planned staging iPhone confirmation/accessibility
 journey and configured-provider evaluation on an isolated practice. Physical-device UX, model
 interpretation quality, and production deployment are not established by local code tests. The
-30-entry cap and exact-time requirement remain deliberate product limits; date-only observance
-and larger batches require separate requirements/design work.
+30-entry cap remains. The later [history-repair amendment](history-repair.md) supersedes the
+exact-time requirement only for a visibly suggested observance recording convention and adds
+audited correction of one initial Begin. Larger batches remain outside this design.

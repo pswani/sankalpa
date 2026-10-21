@@ -32,6 +32,6 @@ public final class CapabilityController {
     public CapabilitiesResponse capabilities() {
         return new CapabilitiesResponse(1, 1, identity.value(), new ApiModels.AssistantCapability(
                 assistantEnabled, "ag-ui-sankalpa/1", 20, 65_536, 262_144,
-                authenticationRequired), 1);
+                authenticationRequired), 1, 1);
     }
 }

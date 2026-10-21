@@ -6,6 +6,18 @@ import Testing
 @Suite("API mapping")
 struct APIMappingTests {
 
+    @Test("Begin correction audit maps, persists and rejects inconsistent receipts")
+    func beginCorrectionAudit() throws {
+        let json = """
+        [{"from":"NOT_STARTED","to":"IN_PROGRESS","effectiveAt":"2026-09-14T00:01:00","recordedAt":"2026-10-17T18:08:54","beginCorrections":[{"id":"11111111-1111-4111-8111-111111111111","previousEffectiveAt":"2026-10-17T18:08:54","correctedEffectiveAt":"2026-09-14T00:01:00","recordedAt":"2026-10-17T22:00:00"}]}]
+        """
+        let mapped = try APIMapping.transition(decodeTransitions(json)[0])
+        #expect(mapped.beginCorrections?.count == 1)
+        #expect(try JSONDecoder().decode(LifecycleTransition.self, from: JSONEncoder().encode(mapped)) == mapped)
+        let invalid = json.replacingOccurrences(of: "\"correctedEffectiveAt\":\"2026-09-14T00:01:00\"", with: "\"correctedEffectiveAt\":\"2026-09-15T00:01:00\"")
+        #expect(throws: WireDecodingError.self) { try APIMapping.transition(decodeTransitions(invalid)[0]) }
+    }
+
     private func decodeSankalpa(_ json: String) throws -> API.SankalpaResponse {
         try JSONDecoder().decode(API.SankalpaResponse.self, from: Data(json.utf8))
     }

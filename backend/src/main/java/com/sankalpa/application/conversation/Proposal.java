@@ -39,10 +39,17 @@ public record Proposal(
     public record SkippedDay(LocalDate date, List<SessionId> contributionIds) {
         public SkippedDay { contributionIds = List.copyOf(contributionIds); }
     }
+    public record BeginAdjustment(UUID id, LocalDateTime previousEffectiveAt, LocalDateTime correctedEffectiveAt) {}
     public record LogSessionsPayload(SankalpaId sankalpaId, String sankalpaTitle, SankalpaId seriesId,
             com.sankalpa.application.PracticeContract contract, UUID serviceInstanceId, String timezone,
             BatchSessionPlan plan, long baseRevision, int requestedCount, List<BatchEntry> entries,
-            List<SkippedDay> skippedDays, List<LocalDateTime> repeatWarnings) implements Payload {
+            List<SkippedDay> skippedDays, List<LocalDateTime> repeatWarnings, BeginAdjustment beginAdjustment) implements Payload {
+        public LogSessionsPayload(SankalpaId id, String title, SankalpaId series,
+                com.sankalpa.application.PracticeContract contract, UUID instance, String timezone,
+                BatchSessionPlan plan, long revision, int count, List<BatchEntry> entries,
+                List<SkippedDay> skipped, List<LocalDateTime> repeats) {
+            this(id, title, series, contract, instance, timezone, plan, revision, count, entries, skipped, repeats, null);
+        }
         public LogSessionsPayload {
             entries = List.copyOf(entries); skippedDays = List.copyOf(skippedDays);
             repeatWarnings = List.copyOf(repeatWarnings);
@@ -55,7 +62,7 @@ public record Proposal(
                 p.entries().size(), p.skippedDays().size());
     }
     public static Class<? extends Payload> payloadType(Kind kind, int version) {
-        if (version != (kind == Kind.LOG_SESSIONS ? 2 : SCHEMA_VERSION))
+        if (!(kind == Kind.LOG_SESSIONS ? version == 2 || version == 3 : version == SCHEMA_VERSION))
             throw new IllegalArgumentException("Unsupported proposal version");
         return switch (kind) {
             case LOG_SESSION -> LogSessionPayload.class;

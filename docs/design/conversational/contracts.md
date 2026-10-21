@@ -421,3 +421,15 @@ New stable errors: `BATCH_TOO_LARGE`, `BATCH_INVALID_ENTRY`, `BATCH_READ_INCOMPL
 `PROPOSAL_STALE`, `ASSISTANT_BATCH_UNSUPPORTED`. Existing identity, contract, expiry, and replay
 rules continue to apply. Detailed field ownership, error recovery, and compatibility are in the
 amendment; earlier single-session examples are still valid for single-session proposals.
+
+## Observance history repair capability
+
+See [history repair](../conversational-batch-sessions/history-repair.md). The service advertises
+`assistantBeginCorrection: 1`. New native clients send
+`X-Sankalpa-Assistant-Begin-Correction: 1` together with batch version 1 and the persistent service
+identity. LOG_SESSIONS version 3 adds nullable `beginAdjustment` (stable id, previous and corrected
+effective times) and `plan.recordingTimeSuggested`. The preview explicitly describes both changes.
+Version 3 confirmation requires negotiated repair support. Existing version-2 batches and version-1
+single commands retain their contracts. Lifecycle responses add optional-compatible `beginCorrections`.
+Tool feedback includes a typed error message and safe domain details so the model can explain a Begin
+conflict, coverage limit, or lifecycle state instead of asking the user to guess a different time.

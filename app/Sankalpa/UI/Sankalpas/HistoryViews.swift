@@ -238,6 +238,10 @@ private struct TransitionRow: View {
             }
             .font(.footnote)
 
+            ForEach(transition.beginCorrections ?? [], id: \.id) { correction in
+                LabeledContent("Original Begin", value: momentText(correction.previousEffectiveAt)).font(.footnote)
+                LabeledContent("Begin corrected", value: momentText(correction.recordedAt)).font(.footnote)
+            }
             if transition.wasBackdated {
                 LabeledContent("Recorded") {
                     Text(momentText(transition.recordedAt))

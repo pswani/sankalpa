@@ -337,6 +337,19 @@ public class SankalpaService implements SankalpaUseCases {
         return new CursorPage(eligible.subList(0, Math.min(size, eligible.size())), eligible.size() > size);
     }
 
+    @Override public Sankalpa correctBegin(SankalpaId id, java.util.UUID correctionId, LocalDateTime expected,
+            LocalDateTime corrected, PracticeContract contract) {
+        var target = locked(id); checkContract(target, contract);
+        if (sankalpas.findSeriesMembers(target.seriesId()).size() != 1)
+            throw new DomainException("BEGIN_CORRECTION_NOT_AVAILABLE", "Linked history requires manual review");
+        var history = target.lifecycle().transitions();
+        if (history.size() != 1 || !history.getFirst().effectiveAt().equals(expected))
+            throw new DomainException("INVALID_BEGIN_CORRECTION", "The recorded Begin changed; prepare a new preview");
+        var result = target.withEarlierBegin(correctionId, corrected, clock.now());
+        sankalpas.saveBeginCorrection(result, history.getFirst());
+        sankalpas.incrementRevision();
+        return result;
+    }
     @Override public Sankalpa lockForSessionBatch(SankalpaId id, PracticeContract contract) {
         var target = locked(id); checkContract(target, contract); return target;
     }

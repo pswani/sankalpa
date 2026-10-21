@@ -105,6 +105,20 @@ class OperatorTests(unittest.TestCase):
             path=Path(temp)/"source.db";source_file(path);docs=ops.sqlite_documents(path)
             key=next(k for k in docs if k.startswith("JOURNAL#"));del docs[key]
             with self.assertRaises(ValueError):ops.validate_documents(docs,allow_importing=True)
+    def test_sqlite_export_retains_confirmed_begin_correction_audit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"source.db";owner,_,_=source_file(path)
+            receipt={"id":str(uuid.uuid4()),"previousEffectiveAt":"2026-10-01T12:00:00",
+                     "correctedEffectiveAt":"2026-10-01T00:01:00","recordedAt":"2026-10-03T12:00:00"}
+            with contextlib.closing(sqlite3.connect(path)) as db:
+                db.execute("ALTER TABLE sankalpa_lifecycle_transition ADD COLUMN begin_corrections_json TEXT NOT NULL DEFAULT '[]'")
+                db.execute("UPDATE sankalpa SET action_type='OBSERVANCE'")
+                db.execute("UPDATE sankalpa_lifecycle_transition SET effective_at=?,begin_corrections_json=?",
+                           (receipt["correctedEffectiveAt"],json.dumps([receipt])))
+                db.commit()
+            docs=ops.sqlite_documents(path)
+            self.assertEqual(docs["VOW#"+owner]["history"][0]["beginCorrections"],[receipt])
+            self.assertEqual(ops.validate_documents(docs,allow_importing=True)["sessions"],1)
     def test_oversized_import_fails_before_writing(self):
         client=MemoryClient()
         with tempfile.TemporaryDirectory() as temp:

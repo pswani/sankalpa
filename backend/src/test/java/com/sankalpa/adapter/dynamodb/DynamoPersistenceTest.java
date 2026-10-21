@@ -80,6 +80,25 @@ class DynamoPersistenceTest {
         var other=new DynamoUnitOfWork(store); var decoded=new DynamoRepository(other,json);
         assertThat(other.read(()->decoded.findByIdForUpdate(p.id())).orElseThrow()).isEqualTo(replay.proposal());
     }
+    @Test void correctionAndThirtySessionsFitOneFencedTransactionAndPersistAuditOnReplay() {
+        var v=service.declare("Observed", "", ActionType.OBSERVANCE, now.toLocalDate().minusDays(29),PeriodUnit.DAY,1,32);
+        service.begin(v.id(),now.minusHours(1),PracticeContract.LINKED_V1);
+        var plan=new BatchSessionPlan(BatchSessionPlan.Mode.DAILY_RANGE,now.toLocalDate().minusDays(29),now.toLocalDate(),LocalTime.of(0,1),null);
+        var p=proposals.proposeSessions(UUID.randomUUID(),UUID.randomUUID(),v.id(),plan,PracticeContract.LINKED_V1,true);
+        var fence=json.createObjectNode().put("leaseUntil",java.time.Instant.now().getEpochSecond()+120);store.data.put("LEASE#test",fence);
+        tx.bindFence(new DocumentStore.Change("LEASE#test",fence,null,true));
+        var confirmation=UUID.randomUUID();
+        var result=proposals.confirm(p.threadId(),p.id(),confirmation,PracticeContract.LINKED_V1,true,true);
+        assertThat(result.proposal().status()).isEqualTo(Proposal.Status.EXECUTED);
+        assertThat(store.lastCommit).hasSize(96);
+        tx.clearFence();
+        var other=new DynamoUnitOfWork(store);var decoded=new DynamoRepository(other,json);
+        var restored=other.read(()->decoded.findById(v.id()).orElseThrow());
+        assertThat(restored.lifecycle().transitions().getFirst().beginCorrections()).hasSize(1);
+        assertThat(restored.lifecycle().transitions().getFirst().beginCorrections().getFirst().previousEffectiveAt()).isEqualTo(now.minusHours(1));
+        assertThat(proposals.confirm(p.threadId(),p.id(),confirmation,PracticeContract.LINKED_V1,true,true).replay()).isTrue();
+        assertThat(service.totalSessionCount(v.id())).isEqualTo(30);
+    }
     @Test void batchDomainRefusalRollsBackEveryStagedDocumentAndRevision() {
         var v=batchTarget();var p=proposals.proposeSessions(UUID.randomUUID(),UUID.randomUUID(),v.id(),batchPlan(),PracticeContract.LINKED_V1);
         long revision=tx.read(repo::readRevision); int[] calls={0};

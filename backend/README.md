@@ -163,6 +163,11 @@ isolated H2 relational database and DynamoDB Local plus domain/application fakes
 
 ## Low-cost local and AWS deployment
 
+For a verified release of the current working tree, run `./scripts/release-aws` from `backend/`.
+Use `./scripts/release-aws --full-ios` to include connected-app UI tests and its Release build.
+The command tests the exact image it deploys, gates candidate promotion on identity/capabilities,
+and verifies production afterward. See the [release workflow](scripts/README-aws.md#one-command-verified-aws-release).
+
 The backend also supports DynamoDB persistence and a Lambda-compatible container image.
 See [operator scripts](scripts/README-aws.md) for local build/deploy/test/stop and automated
 AWS setup, staged release, rollback, cleanup, and data migration.
@@ -304,3 +309,19 @@ request. Test the assistant separately after enabling it.
 For an existing SQLite practice, follow the [migration instructions](scripts/README-aws.md#aws-setup-and-data-preparation)
 before the first application deployment. Import requires an empty target; do not run `db init`
 before `db import`.
+
+### Historical-observance assistant acceptance
+
+After the normal backend verification build, run the opt-in configured-provider check:
+
+```sh
+python3 backend/scripts/verify_assistant_history.py --provider-env backend/.env.prod
+```
+
+Run from the repository root. The script reads only model configuration from that file, starts a
+throwaway local SQLite backend on a random port, and tests the screenshot conversation, confirmed
+Begin correction, 30 daily records, replay, and a follow-up without an exact observance time. It
+makes real model calls but no AWS practice requests or production writes. Synthetic SSE evidence
+is retained in the temporary directory printed on success. See the
+[repair design](../docs/design/conversational-batch-sessions/history-repair.md) for eligibility and
+client negotiation. A new backend and native app are both needed to offer the v3 review card.

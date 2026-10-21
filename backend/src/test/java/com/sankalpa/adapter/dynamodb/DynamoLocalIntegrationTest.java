@@ -66,6 +66,25 @@ class DynamoLocalIntegrationTest {
         assertThat(store.query("JOURNAL#")).hasSize(30);
         assertThat(store.query("OWNER#")).hasSize(30);
     }
+    @Test void realSdkCommitsAuditedBeginCorrectionWithThirtySessions() {
+        var v=service.declare("Observed", "", ActionType.OBSERVANCE,now.toLocalDate().minusDays(29),PeriodUnit.DAY,1,32);
+        service.begin(v.id(),now.minusHours(1),PracticeContract.LINKED_V1);
+        var plan=new BatchSessionPlan(BatchSessionPlan.Mode.DAILY_RANGE,now.toLocalDate().minusDays(29),now.toLocalDate(),LocalTime.of(0,1),null);
+        var p=proposals.proposeSessions(UUID.randomUUID(),UUID.randomUUID(),v.id(),plan,PracticeContract.LINKED_V1,true);
+        var fence=json.createObjectNode().put("leaseUntil",Instant.now().getEpochSecond()+120);
+        store.commit(List.of(new DocumentStore.Change("LEASE#repair",null,fence)));
+        tx.bindFence(new DocumentStore.Change("LEASE#repair",fence,null,true));
+        try {
+            var confirmation=UUID.randomUUID();
+            assertThat(proposals.confirm(p.threadId(),p.id(),confirmation,PracticeContract.LINKED_V1,true,true).proposal().status()).isEqualTo(Proposal.Status.EXECUTED);
+            assertThat(proposals.confirm(p.threadId(),p.id(),confirmation,PracticeContract.LINKED_V1,true,true).replay()).isTrue();
+        } finally {tx.clearFence();}
+        var cold=new DynamoUnitOfWork(new AwsDocumentStore(client,table,json));var decoded=new DynamoRepository(cold,json);
+        var restored=cold.read(()->decoded.findById(v.id()).orElseThrow());
+        assertThat(restored.lifecycle().transitions().getFirst().beginCorrections()).hasSize(1);
+        assertThat(restored.lifecycle().transitions().getFirst().beginCorrections().getFirst().previousEffectiveAt()).isEqualTo(now.minusHours(1));
+        assertThat(service.totalSessionCount(v.id())).isEqualTo(30);
+    }
     @Test void realTransactionsReplayTombstonesAndColdAdapters() {
         var root=source(); var id=SessionId.newId(); service.logSession(root.id(),id,now.minusDays(1));
         service.logSession(root.id(),id,now.minusDays(1));

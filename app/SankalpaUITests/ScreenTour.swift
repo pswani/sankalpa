@@ -181,7 +181,7 @@ final class ScreenTour: UITestCase {
         capture("19-today-large-text")
         app.staticTexts["Vipassana"].tap()
         capture("20-detail-large-text")
-        app.swipeUp()
+        XCTAssertTrue(reveal(app.buttons["Every period"]), "period dates were not reachable at accessibility text size")
         capture("20b-detail-large-text-period")
         app.swipeUp()
         app.swipeUp()

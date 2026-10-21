@@ -140,9 +140,15 @@ public final class ProposalService implements ConversationUseCases {
     }
     @Override public Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId,
             com.sankalpa.application.PracticeContract contract, boolean batchSupported) {
+        return confirm(threadId, proposalId, confirmationId, contract, batchSupported, false);
+    }
+    @Override public Resolution confirm(UUID threadId, UUID proposalId, UUID confirmationId,
+            com.sankalpa.application.PracticeContract contract, boolean batchSupported, boolean repairSupported) {
         Proposal proposal = lockedOwned(threadId, proposalId);
         if (proposal.kind() == Proposal.Kind.LOG_SESSIONS) {
             if (!batchSupported) throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Update the app to confirm multiple sessions.");
+            if (proposal.schemaVersion() == 3 && !repairSupported)
+                throw new ConversationFailure("ASSISTANT_BATCH_UNSUPPORTED", "Update the app to review the Begin correction or suggested recording time.");
             return confirmBatch(proposal, confirmationId, contract);
         }
         if (proposal.status() == Proposal.Status.EXECUTED
@@ -179,39 +185,90 @@ public final class ProposalService implements ConversationUseCases {
 
     @Override public Proposal proposeSessions(UUID thread, UUID run, SankalpaId id, BatchSessionPlan plan,
             com.sankalpa.application.PracticeContract contract) {
+        return proposeSessions(thread, run, id, plan, contract, false);
+    }
+    @Override public Proposal proposeSessions(UUID thread, UUID run, SankalpaId id, BatchSessionPlan plan,
+            com.sankalpa.application.PracticeContract contract, boolean repairSupported) {
         Proposal replay = findBySourceRunId(run);
         if (replay != null) return replay;
         rejectPending(thread);
         var times = plan.expand();
         var target = sankalpas.detail(id, contract);
         var now = clock.now();
+        if (plan.recordingTimeSuggested() && (!repairSupported || target.actionType() != ActionType.OBSERVANCE))
+            throw new ConversationFailure("BATCH_INVALID_ENTRY", "A suggested recording time is available only for an observance on an updated client.");
         // Complete contributing reads under the same outer snapshot as the revision and proposal.
         long revision = sankalpas.readSnapshot(null, () -> null).revision();
         var existing = readContributions(id, times.getFirst().toLocalDate(), times.getLast().toLocalDate(), contract);
+        var commitment = target.commitment();
+        var missingTimes = times.stream().filter(at -> plan.mode() != BatchSessionPlan.Mode.DAILY_RANGE
+                || existing.stream().noneMatch(session -> session.occurredAt().toLocalDate().equals(at.toLocalDate()))).toList();
+        if (missingTimes.isEmpty()) return null;
+        var correctionTime = missingTimes.getFirst();
+        Proposal.BeginAdjustment adjustment = null;
+        var history = target.lifecycle().transitions();
+        if (repairSupported && target.actionType() == ActionType.OBSERVANCE && history.size() == 1
+                && correctionTime.isBefore(history.getFirst().effectiveAt())
+                && times.stream().allMatch(at -> commitment.covers(at.toLocalDate()))
+                && sankalpas.linkedSeries(id, com.sankalpa.application.PracticeContract.LINKED_V1).size() == 1) {
+            var correctionId = UUID.randomUUID();
+            try {
+                var preview = target.withEarlierBegin(correctionId, correctionTime, now);
+                adjustment = new Proposal.BeginAdjustment(correctionId, history.getFirst().effectiveAt(), correctionTime);
+                target = preview;
+            } catch (DomainException unavailable) {
+                // Retain the authoritative target: normal validation below explains the real blocker.
+            }
+        }
         var entries = new java.util.ArrayList<Proposal.BatchEntry>();
         var skipped = new java.util.ArrayList<Proposal.SkippedDay>();
         var repeats = new java.util.ArrayList<LocalDateTime>();
         for (var at : times) {
             var sameDay = existing.stream().filter(s -> s.occurredAt().toLocalDate().equals(at.toLocalDate())).toList();
-            var sessionId = SessionId.newId();
-            try { target.validateSessionAt(sessionId, at, now); }
-            catch (DomainException refusal) {
-                throw new ConversationFailure("BATCH_INVALID_ENTRY", "Cannot record " + at + " (" + refusal.code() + "). Correct the request; nothing was changed.");
-            }
             if (plan.mode() == BatchSessionPlan.Mode.DAILY_RANGE && !sameDay.isEmpty()) {
                 skipped.add(new Proposal.SkippedDay(at.toLocalDate(), sameDay.stream().map(Session::id).toList()));
                 continue;
+            }
+            var sessionId = SessionId.newId();
+            try { target.validateSessionAt(sessionId, at, now); }
+            catch (DomainException refusal) {
+                throw invalidBatchEntry(target, at, refusal);
+
             }
             entries.add(new Proposal.BatchEntry(sessionId, at));
             if (existing.stream().anyMatch(s -> s.occurredAt().equals(at))) repeats.add(at);
         }
         if (entries.isEmpty()) return null;
         var payload = new Proposal.LogSessionsPayload(id, target.title().value(), target.seriesId(), contract,
-                serviceInstance.get(), timezone, plan, revision, times.size(), entries, skipped, repeats);
-        var proposal = new Proposal(UUID.randomUUID(), thread, run, Proposal.Kind.LOG_SESSIONS, 2,
+                serviceInstance.get(), timezone, plan, revision, times.size(), entries, skipped, repeats, adjustment);
+        var proposal = new Proposal(UUID.randomUUID(), thread, run, Proposal.Kind.LOG_SESSIONS, adjustment != null || plan.recordingTimeSuggested() ? 3 : 2,
                 payload, Proposal.Status.PENDING, null, null, null, now, now.plus(lifetime), null);
         proposals.insert(proposal);
         return proposal;
+    }
+
+    private static ConversationFailure invalidBatchEntry(Sankalpa target, LocalDateTime at, DomainException refusal) {
+        var details = new java.util.LinkedHashMap<String, String>();
+        details.put("domainCode", refusal.code());
+        details.put("occurredAt", at.toString());
+        details.put("commitmentStart", target.commitment().startDate().toString());
+        target.commitment().endDate().ifPresent(end -> details.put("commitmentEnd", end.toString()));
+        details.put("stateAtOccurrence", target.lifecycle().stateAt(at).name());
+        var began = target.lifecycle().transitions().stream()
+                .filter(t -> t.to() == com.sankalpa.domain.lifecycle.LifecycleState.IN_PROGRESS)
+                .findFirst();
+        began.ifPresent(t -> details.put("beganAt", t.effectiveAt().toString()));
+        String explanation = switch (refusal.code()) {
+            case "SANKALPA_NOT_IN_PROGRESS" -> began.filter(t -> at.isBefore(t.effectiveAt()))
+                    .map(t -> "The recorded Begin is " + t.effectiveAt() + ", after the requested session. "
+                            + "Changing the daily time on an earlier date cannot resolve this. The recorded Begin history must be resolved first.")
+                    .orElse("The vow was " + target.lifecycle().stateAt(at).name() + " at that time. Choose a time when it was In progress.");
+            case "SESSION_BEFORE_COMMITMENT_START" -> "The commitment starts " + target.commitment().startDate() + ". Choose a date on or after that start.";
+            case "SESSION_AFTER_COMMITMENT_END" -> "The commitment ends " + target.commitment().endDate().orElseThrow() + ". Choose covered dates; the assistant has not extended the vow.";
+            case "SESSION_IN_FUTURE" -> "That occurrence is in the future. Choose a performed time, or end the range yesterday.";
+            default -> "The session violates the vow's recording rules (" + refusal.code() + ").";
+        };
+        return new ConversationFailure("BATCH_INVALID_ENTRY", "Cannot record " + at + ". " + explanation + " Nothing was changed.", details);
     }
 
     private List<Session> readContributions(SankalpaId id, LocalDate from, LocalDate through,
@@ -263,11 +320,17 @@ public final class ProposalService implements ConversationUseCases {
         var target = sankalpas.lockForSessionBatch(p.sankalpaId(), contract);
         if (sankalpas.readSnapshot(null, () -> null).revision() != p.baseRevision())
             throw new BatchRejection("PROPOSAL_STALE");
-        // Refusals MUST escape the transaction, even if an earlier entry already wrote data.
+        // Refusals MUST escape the transaction, rolling back the correction as well as every session.
         try {
             var now = clock.now();
-            for (var entry : p.entries()) target.validateSessionAt(entry.sessionId(), entry.occurredAt(), now);
             clock.at(now, () -> {
+                var canonical = target;
+                if (p.beginAdjustment() != null) {
+                    var correction = p.beginAdjustment();
+                    canonical = sankalpas.correctBegin(p.sankalpaId(), correction.id(), correction.previousEffectiveAt(),
+                            correction.correctedEffectiveAt(), contract);
+                }
+                for (var entry : p.entries()) canonical.validateSessionAt(entry.sessionId(), entry.occurredAt(), now);
                 for (var entry : p.entries())
                     sankalpas.logSession(p.sankalpaId(), entry.sessionId(), entry.occurredAt(), contract);
                 return null;
@@ -306,7 +369,7 @@ public final class ProposalService implements ConversationUseCases {
     private Proposal lockedOwned(UUID threadId, UUID proposalId) {
         Proposal proposal = proposals.findByIdForUpdate(proposalId)
                 .orElseThrow(() -> new ConversationFailure("PROPOSAL_NOT_FOUND", "Proposal not found"));
-        if (!proposal.threadId().equals(threadId) || proposal.schemaVersion() != (proposal.kind() == Proposal.Kind.LOG_SESSIONS ? 2 : Proposal.SCHEMA_VERSION)) {
+        if (!proposal.threadId().equals(threadId) || !(proposal.kind() == Proposal.Kind.LOG_SESSIONS ? proposal.schemaVersion() == 2 || proposal.schemaVersion() == 3 : proposal.schemaVersion() == Proposal.SCHEMA_VERSION)) {
             throw new ConversationFailure("PROPOSAL_NOT_FOUND", "Proposal not found");
         }
         return proposal;

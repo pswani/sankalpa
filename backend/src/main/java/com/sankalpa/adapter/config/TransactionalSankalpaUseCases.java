@@ -103,6 +103,10 @@ public final class TransactionalSankalpaUseCases implements SankalpaUseCases {
         return reading(() -> delegate.readSnapshot(revision, query));
     }
 
+    @Override public Sankalpa correctBegin(SankalpaId id, java.util.UUID correctionId, LocalDateTime expected,
+            LocalDateTime corrected, PracticeContract contract) {
+        return identityWriting(() -> delegate.correctBegin(id, correctionId, expected, corrected, contract));
+    }
     @Override public Sankalpa lockForSessionBatch(SankalpaId id, PracticeContract contract) {
         return identityWriting(() -> delegate.lockForSessionBatch(id, contract));
     }

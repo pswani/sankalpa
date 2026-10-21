@@ -8,3 +8,4 @@
 /logs/*.log
 /logs/*-summary.md
 /logs/latest-summary.md
+/logs/releases/

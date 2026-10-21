@@ -49,7 +49,26 @@ class LangChain4jConversationModelTest {
         new LangChain4jConversationModel(chat,new ObjectMapper()).respond(request);
         assertThat(sent.get().toolSpecifications()).hasSize(1);
         assertThat(sent.get().toolSpecifications().getFirst().name()).isEqualTo("propose_log_sessions");
-        assertThat(sent.get().messages().getFirst().toString()).contains("Remaining tool calls: 2", "exact daily");
+        assertThat(sent.get().messages().getFirst().toString()).contains("Remaining tool calls: 2", "day-based report");
+    }
+
+    @Test void modelReceivesActionableDomainFailureInsteadOfJustAnErrorCode() throws Exception {
+        AtomicReference<ChatRequest> sent = new AtomicReference<>();
+        ChatModel chat = new ChatModel() {
+            @Override public ChatResponse doChat(ChatRequest request) {
+                sent.set(request); return ChatResponse.builder().aiMessage(AiMessage.from("Review the earlier Begin")).build();
+            }
+        };
+        var failure = new ConversationModel.ToolError("INVALID_DATE", "Earlier than recorded Begin; changing the time cannot fix it.",
+                java.util.Map.of("beganAt", "2026-10-17T18:08:54", "domainCode", "SANKALPA_NOT_IN_PROGRESS"));
+        new LangChain4jConversationModel(chat, new ObjectMapper()).respond(request(List.of(
+                new ConversationModel.ToolResult("repair", "propose_log_sessions", "{}", "{}", failure))));
+        var result = sent.get().messages().stream()
+                .filter(dev.langchain4j.data.message.ToolExecutionResultMessage.class::isInstance)
+                .map(dev.langchain4j.data.message.ToolExecutionResultMessage.class::cast).findFirst().orElseThrow();
+        var json = new ObjectMapper().readTree(result.text());
+        assertThat(json.path("message").asText()).contains("changing the time cannot fix");
+        assertThat(json.path("details").path("beganAt").asText()).isEqualTo("2026-10-17T18:08:54");
     }
 
     private static ConversationModel.ModelRequest request(List<ConversationModel.ToolResult> results) {

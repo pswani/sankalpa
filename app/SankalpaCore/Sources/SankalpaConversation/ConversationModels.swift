@@ -59,7 +59,9 @@ public struct AssistantProposal: Identifiable, Equatable, Sendable, Codable {
         else { return nil }
         var kind = Kind(rawValue: kindText) ?? .unsupported
         let version = metadata["proposalVersion"]
-        if version != .number(kind == .logSessions ? 2 : 1) { kind = .unsupported }
+        if kind == .logSessions {
+            if version != .number(2) && version != .number(3) { kind = .unsupported }
+        } else if version != .number(1) { kind = .unsupported }
         if kind == .logSessions {
             guard case .object(let batch)? = metadata["batch"],
                   case .array(let entries)? = batch["entries"], (1...30).contains(entries.count),
@@ -71,6 +73,20 @@ public struct AssistantProposal: Identifiable, Equatable, Sendable, Codable {
                   case .string(let owner)? = metadata["sankalpaId"], UUID(uuidString: owner) != nil,
                   case .string? = metadata["sankalpaTitle"]
             else { throw AGUIError.protocolViolation("Incomplete batch preview") }
+            if version == .number(3) {
+                let hasAdjustment: Bool = {
+                    guard case .object(let adjustment)? = batch["beginAdjustment"],
+                          case .string(let id)? = adjustment["id"], UUID(uuidString: id) != nil,
+                          case .string(let previous)? = adjustment["previousEffectiveAt"], !previous.isEmpty,
+                          case .string(let corrected)? = adjustment["correctedEffectiveAt"], !corrected.isEmpty else { return false }
+                    return true
+                }()
+                let hasSuggestedTime: Bool = {
+                    guard case .object(let plan)? = batch["plan"] else { return false }
+                    return plan["recordingTimeSuggested"] == .bool(true)
+                }()
+                guard hasAdjustment || hasSuggestedTime else { throw AGUIError.protocolViolation("Missing history repair details") }
+            }
             var ids = Set<UUID>()
             for entry in entries {
                 guard case .object(let fields) = entry,

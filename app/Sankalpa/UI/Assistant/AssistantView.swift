@@ -19,7 +19,8 @@ struct AssistantView: View {
         let token = appModel.apiToken
         let client = AGUIClient(baseURL: appModel.serviceLocation.url, bearerToken: token,
                                 linkedServiceInstance: appModel.supportsLinkedExtensions ? appModel.serviceInstanceId : nil,
-                                batchSessions: appModel.assistantCapability?.batchSessionsVersion == 1)
+                                batchSessions: appModel.assistantCapability?.batchSessionsVersion == 1,
+                                beginCorrection: appModel.assistantCapability?.beginCorrectionVersion == 1)
         let recoveryURL = appModel.serviceInstanceId.map { instance in
             URL.applicationSupportDirectory.appending(path: "Assistant/\(instance.uuidString)-linked-v1.json")
         }
@@ -140,7 +141,9 @@ struct AssistantView: View {
     }
 
     private func bubble(_ message: AGUI.Message) -> some View {
-        Text(message.content)
+        Text(message.role == "assistant"
+             ? (try? AttributedString(markdown: message.content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.content)
+             : AttributedString(message.content))
             .padding(12)
             .background(message.role == "user" ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.12), in: .rect(cornerRadius: 14))
             .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
@@ -173,7 +176,7 @@ private struct ProposalCard: View {
                 if proposal.kind != .logSessions && proposal.kind != .unsupported { Button("Edit", action: edit) }
                 Spacer()
                 if proposal.canConfirm {
-                    Button(proposal.kind == .logSessions ? "Record \(proposal.newSessionCount) sessions" : "Confirm", action: confirm)
+                    Button(proposal.kind == .logSessions ? (proposal.batch["beginAdjustment"] != nil && proposal.batch["beginAdjustment"] != .null ? "Confirm Begin correction and record \(proposal.newSessionCount) sessions" : "Record \(proposal.newSessionCount) sessions") : "Confirm", action: confirm)
                         .buttonStyle(.borderedProminent)
                 }
             }.disabled(disabled)
@@ -206,7 +209,14 @@ private struct ProposalCard: View {
             var rows = [("Sankalpa", proposal.metadata["sankalpaTitle"].map(text) ?? ""),
                         ("Sessions", "\(requested) requested / \(proposal.newSessionCount) new / \(skipped) already recorded"),
                         ("Timezone", batch["timezone"].map(text) ?? "")]
+            if case .object(let adjustment)? = batch["beginAdjustment"] {
+                rows.append(("Correct recorded Begin", (adjustment["previousEffectiveAt"].map(text) ?? "") + " → " + (adjustment["correctedEffectiveAt"].map(text) ?? "")))
+                rows.append(("Audit history", "The original Begin time will be preserved with this correction."))
+            }
             if case .object(let plan)? = batch["plan"] {
+                if plan["recordingTimeSuggested"] == .bool(true) {
+                    rows.append(("Suggested recording time", "00:01 for each observed day. This is a recording convention, not an exact performance time."))
+                }
                 for key in ["from", "through", "localTime"] {
                     if let value = plan[key], value != .null { rows.append((label(key), text(value))) }
                 }

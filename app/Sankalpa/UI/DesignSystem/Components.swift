@@ -150,7 +150,7 @@ struct StandingStrip: View {
     }
 }
 
-/// One period's standing in a compact square, for the grid on the detail screen.
+/// A period's standing and its visible date, for the scrolling row on the detail screen.
 struct StandingTile: View {
     let outcome: PeriodOutcome
 
@@ -161,18 +161,34 @@ struct StandingTile: View {
 
     private var side: CGFloat { 44 * min(scale, 1.6) }
 
-    var body: some View {
-        VStack(spacing: 3) {
-            Image(systemName: outcome.standing.symbolName)
-                .font(.system(size: side * 0.27, weight: .bold))
-                .foregroundStyle(outcome.standing.tint)
-            Text("\(outcome.performed)/\(outcome.required)")
-                .font(.system(size: side * 0.23, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+    private var dateLabel: String {
+        let window = outcome.window
+        if window.dayCount == 1 {
+            return "\(window.start.compactDisplayText)\n\(window.start.year)"
         }
-        .frame(width: side, height: side)
-        .background(outcome.standing.softTint, in: .rect(cornerRadius: 10))
+        return "\(window.start.shortDisplayText)\n– \(window.end.shortDisplayText)"
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            VStack(spacing: 3) {
+                Image(systemName: outcome.standing.symbolName)
+                    .font(.system(size: side * 0.27, weight: .bold))
+                    .foregroundStyle(outcome.standing.tint)
+                Text("\(outcome.performed)/\(outcome.required)")
+                    .font(.system(size: side * 0.23, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: side, height: side)
+            .background(outcome.standing.softTint, in: .rect(cornerRadius: 10))
+
+            Text(dateLabel)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: true, vertical: true)
+        }
         .accessibilityElement()
         .accessibilityLabel(outcome.window.displayText)
         .accessibilityValue(

@@ -52,4 +52,28 @@ class BatchSqliteMigrationTest {
         assertThat(proposals.confirm(p.threadId(),p.id(),confirmation,PracticeContract.SINGLE_VOW_V1,true).replay()).isTrue();
         assertThat(service.totalSessionCount(v.id())).isEqualTo(30);
     }
+    @Test void beginCorrectionMigrationIsIdempotentAndRetainsAuditAfterColdReload() throws Exception {
+        var datasource=new DriverManagerDataSource("jdbc:sqlite:"+directory.resolve("repair.db"));
+        var jdbc=new JdbcTemplate(datasource);var manager=new DataSourceTransactionManager(datasource);
+        for(var statement:Files.readString(Path.of("src/main/resources/schema.sql")).split(";")) if(!statement.isBlank()) jdbc.execute(statement);
+        new LinkedSchemaMigration(datasource).migrate();
+        var repo=new JdbcSankalpaPersistenceAdapter(jdbc);var tx=new JdbcUseCaseTransactions(manager);
+        var clock=new SystemSankalpaClock(Clock.fixed(Instant.parse("2026-10-17T23:00:00Z"),ZoneOffset.UTC));
+        var core=new SankalpaService(repo,repo,clock);var service=new TransactionalSankalpaUseCases(core,tx);
+        var v=service.declare("Observed", "",ActionType.OBSERVANCE,LocalDate.of(2026,9,14),PeriodUnit.DAY,1,32);
+        var original=LocalDateTime.of(2026,10,17,18,8);service.begin(v.id(),original,PracticeContract.LINKED_V1);
+        new BeginCorrectionSchemaMigration(jdbc);new BeginCorrectionSchemaMigration(jdbc);
+        assertThat(service.lifecycleHistory(v.id(),PracticeContract.LINKED_V1).getFirst().effectiveAt()).isEqualTo(original);
+        var json=new ObjectMapper().findAndRegisterModules().disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        var proposals=new TransactionalConversationUseCases(new ProposalService(new JdbcProposalRepository(jdbc,json),core,clock,Duration.ofMinutes(30)),tx);
+        var plan=new BatchSessionPlan(BatchSessionPlan.Mode.DAILY_RANGE,LocalDate.of(2026,9,14),LocalDate.of(2026,10,13),LocalTime.of(0,1),null);
+        var p=proposals.proposeSessions(UUID.randomUUID(),UUID.randomUUID(),v.id(),plan,PracticeContract.LINKED_V1,true);
+        proposals.confirm(p.threadId(),p.id(),UUID.randomUUID(),PracticeContract.LINKED_V1,true,true);
+        new BeginCorrectionSchemaMigration(jdbc);
+        var cold=new JdbcSankalpaPersistenceAdapter(new JdbcTemplate(new DriverManagerDataSource(datasource.getUrl())));
+        assertThat(cold.findById(v.id()).orElseThrow().lifecycle().transitions().getFirst().beginCorrections()).hasSize(1);
+        assertThat(cold.findById(v.id()).orElseThrow().lifecycle().transitions().getFirst().beginCorrections().getFirst().previousEffectiveAt()).isEqualTo(original);
+        assertThat(service.totalSessionCount(v.id())).isEqualTo(30);
+    }
+
 }

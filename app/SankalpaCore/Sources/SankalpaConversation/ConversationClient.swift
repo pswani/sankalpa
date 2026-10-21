@@ -8,10 +8,12 @@ public struct AGUIClient: Sendable {
     private let linkedServiceInstance: UUID?
     private let bearerToken: String?
     private let batchSessions: Bool
+    private let beginCorrection: Bool
     private let session: URLSession
     private let encoder = JSONEncoder()
 
-    public init(baseURL: URL, bearerToken: String? = nil, session: URLSession = .shared, linkedServiceInstance: UUID? = nil, batchSessions: Bool = false) {
+    public init(baseURL: URL, bearerToken: String? = nil, session: URLSession = .shared, linkedServiceInstance: UUID? = nil, batchSessions: Bool = false, beginCorrection: Bool = false) {
+        self.beginCorrection = beginCorrection
         self.batchSessions = batchSessions
         self.linkedServiceInstance = linkedServiceInstance
         self.baseURL = baseURL; self.bearerToken = bearerToken; self.session = session
@@ -32,6 +34,7 @@ public struct AGUIClient: Sendable {
         }
         if batchSessions, linkedServiceInstance != nil {
             request.setValue("1", forHTTPHeaderField: "X-Sankalpa-Assistant-Batch-Sessions")
+            if beginCorrection { request.setValue("1", forHTTPHeaderField: "X-Sankalpa-Assistant-Begin-Correction") }
         }
         request.httpBody = try encoder.encode(input)
         return request

@@ -70,7 +70,7 @@ public final class ApiModels {
             LocalDateTime occurredAt) {}
 
     public record CapabilitiesResponse(int sessionCommandIdentity, int linkedSankalpaExtensions, UUID serviceInstanceId,
-                                       AssistantCapability assistant, int assistantBatchSessions) {}
+                                       AssistantCapability assistant, int assistantBatchSessions, int assistantBeginCorrection) {}
     public record AssistantCapability(boolean enabled, String aguiProfile,
                                       int maxMessages, int maxEventBytes,
                                       int maxRequestBytes, boolean authenticationRequired) {}
@@ -131,11 +131,16 @@ public final class ApiModels {
             LifecycleState from,
             LifecycleState to,
             LocalDateTime effectiveAt,
-            LocalDateTime recordedAt, UUID originSankalpaId, int sequenceNumber
+            LocalDateTime recordedAt, UUID originSankalpaId, int sequenceNumber,
+            List<com.sankalpa.domain.lifecycle.BeginCorrection> beginCorrections
     ) {
+        public LifecycleTransitionResponse(LifecycleState from, LifecycleState to, LocalDateTime effectiveAt,
+                LocalDateTime recordedAt, UUID origin, int sequence) {
+            this(from, to, effectiveAt, recordedAt, origin, sequence, List.of());
+        }
         public static LifecycleTransitionResponse from(LifecycleTransition value) {
             return new LifecycleTransitionResponse(value.from(), value.to(),
-                    value.effectiveAt(), value.recordedAt(), value.originSankalpaId() == null ? null : value.originSankalpaId().value(), 0);
+                    value.effectiveAt(), value.recordedAt(), value.originSankalpaId() == null ? null : value.originSankalpaId().value(), 0, value.beginCorrections());
         }
     }
 
