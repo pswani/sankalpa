@@ -171,3 +171,17 @@ It revises single-entry scope and the model-round budget without permitting dire
 The review identifies rollback ordering, DynamoDB capacity, stale preview, linked contribution,
 client negotiation, and exact-time requirements. This is a reviewed implementation design,
 not evidence that batch behavior has shipped.
+
+## October 21, 2026 — Conversation selection
+
+The requested Analyze → Design → Review with dry run → Fix loop for New/Continue/history is in
+[the conversation-library review](../assistant-conversations/review-and-dry-run.md).
+The [final design](../assistant-conversations/README.md) is ready for implementation planning;
+application changes and runtime acceptance remain outstanding. It replaces the original single
+client checkpoint assumption without adding server conversation aggregates or domain mutations.
+
+## Implementation follow-up — October 21, 2026
+
+The conversation library is now implemented. The [implementation review](../assistant-conversations/implementation-review.md) records
+executed test results, subsequent review fixes and remaining manual device acceptance. Earlier
+statements about implementation being outstanding describe the preceding design review.

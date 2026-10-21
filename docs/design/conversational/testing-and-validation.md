@@ -306,3 +306,18 @@ Release requires entry-17 rollback, commit-response-loss replay, concurrent conf
 linked-day satisfaction, 30/31-entry bounds, and actual DynamoDB staged-action/byte assertions.
 Keep all legacy single-session/declaration and client-version tests. Design dry runs do not replace
 adapter, native-client, model-evaluation, or staging acceptance tests.
+
+## Conversation-library acceptance amendment — October 21, 2026
+
+**Implemented; executed evidence is in the [implementation review](../assistant-conversations/implementation-review.md).** Use
+[AC-01–AC-20](../assistant-conversations/README.md#8-delivery-and-acceptance) and the
+[review/dry-run record](../assistant-conversations/review-and-dry-run.md).
+
+Tests must distinguish display history from wire context and selection from delivery. Opening,
+creating, selecting, scanning and migrating perform zero assistant requests. Cover pending proposal
+isolation, the global active/uncertain-result gate, explicit exact-input retries, draft/result write
+races, migration crash boundaries, damaged unselected records, service rebinding, late callbacks,
+offline history, message/body limits, speech isolation and durable refresh-only recovery. Store and
+controller tests use scripted streams and injected file failures; native acceptance covers VoiceOver,
+Dynamic Type, focus and long-history responsiveness. Existing backend replay/contract and native
+single/batch proposal suites remain regression gates; no new backend endpoint is planned.

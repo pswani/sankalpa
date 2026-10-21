@@ -5,8 +5,13 @@ import Speech
 @MainActor
 @Observable
 final class SpeechComposer {
-    private let recognizer = SFSpeechRecognizer()
-    private let engine = AVAudioEngine()
+    @ObservationIgnored private lazy var recognizer: SFSpeechRecognizer? = {
+        let recognizer = SFSpeechRecognizer()
+        recognizer?.queue = .main
+        return recognizer
+    }()
+    @ObservationIgnored private lazy var engine = AVAudioEngine()
+    private var hasActiveAudioSession = false
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var isStarting = false
@@ -15,11 +20,7 @@ final class SpeechComposer {
     private(set) var isListening = false
     private(set) var message: String?
     var transcript = ""
-
-    init() {
-        // Speech callbacks update observable UI state, so make their delivery queue explicit.
-        recognizer?.queue = .main
-    }
+    var onTranscript: (@MainActor (String) -> Void)?
 
     func toggle() {
         if isListening || isStarting {
@@ -55,6 +56,7 @@ final class SpeechComposer {
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.record, mode: .measurement, options: .duckOthers)
             try audio.setActive(true, options: .notifyOthersOnDeactivation)
+            hasActiveAudioSession = true
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
             request.requiresOnDeviceRecognition = true
@@ -72,7 +74,10 @@ final class SpeechComposer {
                 Task { @MainActor in
                     guard let self else { return }
                     guard self.generation == activeGeneration, self.isListening else { return }
-                    if let result { self.transcript = result.bestTranscription.formattedString }
+                    if let result {
+                        self.transcript = result.bestTranscription.formattedString
+                        self.onTranscript?(self.transcript)
+                    }
                     if result?.isFinal == true || error != nil { self.stop() }
                 }
             }
@@ -82,6 +87,7 @@ final class SpeechComposer {
     func stop() {
         generation += 1
         isStarting = false
+        guard hasInputTap || request != nil || task != nil || isListening || hasActiveAudioSession else { return }
         if engine.isRunning { engine.stop() }
         if hasInputTap {
             engine.inputNode.removeTap(onBus: 0)
@@ -91,7 +97,10 @@ final class SpeechComposer {
         task?.cancel()
         task = nil
         request = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if hasActiveAudioSession {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            hasActiveAudioSession = false
+        }
         isListening = false
         // The transcript deliberately remains in the editable composer. It is never submitted here.
     }

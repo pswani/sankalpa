@@ -78,6 +78,7 @@ public struct AGUIRunAccumulator: Sendable {
     public private(set) var proposal: AssistantProposal?
     private let threadId: UUID; private let runId: UUID
     private var started = false; private var terminal = false
+    private var messageIds = Set<UUID>(); private var toolIds = Set<UUID>()
     private var message: (UUID, String)?; private var tool: (UUID, String, String)?
     private static let allowedTools = Set(["refresh_practice", "navigate_to_sankalpa", "open_sankalpa_list"])
 
@@ -96,7 +97,7 @@ public struct AGUIRunAccumulator: Sendable {
         switch event {
         case .runStarted: throw AGUIError.protocolViolation("Duplicate RUN_STARTED")
         case .textStart(_, _, let id):
-            guard message == nil else { throw AGUIError.protocolViolation("Nested message") }
+            guard message == nil, messageIds.insert(id).inserted else { throw AGUIError.protocolViolation("Nested or duplicate message") }
             message = (id, "")
         case .textContent(_, _, let id, let delta):
             guard message?.0 == id, !delta.isEmpty else { throw AGUIError.protocolViolation("Invalid message delta") }
@@ -105,7 +106,7 @@ public struct AGUIRunAccumulator: Sendable {
             guard let current = message, current.0 == id else { throw AGUIError.protocolViolation("Unmatched message end") }
             messages.append(AssistantMessage(id: id, text: current.1)); message = nil
         case .toolStart(_, _, let id, let name):
-            guard tool == nil else { throw AGUIError.protocolViolation("Nested tool") }
+            guard tool == nil, toolIds.insert(id).inserted else { throw AGUIError.protocolViolation("Nested or duplicate tool") }
             tool = (id, name, "")
         case .toolArgs(_, _, let id, let delta):
             guard tool?.0 == id else { throw AGUIError.protocolViolation("Unmatched tool args") }

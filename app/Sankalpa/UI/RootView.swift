@@ -73,8 +73,10 @@ struct RootView: View {
             // logged offline and a session the service has taken are indistinguishable, and the
             // user has no way to know whether their practice is actually recorded anywhere but
             // this phone.
-            if model.isShowingCachedPractice || model.pendingSessionCount > 0
-                || model.reliabilityProblem != nil || model.hasExtensionAttempt {
+            // Assistant renders its connection/recovery notices within its navigation content;
+            // the global inset otherwise overlaps its toolbar on the current TabView runtime.
+            if selectedTab != .assistant && (model.isShowingCachedPractice || model.pendingSessionCount > 0
+                || model.reliabilityProblem != nil || model.hasExtensionAttempt) {
                 OfflineNotice(
                     isCached: model.isShowingCachedPractice,
                     isServiceReachable: model.isServiceReachable,
@@ -136,20 +138,18 @@ struct RootView: View {
             Tab("Journal", systemImage: "book.closed", value: AppTab.journal) {
                 JournalView()
             }
-            if model.isServiceReachable,
-               model.assistantCapability?.enabled == true,
-               model.assistantCapability?.profile == AGUI.profile {
+            if model.serviceInstanceId != nil {
                 Tab("Assistant", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.assistant) {
                     AssistantView(appModel: model, navigate: { id in
                         if let id { assistantDetailId = SankalpaId(id) }
                         else { listFilter = .all; selectedTab = .sankalpas }
                     }, close: {
                         selectedTab = previousNonAssistantTab
-                    }, edit: editProposal)
-                    .id(model.apiToken)
+                    }, edit: editProposal, pendingChanges: { showingPendingChanges = true })
                 }
             }
         }
+        .task(id: model.revision) { await model.loadAssistant() }
         .onChange(of: selectedTab) { oldTab, newTab in
             if newTab == .assistant, oldTab != .assistant {
                 previousNonAssistantTab = oldTab

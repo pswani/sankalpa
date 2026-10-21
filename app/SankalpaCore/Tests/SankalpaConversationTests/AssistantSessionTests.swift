@@ -3,138 +3,121 @@ import XCTest
 
 @MainActor
 final class AssistantSessionTests: XCTestCase {
-    func testBatchConfirmationSurvivesRelaunchWithTheSameIdentity() async throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appending(path: "recovery.json")
+    func testBatchConfirmationSurvivesRelaunchWithExactRequestIdentity() async throws {
+        let harness = try ConversationHarness()
         let client = ScriptedClient(scripts: [.batch(UUID()), .error, .success(text: "30 sessions logged.")])
-        let first = AssistantSession(client: client, recoveryURL: url)
-        first.composer = "Record these days"; await first.send(); await first.confirm()
-        let second = AssistantSession(client: client, recoveryURL: url)
-        XCTAssertEqual(second.threadId, first.threadId)
-        guard case .awaitingConfirmation(let proposal) = second.state else { return XCTFail("Missing recovered card") }
+        let first = await harness.controller(client)
+        await first.ask("Record these days")
+        let proposal = try XCTUnwrap(first.session?.proposal)
         XCTAssertEqual(proposal.kind, .logSessions)
         XCTAssertEqual(proposal.newSessionCount, 1)
-        await second.confirm()
-        let resumes = client.inputs.compactMap(\.resume?.first)
-        XCTAssertEqual(resumes.count, 2)
-        XCTAssertEqual(resumes[0].payload, resumes[1].payload)
-        XCTAssertEqual(second.transcript.last?.content, "30 sessions logged.")
+        await first.confirm()
+        let second = await harness.controller(client)
+        XCTAssertEqual(second.session?.threadId, first.session?.threadId)
+        XCTAssertEqual(client.inputs.count, 2, "Opening must not retry a confirmation")
+        XCTAssertTrue(second.session?.needsRecovery == true)
+        await second.retry()
+        XCTAssertEqual(client.inputs[1], client.inputs[2], "Retry must preserve the whole original input")
+        XCTAssertEqual(second.session?.transcript.last?.content, "30 sessions logged.")
     }
-    func testInterruptedProposalRequestRecoversWithTheOriginalRunIdentity() async throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appending(path: "recovery.json")
+    func testInterruptedProposalRequestRecoversOriginalInputOnlyOnExplicitRetry() async throws {
+        let harness = try ConversationHarness()
         let client = ScriptedClient(scripts: [.error, .batch(UUID())])
-        let first = AssistantSession(client: client, recoveryURL: url)
-        first.composer = "Record daily"; await first.send()
-        let second = AssistantSession(client: client, recoveryURL: url)
-        await second.recover()
-        XCTAssertEqual(client.inputs[0].runId, client.inputs[1].runId)
-        XCTAssertEqual(client.inputs[0].messages, client.inputs[1].messages)
-        guard case .awaitingConfirmation = second.state else { return XCTFail("Did not recover") }
+        let first = await harness.controller(client)
+        await first.ask("Record daily")
+        let second = await harness.controller(client)
+        XCTAssertEqual(client.inputs.count, 1)
+        await second.retry()
+        XCTAssertEqual(client.inputs[0], client.inputs[1])
+        XCTAssertEqual(second.session?.proposal?.kind, .logSessions)
     }
-    func testUnresolvedLocalChangesBlockSending() async {
+    func testUnresolvedLocalChangesBlockSendingAndKeepDraft() async throws {
+        let harness = try ConversationHarness()
         let client = ScriptedClient(scripts: [])
-        let session = AssistantSession(client: client, prepareSend: { false })
-        session.composer = "Record daily"; await session.send()
+        let controller = await harness.controller(client, prepare: { false })
+        await controller.ask("Record daily")
         XCTAssertTrue(client.inputs.isEmpty)
-        XCTAssertFalse(session.composer.isEmpty)
+        XCTAssertEqual(controller.session?.composer, "Record daily")
     }
-    func testUnknownProposalVersionCanBeCancelledButNeverConfirmed() async {
+    func testUnknownProposalCanBeCancelledButNeverConfirmed() async throws {
+        let harness = try ConversationHarness()
         let client = ScriptedClient(scripts: [.unsupported(UUID()), .success(text: "Cancelled")])
-        let session = AssistantSession(client: client)
-        session.composer = "Record daily"; await session.send(); await session.confirm()
+        let controller = await harness.controller(client)
+        await controller.ask("Record daily"); await controller.confirm()
         XCTAssertEqual(client.inputs.count, 1)
-        guard case .awaitingConfirmation(let proposal) = session.state else { return XCTFail("Missing unsupported card") }
-        XCTAssertFalse(proposal.canConfirm)
-        await session.cancel(); XCTAssertEqual(client.inputs.count, 2)
+        XCTAssertFalse(try XCTUnwrap(controller.session?.proposal).canConfirm)
+        await controller.cancel()
+        XCTAssertEqual(client.inputs.count, 2)
+        XCTAssertNil(controller.session?.proposal)
     }
-    func testCorruptRecoveryFileSendsNothingAndPreservesBytes() async throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appending(path: "recovery.json"), bytes = Data("invalid".utf8)
-        try bytes.write(to: url)
-        let client = ScriptedClient(scripts: [])
-        let session = AssistantSession(client: client, recoveryURL: url)
-        session.composer = "Record"; await session.send(); await session.recover()
-        XCTAssertTrue(client.inputs.isEmpty)
-        XCTAssertEqual(try Data(contentsOf: url), bytes)
+    func testCorrectionCancelsBeforeNewOrdinaryRun() async throws {
+        let harness = try ConversationHarness()
+        let client = ScriptedClient(scripts: [.proposal(UUID()), .success(text: "Cancelled."), .success(text: "Corrected.")])
+        let controller = await harness.controller(client)
+        await controller.ask("Log a session"); await controller.ask("Actually, use 8 PM")
+        XCTAssertEqual(client.inputs.count, 3)
+        XCTAssertEqual(client.inputs[1].resume?.first?.status, "cancelled")
+        XCTAssertNil(client.inputs[2].resume)
+        XCTAssertEqual(client.inputs[2].messages.last?.content, "Actually, use 8 PM")
     }
-
-    func testCorrectionCancelsBeforeStartingNewOrdinaryRun() async throws {
-        let proposal = UUID()
-        let client = ScriptedClient(scripts: [
-            .proposal(proposal), .success(text: "Cancelled."), .success(text: "Corrected.")
-        ])
-        let session = AssistantSession(client: client)
-        session.composer = "Log a session"; await session.send()
-        session.composer = "Actually, use 8 PM"; await session.send()
-
-        let inputs = client.inputs
-        XCTAssertEqual(inputs.count, 3)
-        guard inputs.count == 3 else { return }
-        XCTAssertEqual(inputs[1].resume?.first?.status, "cancelled")
-        XCTAssertNil(inputs[2].resume)
-        XCTAssertEqual(inputs[2].messages.last?.content, "Actually, use 8 PM")
+    func testUncertainDecisionCannotBeChangedAndRetryKeepsConfirmation() async throws {
+        let harness = try ConversationHarness()
+        let client = ScriptedClient(scripts: [.proposal(UUID()), .error, .success(text: "Saved.")])
+        let controller = await harness.controller(client)
+        await controller.ask("Declare"); await controller.confirm()
+        await controller.confirm(); await controller.cancel()
+        XCTAssertEqual(client.inputs.count, 2, "Only explicit recovery may retry an uncertain decision")
+        await controller.retry()
+        XCTAssertEqual(client.inputs[1], client.inputs[2])
     }
-
-    func testConfirmationRetryPreservesConfirmationIdentity() async throws {
-        let proposal = UUID()
-        let client = ScriptedClient(scripts: [
-            .proposal(proposal), .error, .success(text: "Saved.")
-        ])
-        let session = AssistantSession(client: client)
-        session.composer = "Declare"; await session.send(); await session.confirm(); await session.confirm()
-        let resumes = client.inputs.compactMap(\.resume?.first)
-        XCTAssertEqual(resumes.count, 2)
-        XCTAssertEqual(resumes[0].payload, resumes[1].payload)
-    }
-
-    func testExpiredConfirmationRemovesTheProposalCard() async {
+    func testExpiredServerOutcomeSettlesProposalAndUncertainty() async throws {
+        let harness = try ConversationHarness()
         let client = ScriptedClient(scripts: [.proposal(UUID()), .expired])
-        let session = AssistantSession(client: client)
-        session.composer = "Declare"; await session.send()
-        await session.confirm()
-
-        XCTAssertEqual(session.state, .failed("Expired"))
+        let controller = await harness.controller(client)
+        await controller.ask("Declare"); await controller.confirm()
+        XCTAssertNil(controller.session?.proposal)
+        XCTAssertNil(controller.recoveryConversationId)
+        XCTAssertEqual(controller.session?.errorMessage, "Expired")
     }
-
-    func testEditingSpeechTranscriptDoesNotSendUntilExplicitSend() async {
+    func testEditingDraftDoesNotSendUntilExplicitSend() async throws {
+        let harness = try ConversationHarness()
         let client = ScriptedClient(scripts: [.success(text: "Done")])
-        let session = AssistantSession(client: client)
-        session.composer = "Transcript ready for review"
-
+        let controller = await harness.controller(client)
+        controller.updateDraft("Transcript ready for review")
         XCTAssertTrue(client.inputs.isEmpty)
-        XCTAssertEqual(session.state, .readyToSend)
-        await session.send()
+        await controller.send()
         XCTAssertEqual(client.inputs.count, 1)
     }
-
-    func testCommittedMutationWithFailedRefreshIsShownAsSavedButStale() async {
-        let client = ScriptedClient(scripts: [.successWithRefresh(text: "Saved.")])
-        let session = AssistantSession(client: client, handleTool: { _ in false })
-        session.composer = "Confirm it"
-
-        await session.send()
-
-        XCTAssertTrue(session.staleAfterSave)
-        XCTAssertEqual(session.transcript.last?.content, "Saved.")
+    func testSavedMutationFailedRefreshSurvivesRelaunchAndRetriesOnlyRefresh() async throws {
+        let harness = try ConversationHarness()
+        let client = ScriptedClient(scripts: [.proposal(UUID()), .success(text: "Saved.")])
+        let first = await harness.controller(client, refresh: { false })
+        await first.ask("Declare"); await first.confirm()
+        XCTAssertTrue(first.session?.staleAfterSave == true)
+        let second = await harness.controller(client)
+        XCTAssertTrue(second.session?.staleAfterSave == true)
+        await second.retry()
+        XCTAssertEqual(client.inputs.count, 2, "Reconciliation must not replay the saved mutation")
+        XCTAssertFalse(second.session?.staleAfterSave == true)
     }
 }
 
-private final class ScriptedClient: AssistantRunClient, @unchecked Sendable {
-    enum Script { case proposal(UUID), batch(UUID), unsupported(UUID), success(text: String), successWithRefresh(text: String), error, expired }
+final class ScriptedClient: AssistantRunClient, @unchecked Sendable {
+    enum Script { case proposal(UUID), batch(UUID), unsupported(UUID), success(text: String), successWithRefresh(text: String), error, expired, server(String) }
     private let lock = NSLock(); private var scripts: [Script]; private var stored: [AGUI.RunAgentInput] = []
     init(scripts: [Script]) { self.scripts = scripts }
     var inputs: [AGUI.RunAgentInput] { lock.withLock { stored } }
 
+    var onRun: (@Sendable () -> Void)?
+
     func run(_ input: AGUI.RunAgentInput) -> AsyncThrowingStream<AGUI.Event, Error> {
-        let script = lock.withLock { stored.append(input); return scripts.removeFirst() }
+        let script = lock.withLock { stored.append(input); return scripts.isEmpty ? Script.server("UNEXPECTED_TEST_REQUEST") : scripts.removeFirst() }
+        onRun?()
         return AsyncThrowingStream { continuation in
             continuation.yield(.runStarted(threadId: input.threadId, runId: input.runId))
             switch script {
+            case .server(let code):
+                continuation.yield(.runError(threadId: input.threadId, runId: input.runId, code: code, message: code))
             case .error:
                 continuation.yield(.runError(threadId: input.threadId, runId: input.runId,
                     code: "ASSISTANT_UNAVAILABLE", message: "Try again"))
@@ -158,7 +141,7 @@ private final class ScriptedClient: AssistantRunClient, @unchecked Sendable {
             case .batch(let proposal), .unsupported(let proposal):
                 let version: Double = { if case .unsupported = script { return 999 }; return 2 }()
                 let outcome: JSONValue = .object(["type": .string("interrupt"), "interrupts": .array([.object([
-                    "id": .string(proposal.uuidString), "expiresAt": .string("2026-10-17T18:00:00-05:00"),
+                    "id": .string(proposal.uuidString), "expiresAt": .string("2099-10-17T18:00:00-05:00"),
                     "metadata": .object(["proposalType": .string("LOG_SESSIONS"), "proposalVersion": .number(version),
                         "sankalpaId": .string(UUID().uuidString), "sankalpaTitle": .string("Observe"),
                         "batch": .object(["requestedCount": .number(1), "timezone": .string("America/Chicago"),
@@ -169,7 +152,7 @@ private final class ScriptedClient: AssistantRunClient, @unchecked Sendable {
                 continuation.yield(.runFinished(threadId: input.threadId, runId: input.runId, outcome: outcome))
             case .proposal(let proposal):
                 let outcome: JSONValue = .object(["type": .string("interrupt"), "interrupts": .array([.object([
-                    "id": .string(proposal.uuidString), "expiresAt": .string("2026-09-24T18:00:00-05:00"),
+                    "id": .string(proposal.uuidString), "expiresAt": .string("2099-09-24T18:00:00-05:00"),
                     "metadata": .object(["proposalType": .string("DECLARE_SANKALPA"), "proposalVersion": .number(1), "title": .string("Meditate")])
                 ])])])
                 continuation.yield(.runFinished(threadId: input.threadId, runId: input.runId, outcome: outcome))

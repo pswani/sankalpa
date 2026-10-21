@@ -10,6 +10,43 @@ import XCTest
 /// class its own backend with a fresh database.
 final class JourneyTests: UITestCase {
 
+    @MainActor func testAssistantConversationsPreserveDraftsSelectionAndOfflineHistory() throws {
+        launch()
+        openTab("Assistant")
+        let message = app.textFields["assistant-message"]
+        expect(message, "Assistant did not open its local composer")
+        message.tap(); message.typeText("Draft A")
+        tap(app.buttons["assistant-new"], "Assistant offered no New conversation action")
+        XCTAssertEqual(message.value as? String, "Message", "New conversation inherited the previous draft")
+        message.tap(); message.typeText("Draft B")
+        tap(app.buttons["assistant-conversations"], "Assistant offered no history list")
+        expect(app.staticTexts["Draft A"], "the earlier draft disappeared from history")
+        expect(app.staticTexts["Draft B"], "the current draft was not saved before history opened")
+        capture("60-assistant-conversations")
+        tap(app.staticTexts["Draft A"], "the earlier conversation could not be reopened")
+        XCTAssertEqual(message.value as? String, "Draft A", "selecting the earlier chat lost its draft")
+        relaunch()
+        openTab("Assistant")
+        expect(message, "Assistant history was unavailable after restart")
+        XCTAssertEqual(message.value as? String, "Draft A", "restart lost the selected conversation")
+        relaunchOffline()
+        openTab("Assistant")
+        expect(message, "saved Assistant history disappeared while offline")
+        XCTAssertEqual(message.value as? String, "Draft A")
+        XCTAssertFalse(app.buttons["Send"].isEnabled, "offline drafts must never become queued requests")
+        tap(app.buttons["assistant-conversations"], "offline history could not be opened")
+        tap(app.staticTexts["Draft B"], "an earlier local conversation was unavailable offline")
+        XCTAssertEqual(message.value as? String, "Draft B")
+        capture("61-assistant-offline-draft")
+        launch(dark: true, keepCache: true, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+        openTab("Assistant")
+        tap(app.buttons["assistant-conversations"], "history was inaccessible at large text size")
+        XCTAssertTrue(reveal(app.staticTexts["Draft A"]), "history was not scrollable at large text size")
+        capture("62-assistant-history-dark-accessibility")
+        tap(app.staticTexts["Draft A"], "history could not be scrolled and selected at large text size")
+        XCTAssertEqual(message.value as? String, "Draft A", "accessible history selection did not restore the draft")
+    }
+
     // MARK: - Declaring
 
     /// The primary path through the app: declare an intent, begin it, act, and see the period

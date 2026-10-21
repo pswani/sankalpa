@@ -101,6 +101,8 @@ public struct AssistantCapability: Equatable, Sendable {
     public let authenticationRequired: Bool
     public var batchSessionsVersion: Int = 0
     public var beginCorrectionVersion: Int = 0
+    public var maxMessages: Int = 20
+    public var maxRequestBytes: Int = 262_144
 }
 
 /// Service-backed practice with a durable operation overlay. Session creates and deletes are
@@ -293,7 +295,8 @@ public final class RemoteSankalpaService {
                 profile: assistant.aguiProfile,
                 authenticationRequired: assistant.authenticationRequired,
                 batchSessionsVersion: response.assistantBatchSessions ?? 0,
-                beginCorrectionVersion: response.assistantBeginCorrection ?? 0)
+                beginCorrectionVersion: response.assistantBeginCorrection ?? 0,
+                maxMessages: assistant.maxMessages, maxRequestBytes: assistant.maxRequestBytes)
         } else {
             assistantCapability = nil
         }

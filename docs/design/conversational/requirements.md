@@ -75,3 +75,15 @@ CR-04 now includes bounded multi-session proposals under the same confirmation b
 requirements do not add lifecycle automation or date-only domain facts. See the
 [batch design](../conversational-batch-sessions/README.md) for semantics, and its
 [review](../conversational-batch-sessions/review-and-dry-run.md) for dry-run evidence.
+
+## Accepted conversation-selection requirements — October 21, 2026
+
+[Assistant conversations](../../requirements/assistant-conversations.md) defines CR-26–CR-35:
+continue the selected conversation, start fresh without losing earlier chats, reopen local history,
+preserve per-thread drafts/proposals/recovery, and keep service identity and approval boundaries.
+These requirements have a [reviewed design](../assistant-conversations/README.md) and
+[dry-run record](../assistant-conversations/review-and-dry-run.md); implementation and local verification are in the [implementation review](../assistant-conversations/implementation-review.md).
+
+CR-16 still requires online service access for assistant requests. It does not prohibit reading
+saved local conversations or editing an unsent draft offline. Starting a new conversation neither
+cancels earlier proposals nor clears recorded practice.

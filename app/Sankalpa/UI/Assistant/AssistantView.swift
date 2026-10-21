@@ -5,47 +5,80 @@ import SankalpaStorage
 
 struct AssistantView: View {
     @Environment(AppModel.self) private var model
-    @State private var session: AssistantSession
+    @Environment(\.scenePhase) private var scenePhase
     @State private var speech = SpeechComposer()
+    @State private var showingConversations = false
     private let close: @MainActor () -> Void
     private let edit: @MainActor (AssistantProposal) -> Void
+    private let pendingChanges: @MainActor () -> Void
+    private let navigate: @MainActor @Sendable (UUID?) -> Void
 
     init(appModel: AppModel,
          navigate: @escaping @MainActor @Sendable (UUID?) -> Void,
          close: @escaping @MainActor () -> Void,
-         edit: @escaping @MainActor (AssistantProposal) -> Void) {
-        self.close = close
-        self.edit = edit
-        let token = appModel.apiToken
-        let client = AGUIClient(baseURL: appModel.serviceLocation.url, bearerToken: token,
-                                linkedServiceInstance: appModel.supportsLinkedExtensions ? appModel.serviceInstanceId : nil,
-                                batchSessions: appModel.assistantCapability?.batchSessionsVersion == 1,
-                                beginCorrection: appModel.assistantCapability?.beginCorrectionVersion == 1)
-        let recoveryURL = appModel.serviceInstanceId.map { instance in
-            URL.applicationSupportDirectory.appending(path: "Assistant/\(instance.uuidString)-linked-v1.json")
-        }
-        _session = State(initialValue: AssistantSession(client: client, recoveryURL: recoveryURL, prepareSend: {
-            await appModel.prepareAssistantRequest()
-        }, handleTool: { tool in
-            switch tool.name {
-            case "refresh_practice":
-                await appModel.refresh()
-                return !appModel.isShowingCachedPractice
-            case "navigate_to_sankalpa":
-                if case .object(let args) = tool.arguments,
-                   case .string(let value)? = args["sankalpaId"], let id = UUID(uuidString: value) {
-                    navigate(id); return true
-                }
-                return false
-            case "open_sankalpa_list": navigate(nil); return true
-            default: return false
-            }
-        }))
+         edit: @escaping @MainActor (AssistantProposal) -> Void,
+         pendingChanges: @escaping @MainActor () -> Void) {
+        self.close = close; self.edit = edit; self.navigate = navigate; self.pendingChanges = pendingChanges
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
+            if let controller = model.assistant {
+                conversation(controller)
+                    .navigationTitle(controller.session?.title ?? "Assistant")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Back", systemImage: "chevron.backward") {
+                                stopSpeech()
+                                Task { if await controller.flushDraft() { close() } }
+                            }
+                        }
+                        ToolbarItemGroup(placement: .topBarTrailing) {
+                            Button("Conversations", systemImage: "list.bullet") {
+                                stopSpeech()
+                                Task { if await controller.flushDraft() { showingConversations = true } }
+                            }
+                            .accessibilityIdentifier("assistant-conversations")
+                            Button("New conversation", systemImage: "square.and.pencil") {
+                                stopSpeech()
+                                Task { await controller.newConversation() }
+                            }
+                            .accessibilityIdentifier("assistant-new")
+                            .disabled(!controller.canNavigate || controller.storageProblem != nil)
+                        }
+                    }
+                    .sheet(isPresented: $showingConversations) { history(controller) }
+                    .onChange(of: controller.pendingNavigation?.id) { _, _ in
+                        guard let tool = controller.consumeNavigation() else { return }
+                        if tool.name == "open_sankalpa_list" { navigate(nil) }
+                        else if tool.name == "navigate_to_sankalpa", case .object(let args) = tool.arguments,
+                                case .string(let id)? = args["sankalpaId"], let uuid = UUID(uuidString: id) { navigate(uuid) }
+                    }
+                    .onChange(of: scenePhase) { _, phase in
+                        if phase != .active { stopSpeech(); Task { await controller.flushDraft() } }
+                    }
+                    .onDisappear { stopSpeech(); Task { await controller.flushDraft() } }
+            } else { ProgressView("Opening conversations…") }
+        }
+    }
+
+    @ViewBuilder private func conversation(_ controller: AssistantConversationController) -> some View {
+        VStack(spacing: 0) {
+            if model.pendingSessionCount > 0 || model.reliabilityProblem != nil || model.hasExtensionAttempt {
+                Button("Pending practice changes need attention", action: pendingChanges).font(.callout).padding(.horizontal)
+            }
+            if let problem = controller.storageProblem {
+                Label(problem, systemImage: "exclamationmark.triangle").font(.callout).padding()
+                Button("Retry loading history") { Task { await controller.reloadStorage() } }
+            }
+            if let problem = controller.networkProblem { Text(problem).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
+            if let recovery = controller.recoveryConversationId {
+                Button("A conversation needs recovery — Open conversation") {
+                    stopSpeech(); Task { await controller.select(recovery) }
+                }.disabled(!controller.canNavigate).padding(.horizontal)
+            }
+            if let session = controller.session {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 12) {
@@ -53,47 +86,92 @@ struct AssistantView: View {
                                 ContentUnavailableView("Ask Sankalpa", systemImage: "bubble.left.and.text.bubble.right",
                                     description: Text("Ask about your practice, log a session, or propose a new Sankalpa."))
                             }
-                            ForEach(session.transcript) { message in bubble(message) }
-                            if case .awaitingConfirmation(let proposal) = session.state {
-                                ProposalCard(proposal: proposal,
-                                    confirm: { Task { await confirm(proposal) } },
-                                    cancel: { Task { await session.cancel() } },
-                                    edit: {
-                                        Task { if await session.cancel() { edit(proposal) } }
-                                    }, disabled: session.isBusy, sharedEffects: sharedEffects(proposal))
+                            if session.record.imported { Text("Earlier messages may be unavailable").font(.caption).foregroundStyle(.secondary) }
+                            if session.transcript.count > 20 { Text("Earlier messages may be outside the assistant’s context").font(.caption).foregroundStyle(.secondary) }
+                            ForEach(session.transcript) { message in bubble(message).id(message.id) }
+                            if session.needsRecovery {
+                                Button(session.staleAfterSave ? "Retry practice refresh" : "Retry request") {
+                                    stopSpeech(); Task { await controller.retry() }
+                                }.disabled(!controller.canRetry)
+                            } else if let proposal = session.proposal {
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    ProposalCard(proposal: proposal,
+                                        confirm: { stopSpeech(); Task { await confirm(controller) } },
+                                        cancel: { stopSpeech(); Task { await controller.cancel() } },
+                                        edit: {
+                                            stopSpeech()
+                                            Task { if await controller.cancel(edit: true) { edit(proposal) } }
+                                        }, disabled: !controller.canSend, expired: session.proposalExpired(at: context.date),
+                                        sharedEffects: sharedEffects(proposal))
+                                }
+                            } else if let proposal = session.record.editProposal {
+                                Button("Continue editing proposal") { edit(proposal) }
+                                Button("Dismiss edit") { Task { await controller.dismissEdit() } }
                             }
                             if let message = session.errorMessage {
-                                Label(message, systemImage: "exclamationmark.triangle")
-                                    .foregroundStyle(.orange).font(.callout)
+                                Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
                             }
                             if session.staleAfterSave {
-                                Text("Saved, but the practice could not be refreshed. Pull to refresh when connected.")
-                                    .font(.footnote).foregroundStyle(.secondary)
+                                Text("Saved, but the practice could not be refreshed. Retry when connected.").font(.footnote).foregroundStyle(.secondary)
                             }
-                        }.padding().id(session.transcript.count)
+                            Color.clear.frame(height: 1).id("end")
+                        }.padding()
                     }
+                    .id(session.threadId)
                     .onChange(of: session.transcript.count) { _, _ in
-                        withAnimation { proxy.scrollTo(session.transcript.count, anchor: .bottom) }
+                        withAnimation { proxy.scrollTo("end", anchor: .bottom) }
                     }
                 }
                 Divider()
-                composer
-            }
-            .navigationTitle("Assistant")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Back", systemImage: "chevron.backward") {
-                        speech.stop()
-                        close()
-                    }
-                }
-            }
-            .onChange(of: speech.transcript) { _, value in session.composer = value }
-            .onDisappear { speech.stop() }
-            .task { await session.recover() }
+                composer(controller, session: session)
+            } else if controller.isLoading { ProgressView() }
         }
     }
 
+    private func history(_ controller: AssistantConversationController) -> some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button("New conversation", systemImage: "square.and.pencil") {
+                        Task { await controller.newConversation(); if controller.storageProblem == nil { showingConversations = false } }
+                    }.disabled(!controller.canNavigate || controller.storageProblem != nil)
+                } footer: { Text("Conversations are saved on this device.") }
+                Section {
+                    ForEach(controller.conversations) { summary in
+                        Button {
+                            Task { await controller.select(summary.id); if controller.session?.threadId == summary.id { showingConversations = false } }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(summary.title).font(.headline).foregroundStyle(.primary)
+                                Text(summary.activityAt, format: .dateTime.month().day().hour().minute()).font(.caption).foregroundStyle(.secondary)
+                                if !summary.preview.isEmpty { Text(summary.preview).lineLimit(2).foregroundStyle(.secondary) }
+                                if let status = summary.status { Text(status).font(.caption).foregroundStyle(.orange) }
+                            }
+                        }.buttonStyle(.plain)
+                        .disabled(!controller.canNavigate)
+                        .accessibilityHint("Continue this conversation")
+                        .accessibilityIdentifier("conversation-\(summary.id.uuidString)")
+                    }
+                    ForEach(controller.damagedFiles, id: \.self) { file in
+                        Label("History unavailable: \(file)", systemImage: "exclamationmark.triangle").font(.callout)
+                    }
+                }
+                if controller.isBusy { Text("Finish this response before switching conversations").font(.footnote) }
+            }
+            .navigationTitle("Conversations")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingConversations = false } } }
+        }
+    }
+
+    private func toggleSpeech(_ controller: AssistantConversationController, owner: UUID) {
+        speech.onTranscript = { [weak controller] text in
+            guard let controller, controller.session?.threadId == owner, !controller.isBusy else { return }
+            controller.updateDraft(text)
+        }
+        speech.toggle()
+    }
+    private func stopSpeech() { speech.stop(); speech.onTranscript = nil }
     private func sessionIdentity(_ proposal: AssistantProposal) -> (SankalpaId, SessionId)? {
         guard case .string(let owner)? = proposal.metadata["sankalpaId"], let ownerId = UUID(uuidString: owner),
               case .string(let id)? = proposal.metadata["sessionId"], let sessionId = UUID(uuidString: id) else { return nil }
@@ -104,42 +182,40 @@ struct AssistantView: View {
               case .string(let text)? = proposal.metadata["occurredAt"], let at = WireFormat.moment(from: text) else { return nil }
         return model.contributionPreview(owner: owner, at: at)
     }
-    private func confirm(_ proposal: AssistantProposal) async {
-        if proposal.kind == .logSession {
-            guard let (owner, id) = sessionIdentity(proposal) else { return }
-            await model.confirmAssistantSession(owner: owner, sessionId: id) { await session.confirm() }
-        } else if proposal.kind == .logSessions {
-            guard case .string(let owner)? = proposal.metadata["sankalpaId"], let id = UUID(uuidString: owner) else { return }
-            await model.confirmAssistantBatch(owner: SankalpaId(id)) { await session.confirm() }
-        } else { await session.confirm() }
+    private func confirm(_ controller: AssistantConversationController) async {
+        await controller.confirm { proposal, action in
+            if proposal.kind == .logSession {
+                guard let (owner, id) = sessionIdentity(proposal) else { return }
+                await model.confirmAssistantSession(owner: owner, sessionId: id, action: action)
+            } else if proposal.kind == .logSessions {
+                guard case .string(let owner)? = proposal.metadata["sankalpaId"], let id = UUID(uuidString: owner) else { return }
+                await model.confirmAssistantBatch(owner: SankalpaId(id), action: action)
+            } else { await action() }
+        }
     }
-
-    private var composer: some View {
+    private func composer(_ controller: AssistantConversationController, session: AssistantSession) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Message", text: $session.composer, axis: .vertical)
+            TextField("Message", text: Binding(get: { session.composer }, set: { controller.updateDraft($0) }), axis: .vertical)
                 .textFieldStyle(.roundedBorder).lineLimit(1...5)
-                .disabled(session.isBusy)
+                .accessibilityIdentifier("assistant-message")
+                .disabled(controller.isBusy)
             HStack {
-                Button { speech.toggle() } label: {
-                    Label(speech.isListening ? "Stop listening" : "Speak",
-                          systemImage: speech.isListening ? "stop.circle.fill" : "mic.circle")
+                Button {
+                    toggleSpeech(controller, owner: session.threadId)
+                } label: {
+                    Label(speech.isListening ? "Stop listening" : "Speak", systemImage: speech.isListening ? "stop.circle.fill" : "mic.circle")
                 }.accessibilityHint("Recognized words remain editable and are not sent automatically")
+                .disabled(controller.isBusy)
                 Spacer()
-                if session.isBusy { ProgressView().accessibilityLabel("Understanding") }
-                Button("Send") {
-                    // Sending commits the reviewed transcript; recording must not continue in
-                    // parallel or a late partial result can repopulate the cleared composer.
-                    speech.stop()
-                    Task { await session.send() }
-                }
+                if controller.isBusy { ProgressView().accessibilityLabel("Understanding") }
+                Button("Send") { stopSpeech(); Task { await controller.send() } }
                     .buttonStyle(.borderedProminent)
-                    .disabled(session.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.isBusy)
+                    .disabled(session.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !controller.canSend)
             }
             if speech.isListening { Text("Listening… Stop, review the text, then tap Send.").font(.caption).foregroundStyle(.secondary) }
             if let message = speech.message { Text(message).font(.caption).foregroundStyle(.orange) }
         }.padding()
     }
-
     private func bubble(_ message: AGUI.Message) -> some View {
         Text(message.role == "assistant"
              ? (try? AttributedString(markdown: message.content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.content)
@@ -157,6 +233,7 @@ private struct ProposalCard: View {
     let cancel: () -> Void
     let edit: () -> Void
     let disabled: Bool
+    var expired = false
     var sharedEffects: String? = nil
 
     var body: some View {
@@ -171,11 +248,12 @@ private struct ProposalCard: View {
                 }
             }
             if let sharedEffects { Text(sharedEffects).font(.footnote) }
+            if expired { Text("Expired — ask again").font(.callout).foregroundStyle(.secondary) }
             HStack {
-                Button("Cancel", role: .cancel, action: cancel)
-                if proposal.kind != .logSessions && proposal.kind != .unsupported { Button("Edit", action: edit) }
+                Button(expired ? "Ask again" : "Cancel", role: .cancel, action: cancel)
+                if !expired && proposal.kind != .logSessions && proposal.kind != .unsupported { Button("Edit", action: edit) }
                 Spacer()
-                if proposal.canConfirm {
+                if proposal.canConfirm && !expired {
                     Button(proposal.kind == .logSessions ? (proposal.batch["beginAdjustment"] != nil && proposal.batch["beginAdjustment"] != .null ? "Confirm Begin correction and record \(proposal.newSessionCount) sessions" : "Record \(proposal.newSessionCount) sessions") : "Confirm", action: confirm)
                         .buttonStyle(.borderedProminent)
                 }

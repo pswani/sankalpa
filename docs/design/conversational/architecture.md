@@ -298,8 +298,10 @@ The iOS client owns the displayed transcript and stores a bounded copy locally. 
 bounded relevant message history required by AG-UI. The server does not need a second message
 database in v1.
 
-The local transcript uses iOS data protection, is omitted from device logs/backups where the app's
-storage policy requires it, and can be cleared by the user without deleting practice data.
+The local transcript uses iOS data protection and is omitted from device logs/backups. The
+[conversation-library amendment](../assistant-conversations/README.md) retains separate transcripts
+and drafts per thread. New conversation preserves history and practice. A history deletion UI is
+deferred by that amendment; it is not a prerequisite or side effect of starting fresh.
 
 The server persists proposals because they are security and idempotency boundaries. It does not
 persist every token or assistant message.
@@ -311,7 +313,8 @@ Transcript bounds:
 - when the user types a correction while a proposal is pending, iOS first sends an idempotent
   cancellation resume. Only after cancellation succeeds does it start an ordinary run containing
   the correction; the prior canonical proposal summary remains in the bounded history;
-- summarize older display-only messages locally if a future requirement needs long threads;
+- retain full future display history locally, but send only the bounded request window; show
+  when older messages may be outside the model context;
 - never allow client messages to replace server instructions or tool definitions.
 
 ## 6. Orchestration
@@ -538,3 +541,28 @@ The amendment also specifies client negotiation, proposal schema v2, complete li
 reads, and adapter action/byte limits. SQLite and the deployed AWS DynamoDB adapter must both pass
 acceptance. Earlier SQLite-only deployment descriptions in this original design are historical;
 see [AWS deployment](../aws/README.md). No model or external HTTP call belongs inside confirmation.
+
+## Conversation library amendment — October 21, 2026
+
+**Implemented; [verification](../assistant-conversations/implementation-review.md).** See [Assistant conversations](../assistant-conversations/README.md)
+for storage fields, ordering, migration, UI, and AC-01–AC-20. It takes precedence over earlier
+single-view/single-checkpoint client assumptions in this document.
+
+- `AssistantConversationController` is owned alongside `AppModel`, beyond the chat view lifetime;
+  it manages selection, per-service recovery gates and one active request across this installation.
+- The existing `AssistantSession` becomes an explicitly restored per-thread session. A store actor
+  owns atomic revisioned record writes; it replaces the shared service checkpoint writer.
+- Per-thread files plus a small selection manifest provide local persistence; record files supply
+  list metadata. Legacy checkpoints migrate without changing request or confirmation identities.
+- Opening a view or history row performs no assistant request. Explicit retry uses the saved input.
+  A submitted uncertain decision takes precedence over a proposal's displayed expiry.
+- Capture service/binding generation/thread/revision/run before awaits. Late outcomes belong only
+  to their originating record; current practice publication/navigation requires the current binding.
+- Durable terminal result precedes navigation; persisted refresh-needed state triggers refresh-only
+  reconciliation. Failed refresh never resubmits the committed mutation.
+- Full future display transcripts and drafts stay local; requests contain at most 20 allowed
+  messages from that thread within existing message and whole-body limits. No cross-thread context.
+
+The existing server coordinator, proposal transaction, session identities and SQLite/DynamoDB
+adapters remain unchanged. Multiple conversations are client presentation and reliability state,
+not multiple domain aggregates or provider-side memory sessions.

@@ -257,3 +257,17 @@ flows remain supported. The amendment is implemented and verified locally; see i
 [review and dry runs](../conversational-batch-sessions/review-and-dry-run.md) document the fixes.
 Production deployment now uses [AWS Lambda and DynamoDB](../aws/README.md); local SQLite remains
 supported, and the amendment requires tests against both persistence adapters.
+
+## Reviewed amendment — October 21, 2026: multiple conversations
+
+The accepted [conversation requirements](../../requirements/assistant-conversations.md) and
+[reviewed design](../assistant-conversations/README.md) add New conversation and a local history
+list while entry continues the last selected chat. **Status: implemented; see [verification](../assistant-conversations/implementation-review.md).**
+The [analysis/review/dry-run record](../assistant-conversations/review-and-dry-run.md) records fixes.
+
+This amendment supersedes the single-checkpoint client assumptions: each thread owns its transcript,
+draft, proposal and retry state; a service-bound controller owns selection and delivery. Future
+display history is retained separately from the bounded model request. History remains readable
+offline, while network interpretation/confirmation still requires the existing online checks.
+Opening/selecting history does not submit or recover requests automatically. No server transcript
+store, new domain entity, protocol version or backend persistence migration is added.

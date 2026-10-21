@@ -37,8 +37,9 @@ The client sends the canonical AG-UI fields:
 
 The server rejects malformed UUIDs, duplicate message IDs, unsupported roles, oversized content,
 and a resume that does not refer to a persisted pending proposal owned by the same thread. If the
-thread has a pending proposal, an ordinary input without a matching resume is rejected; the client
-must confirm or cancel first.
+thread has a pending proposal, the client must confirm or cancel first. The current coordinator
+may return that existing proposal instead of interpreting an ordinary input; clients must not
+rely on rejection as a cancellation mechanism.
 
 ## 3. Supported outbound events
 
@@ -433,3 +434,20 @@ Version 3 confirmation requires negotiated repair support. Existing version-2 ba
 single commands retain their contracts. Lifecycle responses add optional-compatible `beginCorrections`.
 Tool feedback includes a typed error message and safe domain details so the model can explain a Begin
 conflict, coverage limit, or lifecycle state instead of asking the user to guess a different time.
+
+## Local conversation-selection contract — October 21, 2026
+
+**Implemented.** [Assistant conversations](../assistant-conversations/README.md#7-protocol-and-architecture-impact)
+specifies New, continuation, local persistence and retry; no HTTP contract extension is required.
+
+New allocates a new thread UUID; reopening restores its original UUID. Every input, resume and
+confirmation remains bound to its owning thread. A retry reuses the complete saved logical input,
+including run ID, original parent and confirmation ID where present; never rebuild from the current
+draft or another chat. No run parent, message history or proposal migrates between conversations.
+Opening/selecting a chat sends no request. Resume messages remain empty.
+
+Keep full local display history separate from wire history: at most 20 user/assistant messages,
+at most 16,000 UTF-16 code units per message, and the current 262,144-byte encoded request-body
+budget. Remove oldest context if needed; reject an oversized newest message visibly without silent
+truncation. Use advertised compatible limits, capped by this supported profile. The service's
+proposal/mutation replay guarantees do not imply exact replay of ordinary generated text.

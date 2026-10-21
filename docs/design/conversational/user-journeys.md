@@ -8,7 +8,10 @@ produce the same safe outcomes.
 ### Journey 1A — Type a request
 
 1. The user opens **Sankalpa Assistant** from the existing voice/chat entry point.
-2. The screen shows recent local conversation, a text composer, microphone, and Send button.
+2. The screen restores the last selected local conversation, or an empty first conversation,
+   with a text composer, microphone, Send, Conversations, and New conversation controls.
+   These selection controls are the [reviewed conversation amendment](../assistant-conversations/README.md),
+   implemented with [local verification](../assistant-conversations/implementation-review.md).
 3. The user types a message.
 4. Send becomes enabled when trimmed text is non-empty and no run is active.
 5. On Send, the user message is added immediately and the UI shows **Understanding…**.
@@ -288,3 +291,25 @@ clarify the endpoint/time. Show existing contributed days separately from new se
 one confirmation for the approved chunk. Retry the same confirmation after a lost response;
 refresh authoritative history once after success. A changed practice requires a fresh preview.
 See the [complete design](../conversational-batch-sessions/README.md).
+
+## Conversation selection journeys — October 21, 2026 (implemented)
+
+1. **Start fresh and return:** type/send in A, choose New conversation, and see empty B. Open
+   Conversations and choose A: its transcript, draft and pending proposal return. No creation,
+   selection or list action submits a request or changes practice.
+2. **Continue on entry:** select A, leave Assistant and return/relaunch. A remains selected even
+   if B has a later activity timestamp. Untouched empty New conversations are reused.
+3. **Leave a proposal:** A awaits approval; create B. A remains Awaiting confirmation in history.
+   Returning never renews expiry or confirms it. A stale preview requires a fresh request and
+   approval; an unsubmitted expired card is settled explicitly before a follow-up.
+4. **Interrupted decision:** A's confirmation loses its response. B/history can be inspected but
+   assistant delivery shows a visible recovery gate. Open A and Retry request; use the same saved
+   decision, never a new confirmation. Saved results needing refresh retry refresh only.
+5. **Offline history:** open saved history or edit a draft while disconnected. Send/Confirm/Cancel/
+   Retry explain the connection requirement; nothing queues for automatic sending.
+6. **Speech and switching:** stop recognition and save A's draft before selecting B. Late partials
+   from A cannot modify B. All flows remain available through typing and accessible controls.
+
+Exact states, service changes, migration and acceptance are in the
+[conversation design](../assistant-conversations/README.md) and its
+[review/dry runs](../assistant-conversations/review-and-dry-run.md).

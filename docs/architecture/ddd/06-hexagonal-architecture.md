@@ -173,3 +173,17 @@ links and inherited provenance on load/restore. Local-file adapters enforce the 
 and atomic creation as relational adapters. Client overlays suppress a deleted ID across all
 linked views; processing and recent-repeat gates use the stable series root. Neither adapter
 persists session-copy jobs or contribution projections.
+
+## Assistant Conversation Library
+
+[Assistant conversations](../../design/assistant-conversations/README.md) adds a local presentation
+controller and driven file-store adapter to the connected iOS app. A conversation is client
+interaction state, separate from a performed `Session` and a `Sankalpa` aggregate. It owns transcript,
+draft and references to server-owned proposals, not authoritative practice facts.
+
+The store serializes revisioned per-thread writes, migrates the old service checkpoint and scopes
+records by persistent service identity. Selection is local; interpretation and resolution use the
+existing AG-UI driving adapter. A controller survives view navigation and gates active/uncertain
+requests. Current service-binding checks guard asynchronous practice refresh and navigation.
+No domain port, server transcript repository, event/outbox or SQLite/DynamoDB schema is added.
+See [dry-run review](../../design/assistant-conversations/review-and-dry-run.md).

@@ -86,6 +86,22 @@ final class AGUIProtocolTests: XCTestCase {
         XCTAssertTrue(cancelled.contains("cancelled")); XCTAssertFalse(cancelled.contains("payload"))
     }
 
+    func testCompletedMessageAndToolIdentitiesCannotBeReusedWithinRun() throws {
+        let thread = UUID(), run = UUID(), id = UUID()
+        var messages = AGUIRunAccumulator(threadId: thread, runId: run)
+        try messages.receive(.runStarted(threadId: thread, runId: run))
+        try messages.receive(.textStart(threadId: thread, runId: run, messageId: id))
+        try messages.receive(.textContent(threadId: thread, runId: run, messageId: id, delta: "First"))
+        try messages.receive(.textEnd(threadId: thread, runId: run, messageId: id))
+        XCTAssertThrowsError(try messages.receive(.textStart(threadId: thread, runId: run, messageId: id)))
+        var tools = AGUIRunAccumulator(threadId: thread, runId: run)
+        try tools.receive(.runStarted(threadId: thread, runId: run))
+        try tools.receive(.toolStart(threadId: thread, runId: run, toolCallId: id, name: "refresh_practice"))
+        try tools.receive(.toolArgs(threadId: thread, runId: run, toolCallId: id, delta: "{}"))
+        try tools.receive(.toolEnd(threadId: thread, runId: run, toolCallId: id))
+        XCTAssertThrowsError(try tools.receive(.toolStart(threadId: thread, runId: run, toolCallId: id, name: "refresh_practice")))
+    }
+
     private func json(_ type: String, _ thread: UUID, _ run: UUID, _ rest: String) -> String {
         "data: {\"type\":\"\(type)\",\"threadId\":\"\(thread)\",\"runId\":\"\(run)\"\(rest)}\n\n"
     }

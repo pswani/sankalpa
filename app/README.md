@@ -317,3 +317,19 @@ accidental. Each is *decision → reason → what is still open*.
 
 All of these are worth confirming before this is taken further; they belong with the questions in
 [09-open-questions](../docs/architecture/ddd/09-open-questions.md).
+
+## Assistant conversations
+
+Assistant reopens the last selected chat. Use **New conversation** for fresh chat context, or
+**Conversations** to reopen an earlier chat. Each keeps its draft and pending proposal. Chats are
+saved on this device, scoped to the service's persistent instance; they do not synchronize between
+phones. Starting a chat does not delete history or recorded practice.
+
+Saved history and drafts work offline. Sending, confirming and retrying require a compatible
+connected service. An interrupted request shows **Retry request** in its original conversation;
+new assistant requests wait until its outcome is known. A saved action with a failed refresh offers
+**Retry practice refresh**, which never resubmits the mutation. Opening history never sends a request.
+
+The existing single conversation migrates automatically without changing retry identities.
+Preserved damaged/unsupported history requires recovery or a compatible update; it is never silently
+reset. See the [design and implementation review](../docs/design/assistant-conversations/implementation-review.md).

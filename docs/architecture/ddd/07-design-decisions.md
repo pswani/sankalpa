@@ -388,3 +388,25 @@ and avoids partial-success infrastructure. No session is copied between linked v
 
 **Limits.** Exact times remain required by the current domain; larger requests need separately
 approved chunks. See [design and review](../../design/conversational-batch-sessions/README.md).
+
+---
+
+## DD-34 — Keep Assistant Conversations In Client Interaction Storage
+
+**Status:** Implemented, October 21, 2026; see [verification](../../design/assistant-conversations/implementation-review.md).
+
+**Decision.** Continue the last selected chat on entry; provide New conversation and a local history
+list. A service-bound iOS controller owns selection and request lifetime; a store actor owns atomic
+revisioned per-thread records. Preserve drafts, pending proposals and exact retry identities across
+switching/relaunch. Migrate the existing single checkpoint without resetting its identities.
+
+**Why.** The user needs both fresh context and continuation. Resetting a view reloads the same
+checkpoint; storing only transcripts loses unresolved decisions. A server conversation aggregate
+would add synchronization and retention responsibilities that this local requirement does not need.
+
+**Boundaries.** New and selection never mutate practice or resolve a proposal. Opening a chat does
+not deliver recovery automatically. One active request and visible uncertain-result/refresh gates
+protect cross-chat behavior. Server confirmation and revalidation remain authoritative. Full local
+display history is distinct from bounded same-thread model input. No domain model or backend schema
+change is required. See [design](../../design/assistant-conversations/README.md) and
+[review](../../design/assistant-conversations/review-and-dry-run.md).

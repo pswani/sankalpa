@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import SankalpaCore
 import SankalpaStorage
+import SankalpaConversation
 
 /// The driving adapter between SwiftUI and the Sankalpa service.
 ///
@@ -24,6 +25,75 @@ final class AppModel {
     struct RepeatLogProposal: Identifiable {
         let id = UUID()
         let sankalpaTitle: String
+    }
+
+    private(set) var assistant: AssistantConversationController?
+    private struct AssistantBinding: Equatable {
+        let instance: UUID
+        let location: ServiceLocation
+        let token: String
+        let negotiation: AssistantNegotiation
+        let maxMessages: Int
+        let maxRequestBytes: Int
+    }
+    private var assistantBinding: AssistantBinding?
+    private var configuringAssistant = false
+    private var assistantRebinding = false
+    private var currentAssistantBinding: AssistantBinding? {
+        guard let instance = serviceInstanceId else { return nil }
+        let batch = supportsLinkedExtensions && assistantCapability?.batchSessionsVersion == 1
+        return AssistantBinding(instance: instance, location: serviceLocation, token: apiToken,
+            negotiation: .init(linked: supportsLinkedExtensions,
+                batchSessions: batch,
+                beginCorrection: batch && assistantCapability?.beginCorrectionVersion == 1),
+            maxMessages: assistantCapability?.maxMessages ?? 20,
+            maxRequestBytes: assistantCapability?.maxRequestBytes ?? 262_144)
+    }
+    func loadAssistant() async {
+        guard !configuringAssistant, !assistantRebinding else { return }
+        configuringAssistant = true
+        defer { configuringAssistant = false }
+        while !assistantRebinding, let binding = currentAssistantBinding, assistantBinding != binding {
+            resolveRepeatLog(confirmed: false)
+            if let assistant, !(await assistant.suspend()) { return }
+            assistantBinding = binding
+            let controller = AssistantConversationController(
+                store: AssistantConversationStore(serviceInstanceId: binding.instance),
+                negotiation: binding.negotiation, maximumMessages: binding.maxMessages,
+                maximumRequestBytes: binding.maxRequestBytes,
+                makeClient: { negotiation in
+                    AGUIClient(baseURL: binding.location.url, bearerToken: binding.token,
+                        linkedServiceInstance: negotiation.linked ? binding.instance : nil,
+                        batchSessions: negotiation.batchSessions, beginCorrection: negotiation.beginCorrection)
+                }, availability: { [weak self] in
+                    guard let self, self.currentAssistantBinding == binding else { return "The service connection changed. Reopen Assistant." }
+                    guard self.isServiceReachable else { return "Connect to the service to send messages. Saved conversations remain available." }
+                    guard self.assistantCapability?.enabled == true, self.assistantCapability?.profile == AGUI.profile else {
+                        return "Assistant is unavailable on this service. Saved conversations remain available."
+                    }
+                    if self.assistantCapability?.authenticationRequired == true && self.apiToken.isEmpty { return "Set the service authentication token before sending messages." }
+                    return nil
+                }, prepareSend: { [weak self] in
+                    guard let self, self.currentAssistantBinding == binding else { return false }
+                    return await self.prepareAssistantRequest() && self.currentAssistantBinding == binding
+                }, refresh: { [weak self] in
+                    guard let self, self.currentAssistantBinding == binding else { return false }
+                    await self.refresh()
+                    return self.currentAssistantBinding == binding && self.isServiceReachable && !self.isShowingCachedPractice
+                })
+            assistant = controller
+            await controller.open()
+        }
+    }
+    private func suspendAssistant() async -> Bool {
+        resolveRepeatLog(confirmed: false)
+        if let assistant, !(await assistant.suspend()) {
+            alertTitle = AppModel.unreachableTitle
+            alertMessage = assistant.storageProblem
+            return false
+        }
+        assistant = nil; assistantBinding = nil
+        return true
     }
 
     private let remote: RemoteSankalpaService
@@ -56,8 +126,7 @@ final class AppModel {
     /// True when what is on screen came from the phone's copy rather than from the service just
     /// now, so a screen can say the practice may be behind.
     private(set) var isShowingCachedPractice = false
-    /// The assistant is intentionally unavailable unless the latest complete refresh proved that
-    /// the service can be reached. Cached practice remains useful offline; conversation does not.
+    /// Assistant network actions require a reachable service; saved local chats remain readable.
     private(set) var isServiceReachable = false
 
     /// A refusal to show in an alert. Commands that have their own inline error surface return the
@@ -112,6 +181,7 @@ final class AppModel {
         // files are built to survive, so only a test ever asks for this.
         if ProcessInfo.processInfo.arguments.contains("-resetCache") {
             PracticeCache.removeEverything()
+            try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: "Assistant"))
         }
         #endif
         let locations = ServiceLocationStore()
@@ -157,10 +227,14 @@ final class AppModel {
     /// The cached practice belongs to the old one, so it goes. A location change is refused while
     /// session changes are pending, because those changes are bound to one service instance.
     func useService(at location: ServiceLocation) async {
+        guard !assistantRebinding else { return }
+        assistantRebinding = true; defer { assistantRebinding = false }
+        guard await suspendAssistant() else { return }
         guard await remote.relocate(to: location) else {
             alertCarriesReconciliationNotice = false
             alertTitle = AppModel.refusalTitle
             alertMessage = remote.refreshFailure
+            rebuild()
             return
         }
         locations.save(location)
@@ -169,7 +243,10 @@ final class AppModel {
 
     @discardableResult
     func useAPIToken(_ token: String) async -> Bool {
-        guard credentials.save(token) else { return false }
+        guard !assistantRebinding else { return false }
+        assistantRebinding = true; defer { assistantRebinding = false }
+        guard await suspendAssistant() else { return false }
+        guard credentials.save(token) else { rebuild(); return false }
         apiToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         remote.useBearerToken(apiToken)
         await refresh()

@@ -156,3 +156,10 @@ Linked-series changes to the earlier per-owner read and client assumptions are s
 The implemented [conversational batch-session amendment](../../design/conversational-batch-sessions/README.md)
 adds bounded application orchestration over existing session commands (DD-33), with no new domain
 aggregate, event infrastructure, session copying, or bulk persistence endpoint.
+
+The accepted [Assistant conversation requirements](../../requirements/assistant-conversations.md)
+have a [reviewed design](../../design/assistant-conversations/README.md) and
+[dry-run record](../../design/assistant-conversations/review-and-dry-run.md), dated October 21, 2026.
+Implementation and local verification are recorded in the [implementation review](../../design/assistant-conversations/implementation-review.md). DD-34 adds client interaction storage and navigation over existing
+thread/proposal contracts; it introduces no domain aggregate, session fact, server transcript store
+or persistence schema change.

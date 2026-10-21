@@ -157,3 +157,22 @@ For a rule that does not need a screen, prefer the core suites: they run in unde
 say exactly which rule broke. `SankalpaCore/Tests/` is organised by what is being decided —
 calendar arithmetic, commitments, lifecycle, period outcomes, session logging, declaration
 bounds, the query surface, and the regressions that came out of review.
+
+## Assistant conversation library
+
+The package suites cover selection/draft/proposal isolation, explicit exact-input recovery,
+confirmation and cancellation replay, service suspension, bounded model context, full future display
+history, record/manifest validation, legacy import crash boundaries, out-of-space writes, and atomic
+concurrent draft/result updates. Scripted streams and injected file writes make these independent
+of a model provider. Existing assistant protocol/batch fixtures remain regression coverage.
+
+The native conversation journey verifies New/history, both drafts, selection after relaunch,
+offline history, Send disabled offline, and scrolling/selecting at accessibility text size in dark
+mode. Run it with the complete package tests and Release build:
+
+```bash
+./app/scripts/test.sh --only JourneyTests/testAssistantConversationsPreserveDraftsSelectionAndOfflineHistory
+```
+
+The [implementation review](../docs/design/assistant-conversations/implementation-review.md) records
+executed results and the remaining real-device microphone/VoiceOver and large-library checks.
